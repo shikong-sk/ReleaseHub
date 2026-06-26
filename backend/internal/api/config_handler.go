@@ -18,6 +18,7 @@ type configResponse struct {
 	SchedulerMaxConcurrent int    `json:"schedulerMaxConcurrent"`
 	StorageDataDir         string `json:"storageDataDir"`
 	GitHubAPIBaseURL       string `json:"githubApiBaseUrl"`
+	AuthEnabled            bool   `json:"authEnabled"`
 }
 
 func registerConfigRoutes(router *gin.Engine, cfg *config.Config) {
@@ -34,5 +35,6 @@ func (h *configHandler) get(c *gin.Context) {
 		SchedulerMaxConcurrent: h.config.Scheduler.MaxConcurrent,
 		StorageDataDir:         h.config.Storage.DataDir,
 		GitHubAPIBaseURL:       h.config.GitHub.APIBaseURL,
+		AuthEnabled:            h.config.Auth.Enabled,
 	})
 }

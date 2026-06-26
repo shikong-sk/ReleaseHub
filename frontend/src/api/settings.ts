@@ -6,6 +6,7 @@ export interface AppConfig {
   schedulerMaxConcurrent: number
   storageDataDir: string
   githubApiBaseUrl: string
+  authEnabled: boolean
 }
 
 export function getAppConfig(): Promise<AppConfig> {

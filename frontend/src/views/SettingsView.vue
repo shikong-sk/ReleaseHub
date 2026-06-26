@@ -20,6 +20,7 @@ import { Plus, RefreshCw } from 'lucide-vue-next'
 import type { DataTableColumns } from 'naive-ui'
 
 import { getAppConfig } from '@/api/settings'
+import APIKeyPanel from '@/components/settings/APIKeyPanel.vue'
 import { useTokensStore } from '@/stores/tokens'
 import type { TokenItem } from '@/types/token'
 
@@ -32,6 +33,7 @@ const schedulerTickSeconds = shallowRef(60)
 const schedulerMaxConcurrent = shallowRef(5)
 const storageDataDir = shallowRef('')
 const githubApiBaseUrl = shallowRef('')
+const authEnabled = shallowRef(false)
 
 const showModal = shallowRef(false)
 const formName = shallowRef('')
@@ -67,6 +69,7 @@ onMounted(async () => {
     schedulerMaxConcurrent.value = config.schedulerMaxConcurrent
     storageDataDir.value = config.storageDataDir
     githubApiBaseUrl.value = config.githubApiBaseUrl
+    authEnabled.value = config.authEnabled
     configLoaded.value = true
   } catch {
     // 配置加载失败不影响页面
@@ -107,7 +110,7 @@ async function handleDelete(id: number) {
   <main class="settings-page">
     <section class="settings-heading">
       <h1>设置</h1>
-      <p>管理 GitHub Token、查看全局配置。</p>
+      <p>管理访问凭据、查看全局配置。</p>
     </section>
 
     <NCard title="GitHub Token" :bordered="false">
@@ -135,8 +138,15 @@ async function handleDelete(id: number) {
       />
     </NCard>
 
+    <APIKeyPanel />
+
     <NCard v-if="configLoaded" title="全局配置" :bordered="false">
       <NDescriptions :column="2" bordered label-placement="left">
+        <NDescriptionsItem label="认证">
+          <NTag :type="authEnabled ? 'success' : 'default'">
+            {{ authEnabled ? '已启用' : '已禁用' }}
+          </NTag>
+        </NDescriptionsItem>
         <NDescriptionsItem label="Scheduler">
           <NTag :type="schedulerEnabled ? 'success' : 'default'">
             {{ schedulerEnabled ? '已启用' : '已禁用' }}

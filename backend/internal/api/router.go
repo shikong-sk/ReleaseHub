@@ -37,6 +37,11 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	// 认证路由
 	registerAuthRoutes(router, deps.DB)
+	registerConfigRoutes(router, deps.Config)
+
+	if deps.Config.Auth.Enabled {
+		router.Use(middleware.APIKeyOrAuth(deps.DB))
+	}
 
 	// 核心 API
 	githubClient, githubClientErr := githubsvc.NewClient(deps.Config.GitHub.APIBaseURL)
@@ -46,7 +51,6 @@ func NewRouter(deps Dependencies) http.Handler {
 	registerFileRoutes(router, deps.DB)
 	registerTokenRoutes(router, deps.DB)
 	registerTokenHealthRoutes(router, deps.DB, deps.Config.GitHub.APIBaseURL)
-	registerConfigRoutes(router, deps.Config)
 	registerStorageRoutes(router, deps.DB)
 	registerProxyRoutes(router, deps.DB)
 	registerNotificationRoutes(router, deps.DB)

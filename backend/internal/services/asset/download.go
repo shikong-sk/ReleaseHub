@@ -1,7 +1,6 @@
 package asset
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -61,6 +60,10 @@ func NewServiceWithDownloaderAndDriver(db *gorm.DB, driver storage.Driver, dl *d
 }
 
 func (s *Service) Download(ctx context.Context, assetID uint) (*DownloadResult, error) {
+	return s.downloadWithAttempt(ctx, assetID, 1, 3)
+}
+
+func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt int, maxAttempts int) (*DownloadResult, error) {
 	asset, release, repository, err := s.loadAssetContext(ctx, assetID)
 	if err != nil {
 		return nil, err
@@ -75,8 +78,8 @@ func (s *Service) Download(ctx context.Context, assetID uint) (*DownloadResult, 
 		ReleaseID:    &release.ID,
 		AssetID:      &asset.ID,
 		Status:       models.TaskStatusRunning,
-		MaxAttempts:  3,
-		Attempt:      1,
+		MaxAttempts:  maxAttempts,
+		Attempt:      attempt,
 		StartedAt:    ptrTime(time.Now().UTC()),
 	}
 	if err := s.db.WithContext(ctx).Create(&task).Error; err != nil {
@@ -117,13 +120,15 @@ func (s *Service) Download(ctx context.Context, assetID uint) (*DownloadResult, 
 	downloadDone := make(chan struct{})
 	go func() {
 		defer close(downloadDone)
-		defer pw.Close()
-		var buf bytes.Buffer
-		downloadResult, downloadErr = s.downloader.Download(ctx, downloadURL, token, io.MultiWriter(pw, &buf))
-		// 如果出错，关闭 pipe 让存储端也收到错误
 		if downloadErr != nil {
-			pw.CloseWithError(downloadErr)
+			return
 		}
+		downloadResult, downloadErr = s.downloader.Download(ctx, downloadURL, token, pw)
+		if downloadErr != nil {
+			_ = pw.CloseWithError(downloadErr)
+			return
+		}
+		_ = pw.Close()
 	}()
 
 	// 存储 goroutine：从 pipe 读取写入存储
@@ -181,7 +186,7 @@ func (s *Service) Download(ctx context.Context, assetID uint) (*DownloadResult, 
 	}
 
 	_ = s.logService.Append(ctx, task.ID, "info",
-		fmt.Sprintf("下载完成: %s (%d bytes, SHA256: %s)", asset.Name, downloadResult.Size, downloadResult.SHA256[:16]+"..."))
+		fmt.Sprintf("下载完成: %s (%d bytes, SHA256: %s)", asset.Name, downloadResult.Size, shortSHA256(downloadResult.SHA256)))
 
 	return &DownloadResult{
 		Asset: asset,
@@ -220,7 +225,10 @@ func (s *Service) RetryDownload(ctx context.Context, assetID uint) (*DownloadRes
 	asset.ErrorMessage = ""
 	_ = s.db.WithContext(ctx).Save(&asset).Error
 
-	return s.Download(ctx, assetID)
+	if existingTask.MaxAttempts <= 0 {
+		existingTask.MaxAttempts = 3
+	}
+	return s.downloadWithAttempt(ctx, assetID, attempt, existingTask.MaxAttempts)
 }
 
 // OpenReader 返回资产的读取流（兼容所有存储驱动）
@@ -346,6 +354,17 @@ func safeSegment(value string) string {
 		return "_"
 	}
 	return value
+}
+
+func shortSHA256(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unknown"
+	}
+	if len(value) <= 16 {
+		return value
+	}
+	return value[:16] + "..."
 }
 
 func ptrTime(t time.Time) *time.Time {

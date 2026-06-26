@@ -1,8 +1,6 @@
 export async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path, {
-    headers: {
-      Accept: 'application/json'
-    }
+    headers: jsonHeaders()
   })
 
   if (!response.ok) {
@@ -21,7 +19,7 @@ export async function requestJson<T>(path: string, options: RequestJsonOptions):
   const response = await fetch(path, {
     method: options.method,
     headers: {
-      Accept: 'application/json',
+      ...jsonHeaders(),
       ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' })
     },
     body: options.body === undefined ? undefined : JSON.stringify(options.body)
@@ -37,6 +35,14 @@ export async function requestJson<T>(path: string, options: RequestJsonOptions):
   }
 
   return response.json() as Promise<T>
+}
+
+function jsonHeaders(): HeadersInit {
+  const token = localStorage.getItem('releasehub_token')
+  return {
+    Accept: 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {})
+  }
 }
 
 async function readError(response: Response): Promise<string> {

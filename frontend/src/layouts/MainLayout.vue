@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { RouterView } from 'vue-router'
-import { NLayout, NLayoutContent, NLayoutHeader, NMenu } from 'naive-ui'
+import { NButton, NLayout, NLayoutContent, NLayoutHeader, NMenu } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
 import { computed, h } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { LogOut } from 'lucide-vue-next'
 
+import { useAuthStore } from '@/stores/auth'
+
+const router = useRouter()
 const route = useRoute()
+const authStore = useAuthStore()
+const isLoginRoute = computed(() => route.name === 'login')
 const menuOptions = computed<MenuOption[]>(() => [
   {
     label: () => hRouterLink('/', '控制台'),
@@ -50,10 +56,16 @@ const selectedMenuKey = computed(() => String(route.name ?? 'dashboard'))
 function hRouterLink(to: string, label: string) {
   return h(RouterLink, { to }, { default: () => label })
 }
+
+async function handleLogout() {
+  authStore.logout()
+  await router.replace('/login')
+}
 </script>
 
 <template>
-  <NLayout class="app-shell">
+  <RouterView v-if="isLoginRoute" />
+  <NLayout v-else class="app-shell">
     <NLayoutHeader class="app-header" bordered>
       <div class="brand">
         <span class="brand-mark">RH</span>
@@ -68,6 +80,12 @@ function hRouterLink(to: string, label: string) {
         :options="menuOptions"
         :value="selectedMenuKey"
       />
+      <div v-if="authStore.isLoggedIn" class="user-actions">
+        <span class="username">{{ authStore.user?.username ?? '已登录' }}</span>
+        <NButton quaternary circle title="退出登录" @click="handleLogout">
+          <template #icon><LogOut /></template>
+        </NButton>
+      </div>
     </NLayoutHeader>
 
     <NLayoutContent class="app-content">
@@ -127,5 +145,24 @@ function hRouterLink(to: string, label: string) {
 
 .app-content {
   padding: 24px;
+}
+
+.main-menu {
+  flex: 1;
+}
+
+.user-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.username {
+  max-width: 140px;
+  overflow: hidden;
+  color: #475467;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

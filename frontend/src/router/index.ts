@@ -1,7 +1,10 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
+import { getAppConfig } from '@/api/settings'
+import { useAuthStore } from '@/stores/auth'
 import DashboardView from '@/views/DashboardView.vue'
 import FilesView from '@/views/FilesView.vue'
+import LoginView from '@/views/LoginView.vue'
 import NotificationsView from '@/views/NotificationsView.vue'
 import ProxiesView from '@/views/ProxiesView.vue'
 import RepositoriesView from '@/views/RepositoriesView.vue'
@@ -13,6 +16,12 @@ import UsersView from '@/views/UsersView.vue'
 const router = createRouter({
   history: createWebHistory(),
   routes: [
+    {
+      path: '/login',
+      name: 'login',
+      component: LoginView,
+      meta: { public: true }
+    },
     {
       path: '/',
       name: 'dashboard',
@@ -59,6 +68,42 @@ const router = createRouter({
       component: SettingsView
     }
   ]
+})
+
+let authEnabledCache: boolean | null = null
+
+router.beforeEach(async (to) => {
+  if (authEnabledCache === null) {
+    try {
+      const config = await getAppConfig()
+      authEnabledCache = config.authEnabled
+    } catch {
+      authEnabledCache = false
+    }
+  }
+
+  if (!authEnabledCache) {
+    return true
+  }
+
+  const authStore = useAuthStore()
+  if (to.meta.public) {
+    return authStore.isLoggedIn && to.name === 'login' ? { name: 'dashboard' } : true
+  }
+
+  if (!authStore.isLoggedIn) {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
+
+  if (!authStore.user) {
+    await authStore.fetchMe()
+  }
+
+  if (!authStore.isLoggedIn) {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
+
+  return true
 })
 
 export default router

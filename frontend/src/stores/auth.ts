@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { shallowRef } from 'vue'
+import { computed, shallowRef } from 'vue'
 
 import { getMe, login as apiLogin, changePassword as apiChangePassword, type LoginPayload, type UserInfo } from '@/api/auth'
 
@@ -51,5 +51,3 @@ export const useAuthStore = defineStore('auth', () => {
 
   return { user, token, loading, error, isLoggedIn, login, fetchMe, changePassword, logout }
 })
-
-import { computed } from 'vue'
