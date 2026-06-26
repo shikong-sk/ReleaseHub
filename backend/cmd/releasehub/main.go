@@ -48,6 +48,11 @@ func main() {
 		logger.Fatal("数据库迁移失败", zap.Error(err))
 	}
 
+	// 确保至少存在一个管理员账户（默认 admin/admin，可通过环境变量 RELEASEHUB_AUTH_DEFAULT_ADMIN/RELEASEHUB_AUTH_DEFAULT_PASSWORD 配置）
+	if err := database.SeedDefaultAdmin(db, cfg.Auth.DefaultAdmin, cfg.Auth.DefaultPassword); err != nil {
+		logger.Warn("创建默认管理员失败", zap.Error(err))
+	}
+
 	router := api.NewRouter(api.Dependencies{
 		Config: cfg,
 		DB:     db,

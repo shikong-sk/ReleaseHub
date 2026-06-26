@@ -52,7 +52,9 @@ type SchedulerConfig struct {
 }
 
 type AuthConfig struct {
-	Enabled bool
+	Enabled         bool
+	DefaultAdmin    string
+	DefaultPassword string
 }
 
 func Load() (*Config, error) {
@@ -74,6 +76,8 @@ func Load() (*Config, error) {
 	v.SetDefault("scheduler.tick_seconds", 60)
 	v.SetDefault("scheduler.max_concurrent", 5)
 	v.SetDefault("auth.enabled", false)
+	v.SetDefault("auth.default_admin", "admin")
+	v.SetDefault("auth.default_password", "admin")
 
 	cfg := &Config{
 		App: AppConfig{
@@ -101,7 +105,9 @@ func Load() (*Config, error) {
 			MaxConcurrent: v.GetInt("scheduler.max_concurrent"),
 		},
 		Auth: AuthConfig{
-			Enabled: v.GetBool("auth.enabled"),
+			Enabled:         v.GetBool("auth.enabled"),
+			DefaultAdmin:    v.GetString("auth.default_admin"),
+			DefaultPassword: v.GetString("auth.default_password"),
 		},
 	}
 

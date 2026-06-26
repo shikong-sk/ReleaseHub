@@ -9,6 +9,7 @@ import (
 	"releasehub/backend/internal/config"
 	"releasehub/backend/internal/models"
 
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -58,4 +59,50 @@ func Migrate(db *gorm.DB) error {
 		&models.User{},
 		&models.APIKey{},
 	)
+}
+
+// SeedDefaultAdmin 确保数据库中至少存在一个管理员账户。
+// 仅在 User 表为空时创建默认管理员，不会覆盖已有数据。
+// username/password 为空时使用 "admin"/"admin"。
+func SeedDefaultAdmin(db *gorm.DB, username string, password string) error {
+	var count int64
+	if err := db.Model(&models.User{}).Count(&count).Error; err != nil {
+		return fmt.Errorf("查询用户数量失败: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+
+	if username == "" {
+		username = "admin"
+	}
+	if password == "" {
+		password = "admin"
+	}
+
+	hash, err := hashPassword(password)
+	if err != nil {
+		return fmt.Errorf("生成默认密码哈希失败: %w", err)
+	}
+
+	admin := models.User{
+		Username:     username,
+		PasswordHash: hash,
+		Role:         "admin",
+		Enabled:      true,
+	}
+	if err := db.Create(&admin).Error; err != nil {
+		return fmt.Errorf("创建默认管理员失败: %w", err)
+	}
+
+	return nil
+}
+
+// hashPassword 使用 bcrypt 生成密码哈希
+func hashPassword(password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hash), nil
 }
