@@ -11,6 +11,7 @@ import (
 	githubsvc "releasehub/backend/internal/services/github"
 	notifysvc "releasehub/backend/internal/services/notify"
 	"releasehub/backend/internal/services/provider"
+	tasklogsvc "releasehub/backend/internal/services/tasklog"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -29,6 +30,7 @@ type CheckService struct {
 	githubFactory *githubsvc.ClientFactory
 	providers     *provider.Registry
 	notifier      *notifysvc.Service
+	logService    *tasklogsvc.Service
 	retention     RetentionRunner
 	logger        *zap.Logger
 }
@@ -56,10 +58,11 @@ type RetentionRunner interface {
 
 func NewCheckService(db *gorm.DB, github GitHubClient) *CheckService {
 	return &CheckService{
-		db:       db,
-		github:   github,
-		notifier: notifysvc.NewService(db),
-		logger:   zap.NewNop(),
+		db:         db,
+		github:     github,
+		notifier:   notifysvc.NewService(db),
+		logService: tasklogsvc.NewService(db),
+		logger:     zap.NewNop(),
 	}
 }
 
@@ -105,50 +108,71 @@ func (s *CheckService) CheckLatest(ctx context.Context, repositoryID uint) (*Che
 		return nil, err
 	}
 
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("开始检查 %s/%s 最新 Release", repository.Owner, repository.Repo))
+
 	token, err := s.githubToken(ctx, repository.GitHubTokenID)
 	if err != nil {
-		s.failTask(ctx, &task, err)
+		s.failTaskWithLog(ctx, &task, err, "获取 GitHub Token 失败")
 		return nil, err
 	}
 
 	releaseProvider, err := s.resolveProvider(ctx, repository)
 	if err != nil {
-		s.failTask(ctx, &task, err)
+		s.failTaskWithLog(ctx, &task, err, "创建 Provider 失败")
 		return nil, err
 	}
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("通过 %s Provider 查询最新 Release", repository.Provider))
 
 	providerRelease, err := releaseProvider.GetLatestRelease(ctx, repository.Owner, repository.Repo, token)
 	if err != nil {
 		s.markRepositoryFailed(ctx, repository.ID)
-		s.failTask(ctx, &task, err)
+		s.failTaskWithLog(ctx, &task, err, "查询最新 Release 失败")
 		return nil, err
 	}
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("发现 Release %s，资产数 %d", providerRelease.TagName, len(providerRelease.Assets)))
+
 	isNewRelease, err := s.releaseMissing(ctx, repository.ID, providerRelease.TagName)
 	if err != nil {
-		s.failTask(ctx, &task, err)
+		s.failTaskWithLog(ctx, &task, err, "检查 Release 是否已存在失败")
 		return nil, err
 	}
 
 	matcher, err := filter.NewMatcher(repository.FilterMode, repository.AssetIncludePatterns, repository.AssetExcludePatterns)
 	if err != nil {
 		s.markRepositoryFailed(ctx, repository.ID)
-		s.failTask(ctx, &task, err)
+		s.failTaskWithLog(ctx, &task, err, "资产过滤规则无效")
 		return nil, fmt.Errorf("资产过滤规则无效: %w", err)
 	}
 
 	result, err := s.persistProviderRelease(ctx, repository, task, providerRelease, matcher)
 	if err != nil {
-		s.failTask(ctx, &task, err)
+		s.failTaskWithLog(ctx, &task, err, "持久化 Release 数据失败")
 		return nil, err
 	}
 
+	// 更新仓库状态为健康
+	s.markRepositoryHealthy(ctx, repository.ID, providerRelease.TagName)
+
 	if s.retention != nil {
+		s.appendLog(ctx, task.ID, "info", "执行保留策略清理旧版本")
 		_ = s.retention.CleanupRepository(ctx, result.Repository)
 	}
+
 	if isNewRelease {
+		s.appendLog(ctx, task.ID, "info", fmt.Sprintf("发现新版本 %s，触发通知", providerRelease.TagName))
 		s.notifyNewRelease(ctx, result.Repository, result.Release, result.Assets)
 	}
 
+	// 标记任务成功
+	now := time.Now().UTC()
+	task.Status = models.TaskStatusSucceeded
+	task.FinishedAt = &now
+	_ = s.db.WithContext(ctx).Save(&task).Error
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("检查完成: %s/%s 最新版本 %s", repository.Owner, repository.Repo, providerRelease.TagName))
+	result.Task = task
 	return result, nil
 }
 
@@ -583,6 +607,31 @@ func (s *CheckService) failTask(ctx context.Context, task *models.Task, err erro
 	task.ErrorMessage = err.Error()
 	task.FinishedAt = &now
 	_ = s.db.WithContext(ctx).Save(task).Error
+}
+
+// failTaskWithLog 标记任务失败并写入日志
+func (s *CheckService) failTaskWithLog(ctx context.Context, task *models.Task, err error, logMsg string) {
+	s.failTask(ctx, task, err)
+	s.appendLog(ctx, task.ID, "error", logMsg+": "+err.Error())
+}
+
+// appendLog 写入任务日志（忽略错误，日志写入失败不阻断主流程）
+func (s *CheckService) appendLog(ctx context.Context, taskID uint, level string, message string) {
+	if s.logService != nil {
+		_ = s.logService.Append(ctx, taskID, level, message)
+	}
+}
+
+// markRepositoryHealthy 更新仓库状态为健康
+func (s *CheckService) markRepositoryHealthy(ctx context.Context, repositoryID uint, latestTag string) {
+	now := time.Now().UTC()
+	_ = s.db.WithContext(ctx).Model(&models.Repository{}).
+		Where("id = ?", repositoryID).
+		Updates(map[string]any{
+			"last_check_at":    now,
+			"last_status":      models.RepositoryStatusHealthy,
+			"last_release_tag": latestTag,
+		}).Error
 }
 
 func (s *CheckService) markRepositoryFailed(ctx context.Context, repositoryID uint) {

@@ -12,44 +12,25 @@ const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const isLoginRoute = computed(() => route.name === 'login')
-const menuOptions = computed<MenuOption[]>(() => [
-  {
-    label: () => hRouterLink('/', '控制台'),
-    key: 'dashboard'
-  },
-  {
-    label: () => hRouterLink('/repositories', '仓库'),
-    key: 'repositories'
-  },
-  {
-    label: () => hRouterLink('/tasks', '任务'),
-    key: 'tasks'
-  },
-  {
-    label: () => hRouterLink('/files', '文件'),
-    key: 'files'
-  },
-  {
-    label: () => hRouterLink('/storages', '存储'),
-    key: 'storages'
-  },
-  {
-    label: () => hRouterLink('/proxies', '代理'),
-    key: 'proxies'
-  },
-  {
-    label: () => hRouterLink('/notifications', '通知'),
-    key: 'notifications'
-  },
-  {
-    label: () => hRouterLink('/users', '用户'),
-    key: 'users'
-  },
-  {
-    label: () => hRouterLink('/settings', '设置'),
-    key: 'settings'
+const menuOptions = computed<MenuOption[]>(() => {
+  const items: MenuOption[] = [
+    { label: () => hRouterLink('/', '控制台'), key: 'dashboard' },
+    { label: () => hRouterLink('/repositories', '仓库'), key: 'repositories' },
+    { label: () => hRouterLink('/tasks', '任务'), key: 'tasks' },
+    { label: () => hRouterLink('/files', '文件'), key: 'files' }
+  ]
+  // 管理菜单仅 admin 可见
+  if (authStore.canAdmin) {
+    items.push(
+      { label: () => hRouterLink('/storages', '存储'), key: 'storages' },
+      { label: () => hRouterLink('/proxies', '代理'), key: 'proxies' },
+      { label: () => hRouterLink('/notifications', '通知'), key: 'notifications' },
+      { label: () => hRouterLink('/users', '用户'), key: 'users' },
+      { label: () => hRouterLink('/settings', '设置'), key: 'settings' }
+    )
   }
-])
+  return items
+})
 
 const selectedMenuKey = computed(() => String(route.name ?? 'dashboard'))
 

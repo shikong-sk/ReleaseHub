@@ -9,14 +9,16 @@ import (
 	"releasehub/backend/internal/config"
 	"releasehub/backend/internal/models"
 	"releasehub/backend/internal/services/storage"
+	tasklogsvc "releasehub/backend/internal/services/tasklog"
 
 	"gorm.io/gorm"
 )
 
 // 确保 Service 使用 Driver 接口
 type Service struct {
-	db      *gorm.DB
-	storage storage.Driver
+	db         *gorm.DB
+	storage    storage.Driver
+	logService *tasklogsvc.Service
 }
 
 type CleanupResult struct {
@@ -37,8 +39,9 @@ func NewService(db *gorm.DB, storageConfig config.StorageConfig) (*Service, erro
 
 func NewServiceWithDriver(db *gorm.DB, driver storage.Driver) *Service {
 	return &Service{
-		db:      db,
-		storage: driver,
+		db:         db,
+		storage:    driver,
+		logService: tasklogsvc.NewService(db),
 	}
 }
 
@@ -82,6 +85,11 @@ func (s *Service) Cleanup(ctx context.Context, repository models.Repository) (*C
 		return nil, err
 	}
 
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf(
+		"开始清理: 保留最近 %d 个版本，删除 %d 个旧版本",
+		keepLatest, len(outdatedReleases),
+	))
+
 	result := &CleanupResult{
 		Task:            &task,
 		DeletedReleases: len(outdatedReleases),
@@ -91,7 +99,7 @@ func (s *Service) Cleanup(ctx context.Context, repository models.Repository) (*C
 	if err := s.db.WithContext(ctx).
 		Where("release_id IN ?", releaseIDs).
 		Find(&assets).Error; err != nil {
-		s.failTask(ctx, &task, err)
+		s.failTaskWithLog(ctx, &task, err, "查询旧版本资产失败")
 		return result, err
 	}
 
@@ -101,7 +109,7 @@ func (s *Service) Cleanup(ctx context.Context, repository models.Repository) (*C
 		}
 		if err := s.storage.Delete(ctx, asset.StoragePath); err != nil {
 			cleanupErr := fmt.Errorf("删除资产文件 %s 失败: %w", asset.StoragePath, err)
-			s.failTask(ctx, &task, cleanupErr)
+			s.failTaskWithLog(ctx, &task, cleanupErr, "删除存储文件失败")
 			return result, cleanupErr
 		}
 		result.DeletedFilePaths = append(result.DeletedFilePaths, asset.StoragePath)
@@ -147,9 +155,14 @@ func (s *Service) Cleanup(ctx context.Context, repository models.Repository) (*C
 		result.Task = &task
 		return nil
 	}); err != nil {
-		s.failTask(ctx, &task, err)
+		s.failTaskWithLog(ctx, &task, err, "清理事务失败")
 		return result, err
 	}
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf(
+		"清理完成: 删除 %d 个旧版本，%d 个资产文件",
+		result.DeletedReleases, result.DeletedAssets,
+	))
 
 	return result, nil
 }
@@ -160,6 +173,19 @@ func (s *Service) failTask(ctx context.Context, task *models.Task, err error) {
 	task.ErrorMessage = err.Error()
 	task.FinishedAt = &now
 	_ = s.db.WithContext(ctx).Save(task).Error
+}
+
+// failTaskWithLog 标记任务失败并写入日志
+func (s *Service) failTaskWithLog(ctx context.Context, task *models.Task, err error, logMsg string) {
+	s.failTask(ctx, task, err)
+	s.appendLog(ctx, task.ID, "error", logMsg+": "+err.Error())
+}
+
+// appendLog 写入任务日志
+func (s *Service) appendLog(ctx context.Context, taskID uint, level string, message string) {
+	if s.logService != nil {
+		_ = s.logService.Append(ctx, taskID, level, message)
+	}
 }
 
 func ptrTime(t time.Time) *time.Time {

@@ -49,5 +49,12 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem(TOKEN_KEY)
   }
 
-  return { user, token, loading, error, isLoggedIn, login, fetchMe, changePassword, logout }
+  // 角色判断
+  const isAdmin = computed(() => user.value?.role === 'admin')
+  const isOperator = computed(() => user.value?.role === 'operator')
+  const isViewer = computed(() => user.value?.role === 'viewer')
+  const canWrite = computed(() => isAdmin.value || isOperator.value)
+  const canAdmin = computed(() => isAdmin.value)
+
+  return { user, token, loading, error, isLoggedIn, isAdmin, isOperator, isViewer, canWrite, canAdmin, login, fetchMe, changePassword, logout }
 })

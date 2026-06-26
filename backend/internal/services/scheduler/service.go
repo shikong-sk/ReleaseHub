@@ -8,6 +8,7 @@ import (
 	"releasehub/backend/internal/models"
 	releasesvc "releasehub/backend/internal/services/release"
 	syncersvc "releasehub/backend/internal/services/syncer"
+	tasklogsvc "releasehub/backend/internal/services/tasklog"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -20,6 +21,7 @@ type Service struct {
 	checker       *releasesvc.CheckService
 	syncer        *syncersvc.Service
 	logger        *zap.Logger
+	logService    *tasklogsvc.Service
 	interval      time.Duration
 	maxConcurrent int
 
@@ -49,6 +51,7 @@ func NewServiceWithConcurrency(db *gorm.DB, checker *releasesvc.CheckService, lo
 		db:            db,
 		checker:       checker,
 		logger:        logger,
+		logService:    tasklogsvc.NewService(db),
 		interval:      interval,
 		maxConcurrent: maxConcurrent,
 		inFlight:      map[uint]struct{}{},
@@ -92,6 +95,12 @@ func (s *Service) RunDue(ctx context.Context, now time.Time) int {
 		return 0
 	}
 
+	if len(repositories) > 0 {
+		s.logger.Info("Scheduler 触发定时任务",
+			zap.Int("dueCount", len(repositories)),
+		)
+	}
+
 	started := 0
 	for _, repository := range repositories {
 		if !s.tryMarkRunning(repository.ID) {
@@ -118,18 +127,53 @@ func (s *Service) RunDue(ctx context.Context, now time.Time) int {
 				s.unmarkRunning(repositoryID)
 			}()
 			if s.syncer != nil {
-				if _, err := s.syncer.SyncRepository(ctx, repositoryID); err != nil {
-					s.logger.Warn("定时同步仓库失败", zap.Uint("repositoryID", repositoryID), zap.Error(err))
+				if _, syncErr := s.syncer.SyncRepository(ctx, repositoryID); syncErr != nil {
+					s.logger.Warn("定时同步仓库失败", zap.Uint("repositoryID", repositoryID), zap.Error(syncErr))
 				}
 			} else if s.checker != nil {
-				if _, err := s.checker.CheckLatest(ctx, repositoryID); err != nil {
-					s.logger.Warn("定时检查 Release 失败", zap.Uint("repositoryID", repositoryID), zap.Error(err))
+				if _, checkErr := s.checker.CheckLatest(ctx, repositoryID); checkErr != nil {
+					s.logger.Warn("定时检查 Release 失败", zap.Uint("repositoryID", repositoryID), zap.Error(checkErr))
 				}
 			}
 		}()
 	}
 
 	return started
+}
+
+// RetryFailedAssets 扫描最近失败的资产，通过 assetService 触发重试下载。
+// 调用方应在定时循环中周期性调用此方法。
+func (s *Service) RetryFailedAssets(ctx context.Context, assetService interface {
+	Download(ctx context.Context, assetID uint) (interface{}, error)
+}) int {
+	var failedAssets []models.Asset
+	if err := s.db.WithContext(ctx).
+		Where("status = ?", models.AssetStatusFailed).
+		Order("updated_at ASC").
+		Limit(10).
+		Find(&failedAssets).Error; err != nil {
+		s.logger.Warn("查询失败资产失败", zap.Error(err))
+		return 0
+	}
+
+	retried := 0
+	for _, asset := range failedAssets {
+		if _, err := assetService.Download(ctx, asset.ID); err != nil {
+			s.logger.Debug("重试下载资产失败",
+				zap.Uint("assetID", asset.ID),
+				zap.String("name", asset.Name),
+				zap.Error(err),
+			)
+			continue
+		}
+		retried++
+	}
+
+	if retried > 0 {
+		s.logger.Info("Scheduler 重试下载资产", zap.Int("retried", retried))
+	}
+
+	return retried
 }
 
 func (s *Service) dueRepositories(ctx context.Context, now time.Time) ([]models.Repository, error) {

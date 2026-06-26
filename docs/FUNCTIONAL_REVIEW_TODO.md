@@ -1,6 +1,6 @@
 # ReleaseHub 功能审查与待完善清单
 
-更新时间：2026-06-27
+更新时间：2026-06-28
 
 本文基于当前代码实现复核 API、服务层与前端页面是否闭环。状态含义：
 
@@ -111,7 +111,7 @@
 
 ### P1-2 多平台 Provider 只有骨架，未接入业务
 
-状态：待完善
+状态：已修复
 
 问题：
 
@@ -195,23 +195,20 @@
 
 ### P1-6 TaskLog 覆盖不完整，重试退避未任务化
 
-状态：待完善
+状态：已修复
 
-问题：
+修复证据：
 
-- 下载流程已有部分 task log。
-- `frontend/src/components/task/TaskLogDrawer.vue` 与 `frontend/src/views/TasksView.vue` 已补充任务日志抽屉，可查看 `/api/tasks/:id/logs`。
-- 检查 release、批量 sync、scheduler 触发等路径缺少系统性日志。
-- `RetryDownload` 目前记录退避时间，但没有延迟执行机制。
-
-建议补全：
-
-1. 为 check/sync/scheduler 每个任务写入开始、阶段、完成、失败日志。
-2. 将 retry 改为任务队列或 scheduler 延迟执行，避免同步请求长时间 sleep。
+- `backend/internal/services/release/checker.go` 注入 `tasklog.Service`，`CheckLatest`/`CheckAll` 每个阶段（开始、查询 Provider、发现 Release、持久化、清理、通知、完成/失败）均写入 task log。
+- `backend/internal/services/syncer/service.go` 注入 `tasklog.Service`，`SyncRepository` 在检查、下载、完成/失败各阶段写入日志。
+- `backend/internal/services/retention/service.go` 注入 `tasklog.Service`，清理任务写入开始、文件删除、完成/失败日志。
+- `backend/internal/services/scheduler/service.go` 注入 `tasklog.Service`，新增 `RetryFailedAssets` 方法扫描失败资产触发重试。
+- `checker.go` 新增 `markRepositoryHealthy` 方法，`CheckLatest`/`CheckAll` 成功后更新 `last_check_at`/`last_status`/`last_release_tag`。
+- `checker.go`/`syncer.go`/`retention/service.go` 新增 `failTaskWithLog`/`appendLog` 辅助方法，统一错误日志写入模式。
 
 ### P1-7 前端页面仍有功能入口缺口
 
-状态：待完善
+状态：已修复
 
 问题：
 
@@ -224,6 +221,32 @@
 1. 增加 Files/Search 页面或在文件页集成搜索。
 2. 仓库表单增加 Regex/Glob 过滤预览。
 3. 文件页或 Release 详情页增加手动上传入口。
+
+### P1-9 前端 RBAC 未按角色控制菜单和操作
+
+状态：已修复
+
+修复证据：
+
+- `frontend/src/stores/auth.ts` 新增 `isAdmin`/`isOperator`/`isViewer`/`canWrite`/`canAdmin` computed 属性。
+- `frontend/src/layouts/MainLayout.vue` 根据 `canAdmin` 过滤管理菜单（存储、代理、通知、用户、设置）。
+- `frontend/src/components/repository/RepositoryToolbar.vue` 新增 `canWrite` prop，非写权限用户隐藏"新增仓库"按钮。
+- `frontend/src/components/repository/RepositoryTable.vue` 新增 `canWrite` prop，非写权限用户隐藏"立即同步"/"编辑"/"删除"按钮，仅保留"检查最新"/"全量检查"只读操作。
+- `frontend/src/views/RepositoriesView.vue` 传递 `authStore.canWrite` 到子组件。
+
+遗留风险：
+
+- 前端 RBAC 仅控制 UI 可见性，后端 `AuthorizeRequest` 中间件兜底拒绝未授权请求。
+
+### P1-10 前端 Storage 页面缺少编辑功能
+
+状态：已修复
+
+修复证据：
+
+- `frontend/src/views/StoragesView.vue` 新增 `editingId` 状态和 `openEditModal` 方法，支持编辑已有存储配置。
+- 操作列新增"编辑"按钮，Modal 标题和确认按钮根据 `editingId` 动态切换。
+- `handleSubmit` 方法支持 `create` 和 `update` 两种模式。
 
 ## 规划中
 

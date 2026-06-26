@@ -6,11 +6,13 @@ import AssetPanel from '@/components/repository/AssetPanel.vue'
 import RepositoryFormDrawer from '@/components/repository/RepositoryFormDrawer.vue'
 import RepositoryTable from '@/components/repository/RepositoryTable.vue'
 import RepositoryToolbar from '@/components/repository/RepositoryToolbar.vue'
+import { useAuthStore } from '@/stores/auth'
 import { useRepositoriesStore } from '@/stores/repositories'
 import { useReleasesStore } from '@/stores/releases'
 import type { Asset } from '@/types/release'
 import type { Repository, RepositoryFormMode, RepositoryPayload } from '@/types/repository'
 
+const authStore = useAuthStore()
 const repositoryStore = useRepositoriesStore()
 const releaseStore = useReleasesStore()
 const message = useMessage()
@@ -168,6 +170,7 @@ async function retryAsset(asset: Asset) {
       <RepositoryToolbar
         v-model:search="search"
         :loading="repositoryStore.loading"
+        :can-write="authStore.canWrite"
         @create="openCreateDrawer"
         @refresh="repositoryStore.refresh"
       />
@@ -180,6 +183,7 @@ async function retryAsset(asset: Asset) {
         :checking-id="repositoryStore.checkingId"
         :checking-all-id="repositoryStore.checkingAllId"
         :syncing-id="repositoryStore.syncingId"
+        :can-write="authStore.canWrite"
         @edit="openEditDrawer"
         @toggle="toggleRepository"
         @remove="removeRepository"

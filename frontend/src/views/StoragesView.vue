@@ -25,6 +25,7 @@ const storagesStore = useStoragesStore()
 const message = useMessage()
 
 const showModal = shallowRef(false)
+const editingId = shallowRef<number | null>(null)
 const formName = shallowRef('')
 const formType = shallowRef<StorageType>('local')
 const formBasePath = shallowRef('')
@@ -65,7 +66,7 @@ const storageColumns = computed<DataTableColumns<StorageItem>>(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 200,
+    width: 240,
     render: (row) =>
       h(NSpace, null, {
         default: () => [
@@ -78,6 +79,11 @@ const storageColumns = computed<DataTableColumns<StorageItem>>(() => [
               onClick: () => handleTest(row.id)
             },
             { default: () => '测试连接' }
+          ),
+          h(
+            NButton,
+            { size: 'small', secondary: true, onClick: () => openEditModal(row) },
+            { default: () => '编辑' }
           ),
           h(
             NPopconfirm,
@@ -103,6 +109,7 @@ onMounted(() => {
 })
 
 function openCreateModal() {
+  editingId.value = null
   formName.value = ''
   formType.value = 'local'
   formBasePath.value = ''
@@ -118,13 +125,30 @@ function openCreateModal() {
   showModal.value = true
 }
 
-async function handleCreate() {
+function openEditModal(row: StorageItem) {
+  editingId.value = row.id
+  formName.value = row.name
+  formType.value = row.type as StorageType
+  formBasePath.value = row.basePath
+  formIsDefault.value = row.isDefault
+  formEndpoint.value = row.endpoint || ''
+  formBucket.value = row.bucket || ''
+  formRegion.value = row.region || ''
+  formAccessKey.value = ''
+  formSecretKey.value = ''
+  formUsername.value = row.username || ''
+  formPassword.value = ''
+  formRemoteUrl.value = row.remoteUrl || ''
+  showModal.value = true
+}
+
+async function handleSubmit() {
   if (!formName.value.trim()) {
     message.warning('名称不能为空')
     return
   }
   try {
-    await storagesStore.create({
+    const payload = {
       name: formName.value.trim(),
       type: formType.value,
       basePath: formBasePath.value.trim() || undefined,
@@ -135,13 +159,19 @@ async function handleCreate() {
       accessKey: formAccessKey.value.trim() || undefined,
       secretKey: formSecretKey.value.trim() || undefined,
       username: formUsername.value.trim() || undefined,
-      password: formPassword.value.trim() || undefined,
+      password: formPassword.value || undefined,
       remoteUrl: formRemoteUrl.value.trim() || undefined
-    })
-    message.success('存储已添加')
+    }
+    if (editingId.value) {
+      await storagesStore.update(editingId.value, payload)
+      message.success('存储已更新')
+    } else {
+      await storagesStore.create(payload)
+      message.success('存储已添加')
+    }
     showModal.value = false
   } catch (err) {
-    message.error(err instanceof Error ? err.message : '添加存储失败')
+    message.error(err instanceof Error ? err.message : '操作失败')
   }
 }
 
@@ -196,7 +226,7 @@ async function handleTest(id: number) {
       />
     </NCard>
 
-    <NModal v-model:show="showModal" preset="dialog" title="添加存储" positive-text="添加" negative-text="取消" @positive-click="handleCreate">
+    <NModal v-model:show="showModal" preset="dialog" :title="editingId ? '编辑存储' : '添加存储'" :positive-text="editingId ? '保存' : '添加'" negative-text="取消" @positive-click="handleSubmit">
       <NForm label-placement="left" label-width="auto">
         <NFormItem label="名称">
           <NInput v-model:value="formName" placeholder="例如：本地存储" />

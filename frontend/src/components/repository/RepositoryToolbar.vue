@@ -5,6 +5,7 @@ import { NButton, NInput, NSpace } from 'naive-ui'
 defineProps<{
   search: string
   loading: boolean
+  canWrite: boolean
 }>()
 
 const emit = defineEmits<{
@@ -30,7 +31,7 @@ const emit = defineEmits<{
         </template>
         刷新
       </NButton>
-      <NButton type="primary" @click="emit('create')">
+      <NButton v-if="canWrite" type="primary" @click="emit('create')">
         <template #icon>
           <Plus />
         </template>

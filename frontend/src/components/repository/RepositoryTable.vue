@@ -12,6 +12,7 @@ const props = defineProps<{
   checkingId: number | null
   checkingAllId: number | null
   syncingId: number | null
+  canWrite: boolean
 }>()
 
 const emit = defineEmits<{
@@ -81,70 +82,62 @@ const columns = computed<DataTableColumns<Repository>>(() => [
     width: 400,
     render: (row) =>
       h(NSpace, null, {
-        default: () => [
-          h(
-            NButton,
-            {
+        default: () => {
+          const buttons = []
+          // 检查操作：所有用户可见
+          buttons.push(
+            h(NButton, {
               size: 'small',
               type: 'primary',
               secondary: true,
               loading: props.checkingId === row.id,
               onClick: () => emit('check', row)
-            },
-            { default: () => '检查最新' }
-          ),
-          h(
-            NButton,
-            {
+            }, { default: () => '检查最新' })
+          )
+          buttons.push(
+            h(NButton, {
               size: 'small',
               type: 'info',
               secondary: true,
               loading: props.checkingAllId === row.id,
               onClick: () => emit('check-all', row)
-            },
-            { default: () => '全量检查' }
-          ),
-          h(
-            NButton,
-            {
-              size: 'small',
-              type: 'success',
-              secondary: true,
-              loading: props.syncingId === row.id,
-              onClick: () => emit('sync', row)
-            },
-            { default: () => '立即同步' }
-          ),
-          h(
-            NButton,
-            {
-              size: 'small',
-              secondary: true,
-              onClick: () => emit('edit', row)
-            },
-            { default: () => '编辑' }
-          ),
-          h(
-            NPopconfirm,
-            {
-              onPositiveClick: () => emit('remove', row)
-            },
-            {
-              trigger: () =>
-                h(
-                  NButton,
-                  {
+            }, { default: () => '全量检查' })
+          )
+          // 写操作：仅 canWrite 用户可见
+          if (props.canWrite) {
+            buttons.push(
+              h(NButton, {
+                size: 'small',
+                type: 'success',
+                secondary: true,
+                loading: props.syncingId === row.id,
+                onClick: () => emit('sync', row)
+              }, { default: () => '立即同步' })
+            )
+            buttons.push(
+              h(NButton, {
+                size: 'small',
+                secondary: true,
+                onClick: () => emit('edit', row)
+              }, { default: () => '编辑' })
+            )
+            buttons.push(
+              h(NPopconfirm, {
+                onPositiveClick: () => emit('remove', row)
+              }, {
+                trigger: () =>
+                  h(NButton, {
                     size: 'small',
                     type: 'error',
                     secondary: true,
                     loading: props.saving
-                  },
-                  { default: () => '删除' }
-                ),
-              default: () => `删除 ${row.owner}/${row.repo}？`
-            }
-          )
-        ]
+                  }, { default: () => '删除' }),
+                default: () => `删除 ${row.owner}/${row.repo}？`
+              })
+            )
+          }
+          return buttons
+        }
       })
   }
 ])

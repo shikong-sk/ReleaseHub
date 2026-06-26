@@ -13,6 +13,7 @@ import (
 	assetsvc "releasehub/backend/internal/services/asset"
 	notifysvc "releasehub/backend/internal/services/notify"
 	releasesvc "releasehub/backend/internal/services/release"
+	tasklogsvc "releasehub/backend/internal/services/tasklog"
 
 	"gorm.io/gorm"
 )
@@ -24,6 +25,7 @@ type Service struct {
 	checker                *releasesvc.CheckService
 	assetService           *assetsvc.Service
 	notifier               *notifysvc.Service
+	logService             *tasklogsvc.Service
 	maxConcurrentDownloads int
 }
 
@@ -54,6 +56,7 @@ func NewService(db *gorm.DB, checker *releasesvc.CheckService, storageConfig con
 		checker:                checker,
 		assetService:           assetService,
 		notifier:               notifysvc.NewService(db),
+		logService:             tasklogsvc.NewService(db),
 		maxConcurrentDownloads: defaultMaxConcurrentDownloads,
 	}, nil
 }
@@ -70,12 +73,17 @@ func (s *Service) SyncRepository(ctx context.Context, repositoryID uint) (*Resul
 		return nil, err
 	}
 
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("开始同步仓库 (ID: %d)", repositoryID))
+
 	checkResult, err := s.checker.CheckLatest(ctx, repositoryID)
 	if err != nil {
-		s.failTask(ctx, &task, err)
+		s.failTaskWithLog(ctx, &task, err, "检查最新 Release 失败")
 		s.notifySyncFailed(ctx, repositoryID, err)
 		return nil, err
 	}
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("检查完成: %s/%s 版本 %s",
+		checkResult.Repository.Owner, checkResult.Repository.Repo, checkResult.Release.Tag))
 
 	task.ReleaseID = &checkResult.Release.ID
 	result := &Result{
@@ -87,12 +95,22 @@ func (s *Service) SyncRepository(ctx context.Context, repositoryID uint) (*Resul
 	}
 
 	assetsToDownload := downloadableAssets(checkResult.Assets)
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("待下载资产 %d 个（跳过 %d 个）",
+		len(assetsToDownload), len(checkResult.Assets)-len(assetsToDownload)))
+
 	downloadResults, failedAssets := s.downloadAssets(ctx, assetsToDownload)
 	result.DownloadResults = downloadResults
 	result.FailedAssets = failedAssets
 
+	if len(downloadResults) > 0 {
+		s.appendLog(ctx, task.ID, "info", fmt.Sprintf("已下载 %d 个资产", len(downloadResults)))
+	}
+	if len(failedAssets) > 0 {
+		s.appendLog(ctx, task.ID, "warn", fmt.Sprintf("%d 个资产下载失败: %s", len(failedAssets), joinAssetErrors(failedAssets)))
+	}
+
 	if err := s.reloadAssets(ctx, &result.Assets, checkResult.Release.ID); err != nil {
-		s.failTask(ctx, &task, err)
+		s.failTaskWithLog(ctx, &task, err, "重新加载资产数据失败")
 		return result, err
 	}
 
@@ -115,6 +133,10 @@ func (s *Service) SyncRepository(ctx context.Context, repositoryID uint) (*Resul
 	}
 	result.Task = task
 	s.notifySyncSuccess(ctx, result.Repository, result.Release, len(downloadResults))
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("同步完成: %s/%s 版本 %s，下载 %d 个资产",
+		result.Repository.Owner, result.Repository.Repo, result.Release.Tag, len(downloadResults)))
+
 	return result, nil
 }
 
@@ -199,6 +221,19 @@ func (s *Service) failTask(ctx context.Context, task *models.Task, err error) {
 	task.ErrorMessage = err.Error()
 	task.FinishedAt = &now
 	_ = s.db.WithContext(ctx).Save(task).Error
+}
+
+// failTaskWithLog 标记任务失败并写入日志
+func (s *Service) failTaskWithLog(ctx context.Context, task *models.Task, err error, logMsg string) {
+	s.failTask(ctx, task, err)
+	s.appendLog(ctx, task.ID, "error", logMsg+": "+err.Error())
+}
+
+// appendLog 写入任务日志
+func (s *Service) appendLog(ctx context.Context, taskID uint, level string, message string) {
+	if s.logService != nil {
+		_ = s.logService.Append(ctx, taskID, level, message)
+	}
 }
 
 func (s *Service) notifySyncSuccess(ctx context.Context, repository models.Repository, release models.Release, downloaded int) {
