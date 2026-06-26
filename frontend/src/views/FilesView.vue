@@ -1,18 +1,27 @@
 <script setup lang="ts">
 import { computed, onMounted, shallowRef } from 'vue'
-import { NAlert, NButton, NCard, NCollapse, NCollapseItem, NGrid, NGi, NInput, NStatistic, NTag } from 'naive-ui'
-import { RefreshCw, Search } from 'lucide-vue-next'
+import { NAlert, NButton, NCard, NCollapse, NCollapseItem, NGrid, NGi, NInput, NPopconfirm, NStatistic, NTag, useMessage } from 'naive-ui'
+import { RefreshCw, Search, Database, Trash2 } from 'lucide-vue-next'
 
 import FileTable from '@/components/file/FileTable.vue'
 import { useFilesStore } from '@/stores/files'
 import { search as apiSearch, type SearchResult } from '@/api/search'
+import { runReconcile, type ReconcileResult } from '@/api/reconcile'
+import { deleteAsset } from '@/api/releases'
+import { useAuthStore } from '@/stores/auth'
+import type { FileItem } from '@/types/file'
 
 const filesStore = useFilesStore()
 const localSearch = shallowRef('')
 const globalQuery = shallowRef('')
+const message = useMessage()
 const globalLoading = shallowRef(false)
 const globalError = shallowRef<string | null>(null)
 const globalResult = shallowRef<SearchResult | null>(null)
+const reconcileLoading = shallowRef(false)
+const reconcileError = shallowRef<string | null>(null)
+const reconcileResult = shallowRef<ReconcileResult | null>(null)
+const authStore = useAuthStore()
 
 const filteredFiles = computed(() => {
   const keyword = localSearch.value.trim().toLowerCase()
@@ -37,6 +46,28 @@ function formatBytes(size: number) {
     return `${(size / 1024).toFixed(1)} KB`
   }
   return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
+
+async function handleReconcile() {
+  reconcileLoading.value = true
+  reconcileError.value = null
+  try {
+    reconcileResult.value = await runReconcile()
+  } catch (err) {
+    reconcileError.value = err instanceof Error ? err.message : '对账失败'
+  } finally {
+    reconcileLoading.value = false
+  }
+}
+
+async function handleDeleteFile(file: FileItem) {
+  try {
+    await deleteAsset(file.assetId)
+    message.success(`${file.name} 已删除`)
+    void filesStore.refresh()
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '删除失败')
+  }
 }
 
 async function handleGlobalSearch() {
@@ -66,6 +97,10 @@ async function handleGlobalSearch() {
           <RefreshCw />
         </template>
         刷新
+      </NButton>
+      <NButton v-if="authStore.canAdmin" secondary :loading="reconcileLoading" @click="handleReconcile">
+        <template #icon><Database /></template>
+        存储对账
       </NButton>
     </section>
 
@@ -121,9 +156,27 @@ async function handleGlobalSearch() {
       {{ filesStore.error }}
     </NAlert>
 
+    <NCard v-if="reconcileResult" :bordered="false" title="存储对账结果">
+      <NAlert v-if="reconcileError" type="error" closable>{{ reconcileError }}</NAlert>
+      <p v-if="reconcileResult.missingInStorage.length" style="color: #cf1322">
+        存储缺失 {{ reconcileResult.missingInStorage.length }} 个文件：
+        {{ reconcileResult.missingInStorage.join('、') }}
+      </p>
+      <p v-if="reconcileResult.missingInDB.length" style="color: #fa8c16">
+        数据库缺失 {{ reconcileResult.missingInDB.length }} 个文件：
+        {{ reconcileResult.missingInDB.join('、') }}
+      </p>
+      <p v-if="!reconcileResult.missingInStorage.length && !reconcileResult.missingInDB.length && !reconcileResult.orphanedAssets.length" style="color: #52c41a">
+        存储与数据库完全一致。
+      </p>
+      <p v-if="reconcileResult.orphanedAssets.length" style="color: #8c8c8c">
+        {{ reconcileResult.orphanedAssets.length }} 个孤立资产记录待清理。
+      </p>
+    </NCard>
+
     <NCard :bordered="false" title="本地文件">
       <NInput v-model:value="localSearch" class="file-search" clearable placeholder="搜索 owner/repo/tag/name" />
-      <FileTable class="file-table" :files="filteredFiles" :loading="filesStore.loading" />
+      <FileTable class="file-table" :files="filteredFiles" :loading="filesStore.loading" :can-write="authStore.canWrite" @delete="handleDeleteFile" />
     </NCard>
   </main>
 </template>

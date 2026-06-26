@@ -31,7 +31,8 @@ onMounted(async () => {
     healthStore.refresh(),
     repositoryStore.refresh(),
     tasksStore.refresh(),
-    filesStore.refresh()
+    filesStore.refresh(),
+    tasksStore.refresh()
   ])
   statsLoading.value = true
   try {
@@ -97,6 +98,12 @@ onMounted(async () => {
     </NSpin>
 
     <NAlert v-if="statsError" type="error" closable>{{ statsError }}</NAlert>
+
+    <NCard v-if="tasksStore.failedCount > 0" :bordered="false" title="最近失败任务">
+      <NAlert type="warning" :show-icon="false">
+        {{ tasksStore.failedCount }} 个任务失败。请在任务页面查看详情。
+      </NAlert>
+    </NCard>
 
     <HealthSummary
       :status="healthStore.status"

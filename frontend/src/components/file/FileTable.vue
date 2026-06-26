@@ -1,15 +1,20 @@
 <script setup lang="ts">
 import { computed, h } from 'vue'
-import { Download } from 'lucide-vue-next'
-import { NButton, NDataTable } from 'naive-ui'
+import { Download, Trash2 } from 'lucide-vue-next'
+import { NButton, NDataTable, NPopconfirm } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 
 import { assetFileURL } from '@/api/files'
 import type { FileItem } from '@/types/file'
 
-defineProps<{
+const props = defineProps<{
   files: FileItem[]
   loading: boolean
+  canWrite: boolean
+}>()
+
+const emit = defineEmits<{
+  delete: [file: FileItem]
 }>()
 
 const columns = computed<DataTableColumns<FileItem>>(() => [
@@ -54,22 +59,39 @@ const columns = computed<DataTableColumns<FileItem>>(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 110,
-    render: (row) =>
-      h(
-        NButton,
-        {
+    width: 160,
+    render: (row) => {
+      const buttons = [
+        h(NButton, {
           size: 'small',
           type: 'primary',
           secondary: true,
           tag: 'a',
           href: assetFileURL(row.assetId)
-        },
-        {
+        }, {
           icon: () => h(Download),
           default: () => '下载'
-        }
-      )
+        })
+      ]
+      if (props.canWrite) {
+        buttons.push(
+          h(NPopconfirm, {
+            onPositiveClick: () => emit('delete', row)
+          }, {
+            trigger: () => h(NButton, {
+              size: 'small',
+              type: 'error',
+              secondary: true
+            }, {
+              icon: () => h(Trash2),
+              default: () => '删除'
+            }),
+            default: () => `删除 ${row.name}？`
+          })
+        )
+      }
+      return h('div', { style: 'display: flex; gap: 8px;' }, buttons)
+    }
   }
 ])
 

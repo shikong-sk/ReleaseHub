@@ -29,3 +29,10 @@ export function redownloadAsset(assetId: number): Promise<AssetDownloadResult> {
     method: 'POST'
   })
 }
+
+
+export async function deleteAsset(assetId: number): Promise<void> {
+  await requestJson<void>(`/api/assets/${assetId}`, {
+    method: 'DELETE'
+  })
+}

@@ -248,6 +248,48 @@
 - 操作列新增"编辑"按钮，Modal 标题和确认按钮根据 `editingId` 动态切换。
 - `handleSubmit` 方法支持 `create` 和 `update` 两种模式。
 
+### P1-11 前端缺少修改密码入口
+
+状态：已修复
+
+修复证据：
+
+- `frontend/src/layouts/MainLayout.vue` 用户操作区新增修改密码按钮（KeyRound 图标）。
+- 点击弹出 Modal，要求输入当前密码、新密码和确认密码。
+- 新密码至少 6 位，两次输入必须一致，修改成功后自动退出并跳转登录页。
+- 后端 `POST /api/auth/change-password` 接口已完整实现，AuthRequired 中间件正确注入 `userID`。
+
+### P1-12 前端存储对账入口缺失
+
+状态：已修复
+
+修复证据：
+
+- 新增 `frontend/src/api/reconcile.ts`，封装 `POST /api/reconcile`。
+- `frontend/src/views/FilesView.vue` 新增"存储对账"按钮（仅 admin 可见），点击后展示缺失文件列表和孤立资产数。
+- 对账结果以卡片形式展示，区分存储缺失、数据库缺失和孤立资产。
+
+### P1-13 前端文件页面缺少删除操作
+
+状态：部分修复
+
+修复证据：
+
+- `frontend/src/api/releases.ts` 新增 `deleteAsset` API 封装。
+- FilesView 新增 `handleDeleteFile` 方法（删除后自动刷新文件列表）。
+
+遗留风险：
+
+- FileTable 组件尚未添加删除按钮列，当前删除操作只能通过 AssetPanel 执行。
+
+### P1-14 Dashboard 缺少异常信息展示
+
+状态：已修复
+
+修复证据：
+
+- `frontend/src/views/DashboardView.vue` 新增失败任务告警卡片，当存在失败任务时提示用户查看任务页面。
+
 ## 规划中
 
 ### P2-1 PostgreSQL 未实现
