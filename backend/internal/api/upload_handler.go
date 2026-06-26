@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"releasehub/backend/internal/config"
 	"releasehub/backend/internal/models"
 	"releasehub/backend/internal/services/storage"
 
@@ -14,11 +15,15 @@ import (
 )
 
 type uploadHandler struct {
-	db *gorm.DB
+	db       *gorm.DB
+	storages *storage.DriverFactory
 }
 
-func registerUploadRoutes(router *gin.Engine, db *gorm.DB) {
-	handler := &uploadHandler{db: db}
+func registerUploadRoutes(router *gin.Engine, db *gorm.DB, storageConfig config.StorageConfig) {
+	handler := &uploadHandler{
+		db:       db,
+		storages: storage.NewDriverFactory(db, storageConfig),
+	}
 	router.POST("/api/assets/upload", handler.upload)
 }
 
@@ -88,14 +93,7 @@ func (h *uploadHandler) upload(c *gin.Context) {
 }
 
 func (h *uploadHandler) getStorageDriver(c *gin.Context, repo models.Repository) (storage.Driver, error) {
-	if repo.StorageID == nil {
-		return storage.NewLocalStorage("data/releases")
-	}
-	var s models.Storage
-	if err := h.db.WithContext(c.Request.Context()).First(&s, *repo.StorageID).Error; err != nil {
-		return nil, fmt.Errorf("存储配置不存在")
-	}
-	return createStorageDriver(s)
+	return h.storages.DriverForRepository(c.Request.Context(), repo)
 }
 
 func safeUploadSegment(value string) string {

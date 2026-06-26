@@ -70,11 +70,13 @@ const selectedProxyId = computed<number | undefined>({
 })
 
 const form = reactive<RepositoryPayload>({
+  provider: 'github',
   owner: '',
   repo: '',
   githubTokenId: null,
   storageId: null,
   proxyId: null,
+  providerApiBaseUrl: '',
   enabled: true,
   intervalSeconds: 1800,
   filterMode: 'glob',
@@ -143,11 +145,13 @@ watch(
 )
 
 function resetForm() {
+  form.provider = props.repository?.provider ?? 'github'
   form.owner = props.repository?.owner ?? ''
   form.repo = props.repository?.repo ?? ''
   form.githubTokenId = props.repository?.githubTokenId ?? null
   form.storageId = props.repository?.storageId ?? null
   form.proxyId = props.repository?.proxyId ?? null
+  form.providerApiBaseUrl = props.repository?.providerApiBaseUrl ?? ''
   form.enabled = props.repository?.enabled ?? true
   form.intervalSeconds = props.repository?.intervalSeconds ?? 1800
   form.filterMode = (props.repository?.filterMode ?? 'glob') as RepositoryFilterMode
@@ -161,11 +165,13 @@ function submit() {
   const storageId = form.storageId
   const proxyId = form.proxyId
   emit('submit', {
+    provider: form.provider,
     owner: form.owner.trim(),
     repo: form.repo.trim(),
     githubTokenId: tokenId === 0 || tokenId === null ? null : tokenId,
     storageId: storageId === 0 || storageId === null ? null : storageId,
     proxyId: proxyId === 0 || proxyId === null ? null : proxyId,
+    providerApiBaseUrl: form.providerApiBaseUrl.trim() || undefined,
     enabled: form.enabled,
     intervalSeconds: form.intervalSeconds,
     filterMode: form.filterMode,
@@ -226,7 +232,11 @@ function sampleAssetNames(): string[] {
     <NDrawerContent :title="title" closable>
       <NForm class="repository-form" label-placement="top">
         <NFormItem label="Provider">
-          <NSelect v-model:value="form.provider" :options="providerOptions" />
+          <NSelect v-model:value="form.provider" :options="providerOptions" :disabled="ownerDisabled" />
+        </NFormItem>
+
+        <NFormItem v-if="form.provider !== 'github'" label="API Base URL">
+          <NInput v-model:value="form.providerApiBaseUrl" :disabled="ownerDisabled" placeholder="https://gitlab.example.com/api/v4" />
         </NFormItem>
 
         <NFormItem label="Owner">

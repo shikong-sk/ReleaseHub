@@ -353,6 +353,124 @@
 
 ## 规划中
 
+### P1-19 Upload Handler 未按仓库选择存储驱动
+
+状态：已修复
+
+原问题：
+
+- `upload_handler.go` 使用硬编码 `createStorageDriver` 和 `NewLocalStorage("data/releases")`，不尊重仓库的存储配置。
+
+修复证据：
+
+- `uploadHandler` 新增 `storages *storage.DriverFactory` 字段。
+- `registerUploadRoutes` 接收 `config.StorageConfig` 参数。
+- `getStorageDriver` 改为调用 `DriverFactory.DriverForRepository`。
+- `router.go` 传入 `deps.Config.Storage`。
+
+### P1-20 main.go 中 Retention 未使用 DriverFactory
+
+状态：已修复
+
+原问题：
+
+- `main.go` 使用 `retentionsvc.NewService(db, cfg.Storage)` 创建 retention service，会固定创建 LocalStorage，无法按仓库选择存储。
+
+修复证据：
+
+- 改为使用 `retentionsvc.NewServiceWithFactory(db, cfg.Storage)` 创建 retention service。
+- 移除 error 检查（NewServiceWithFactory 不会返回错误）。
+
+### P1-21 Release Handler 未使用 DriverFactory
+
+状态：已修复
+
+原问题：
+
+- `release_handler.go` 使用 `assetsvc.NewService(db, storageConfig)` 创建 asset service，可能在创建时失败并导致所有 asset 相关路由返回 500。
+
+修复证据：
+
+- 改为使用 `assetsvc.NewServiceWithFactory(db, storageConfig)`，不会返回错误。
+- 移除 `assetServiceErr` 闭包检查，简化路由注册。
+
+### P1-22 仓库表单提交时 provider 字段未传到后端
+
+状态：已修复
+
+原问题：
+
+- 前端仓库表单有 provider 选择器，但 `form` 对象和 `submit` 函数未包含 provider 字段。
+
+修复证据：
+
+- `RepositoryFormDrawer.vue` 的 `form` reactive 对象新增 `provider: 'github'`。
+- `resetForm` 中从 `props.repository?.provider` 恢复。
+- `submit` 函数在 payload 中传递 `provider: form.provider`。
+
+### P1-23 前端仓库编辑模式下 provider/owner/repo 应禁用
+
+状态：已修复
+
+原问题：
+
+- 仓库的 provider/owner/repo 是唯一标识，编辑时不允许修改。
+- owner 输入框已有 disabled 逻辑，但 provider 选择器和 repo 输入框在编辑模式下仍可修改。
+
+修复证据：
+
+- Provider 选择器添加 `:disabled="ownerDisabled"`。
+- repo 输入框确认已有 `:disabled="ownerDisabled"`。
+
+### P1-24 非 GitHub Provider 缺少 API Base URL 配置
+
+状态：已修复
+
+原问题：
+
+- GitLab/Gitea/Forgejo 等自托管平台需要配置 API base URL。
+- `Repository` model、`CreateInput`、`UpdateInput` 均无此字段。
+- 前端仓库表单无 API base URL 输入。
+
+修复证据：
+
+- `models.Repository` 新增 `ProviderApiBaseUrl` 字段（`gorm:"column:provider_api_base_url;size:1024"`）。
+- `repository/service.go` 的 `CreateInput` 和 `UpdateInput` 新增 `ProviderApiBaseUrl`。
+- `buildRepository` 和 `Update` 方法处理该字段。
+- `release/checker.go` 的 `resolveProvider` 将 `repository.ProviderApiBaseUrl` 传给 `GetProvider`。
+- 前端 `RepositoryPayload` 和 `Repository` 类型新增 `providerApiBaseUrl`。
+- 前端仓库表单在 provider 非 GitHub 时显示 API Base URL 输入框。
+
+### P1-25 已验证资产的"重新下载"按钮改为"下载文件"链接
+
+状态：已修复
+
+原问题：
+
+- AssetPanel 中已验证/已下载资产的操作按钮为"重新下载"，但用户更常见的需求是直接下载文件。
+- 重新下载需要点击确认，操作路径较长。
+
+修复证据：
+
+- 已验证/已下载资产的按钮改为 `<a href="/api/assets/:id/file">` 的"下载文件"链接。
+- 按钮类型为 `tag: 'a'`，直接打开文件下载。
+
+### P1-26 前端缺少 Release 历史浏览功能
+
+状态：已修复
+
+原问题：
+
+- 后端已有 `GET /api/repositories/:id/releases` 和 `GET /api/releases/:id/assets` 接口。
+- 前端没有入口查看某个仓库的所有 Release 历史和资产列表。
+
+修复证据：
+
+- 新增 `ReleaseHistoryDrawer.vue` 组件，展示仓库的 Release 列表。
+- 点击 Release 可展开查看其资产列表。
+- RepositoryTable 操作列新增"历史"按钮。
+- RepositoriesView 集成 ReleaseHistoryDrawer。
+
 ### P2-1 PostgreSQL 未实现
 
 状态：规划中

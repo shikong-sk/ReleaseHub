@@ -73,6 +73,7 @@ type Repository struct {
 	GitHubTokenID        *uint            `json:"githubTokenId" gorm:"column:github_token_id"`
 	StorageID            *uint            `json:"storageId" gorm:"column:storage_id"`
 	ProxyID             *uint            `json:"proxyId" gorm:"column:proxy_id"`
+	ProviderApiBaseUrl  string           `json:"providerApiBaseUrl" gorm:"column:provider_api_base_url;size:1024"`
 	IntervalSeconds      int              `json:"intervalSeconds" gorm:"column:interval_seconds;not null;default:1800"`
 	FilterMode           string           `json:"filterMode" gorm:"column:filter_mode;size:20;not null;default:glob"`
 	AssetIncludePatterns string           `json:"assetIncludePatterns" gorm:"column:asset_include_patterns;type:text"`

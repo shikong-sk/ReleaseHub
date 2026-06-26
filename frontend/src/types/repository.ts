@@ -10,6 +10,7 @@ export interface Repository {
   githubTokenId: number | null
   storageId: number | null
   proxyId: number | null
+  providerApiBaseUrl: string
   intervalSeconds: number
   filterMode: RepositoryFilterMode
   assetIncludePatterns: string
@@ -32,6 +33,7 @@ export interface RepositoryPayload {
   githubTokenId?: number | null
   storageId?: number | null
   proxyId?: number | null
+  providerApiBaseUrl?: string
   enabled?: boolean
   provider?: string
   intervalSeconds: number

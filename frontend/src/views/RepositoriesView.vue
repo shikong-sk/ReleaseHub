@@ -3,6 +3,7 @@ import { computed, onMounted, shallowRef } from 'vue'
 import { NAlert, NCard, NGrid, NGi, NStatistic, useMessage } from 'naive-ui'
 
 import AssetPanel from '@/components/repository/AssetPanel.vue'
+import ReleaseHistoryDrawer from '@/components/repository/ReleaseHistoryDrawer.vue'
 import RepositoryFormDrawer from '@/components/repository/RepositoryFormDrawer.vue'
 import RepositoryTable from '@/components/repository/RepositoryTable.vue'
 import RepositoryToolbar from '@/components/repository/RepositoryToolbar.vue'
@@ -21,6 +22,8 @@ const search = shallowRef('')
 const drawerVisible = shallowRef(false)
 const formMode = shallowRef<RepositoryFormMode>('create')
 const editingRepository = shallowRef<Repository | null>(null)
+const historyRepository = shallowRef<Repository | null>(null)
+const showHistory = shallowRef(false)
 
 const filteredRepositories = computed(() => {
   const keyword = search.value.trim().toLowerCase()
@@ -36,6 +39,11 @@ const filteredRepositories = computed(() => {
 onMounted(() => {
   void repositoryStore.refresh()
 })
+
+function openHistory(repository: Repository) {
+  historyRepository.value = repository
+  showHistory.value = true
+}
 
 function openCreateDrawer() {
   formMode.value = 'create'
@@ -198,6 +206,11 @@ async function retryAsset(asset: Asset) {
       :downloading-asset-id="releaseStore.downloadingAssetId"
       @download="downloadAsset"
       @retry="retryAsset"
+    />
+
+    <ReleaseHistoryDrawer
+      v-model:show="showHistory"
+      :repository="historyRepository"
     />
 
     <RepositoryFormDrawer

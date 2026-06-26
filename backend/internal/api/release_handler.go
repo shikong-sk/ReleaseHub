@@ -17,7 +17,7 @@ type releaseHandler struct {
 }
 
 func registerReleaseRoutes(router *gin.Engine, db *gorm.DB, storageConfig config.StorageConfig) {
-	assetService, assetServiceErr := assetsvc.NewService(db, storageConfig)
+	assetService := assetsvc.NewServiceWithFactory(db, storageConfig)
 	handler := &releaseHandler{
 		db:           db,
 		assetService: assetService,
@@ -28,34 +28,10 @@ func registerReleaseRoutes(router *gin.Engine, db *gorm.DB, storageConfig config
 	group.GET("/:id/assets", handler.listAssets)
 
 	assetGroup := router.Group("/api/assets")
-	assetGroup.POST("/:id/download", func(c *gin.Context) {
-		if assetServiceErr != nil {
-			writeError(c, http.StatusInternalServerError, assetServiceErr.Error())
-			return
-		}
-		handler.downloadAsset(c)
-	})
-	assetGroup.POST("/:id/redownload", func(c *gin.Context) {
-		if assetServiceErr != nil {
-			writeError(c, http.StatusInternalServerError, assetServiceErr.Error())
-			return
-		}
-		handler.downloadAsset(c)
-	})
-	assetGroup.DELETE("/:id", func(c *gin.Context) {
-		if assetServiceErr != nil {
-			writeError(c, http.StatusInternalServerError, assetServiceErr.Error())
-			return
-		}
-		handler.deleteAsset(c)
-	})
-	assetGroup.GET("/:id/file", func(c *gin.Context) {
-		if assetServiceErr != nil {
-			writeError(c, http.StatusInternalServerError, assetServiceErr.Error())
-			return
-		}
-		handler.openAsset(c)
-	})
+	assetGroup.POST("/:id/download", handler.downloadAsset)
+	assetGroup.POST("/:id/redownload", handler.downloadAsset)
+	assetGroup.DELETE("/:id", handler.deleteAsset)
+	assetGroup.GET("/:id/file", handler.openAsset)
 }
 
 func (h *releaseHandler) get(c *gin.Context) {

@@ -300,7 +300,7 @@ func (s *CheckService) resolveProvider(ctx context.Context, repository models.Re
 			}
 			return provider.NewGitHubProvider(concrete), nil
 		}
-		return s.providers.GetProvider(repository.Provider, "")
+		return s.providers.GetProvider(repository.Provider, repository.ProviderApiBaseUrl)
 	}
 
 	// 回退：仅支持 GitHub

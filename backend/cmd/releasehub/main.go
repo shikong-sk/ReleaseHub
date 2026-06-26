@@ -70,10 +70,7 @@ func main() {
 		checkService := releasesvc.NewCheckService(db, githubClient).
 			WithGitHubFactory(githubsvc.NewClientFactory(cfg.GitHub.APIBaseURL, db)).
 			WithProviderRegistry(providersvc.NewRegistry(cfg.GitHub.APIBaseURL))
-		retentionService, err := retentionsvc.NewService(db, cfg.Storage)
-		if err != nil {
-			logger.Fatal("保留策略服务初始化失败", zap.Error(err))
-		}
+		retentionService := retentionsvc.NewServiceWithFactory(db, cfg.Storage)
 		checkService.WithRetention(retentionService)
 
 		syncService, err := syncersvc.NewService(db, checkService, cfg.Storage)

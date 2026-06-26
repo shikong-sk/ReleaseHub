@@ -58,7 +58,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	registerFilterRoutes(router)
 	registerSearchRoutes(router, deps.DB)
 	registerStatsRoutes(router, deps.DB)
-	registerUploadRoutes(router, deps.DB)
+	registerUploadRoutes(router, deps.DB, deps.Config.Storage)
 	registerReconcileRoutes(router, deps.DB, deps.Config.Storage, deps.Logger)
 	registerAPIKeyRoutes(router, deps.DB)
 

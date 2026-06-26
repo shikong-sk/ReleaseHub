@@ -101,10 +101,10 @@ const columns = computed<DataTableColumns<Asset>>(() => [
               size: 'small',
               type: 'primary',
               secondary: true,
-              loading: props.downloadingAssetId === row.id,
-              onClick: () => emit('download', row)
+              tag: 'a',
+              href: `/api/assets/${row.id}/file`
             },
-            { default: () => '重新下载' }
+            { default: () => '下载文件' }
           )
         )
       }
