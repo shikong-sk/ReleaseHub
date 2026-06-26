@@ -541,6 +541,22 @@
 - 已验证/已下载资产和失败资产的操作列新增"删除"按钮（带 NPopconfirm 确认）。
 - RepositoriesView 新增 `handleDeleteAsset` 方法处理删除事件。
 
+### P1-30 前端 HTTP 层未处理 401 自动跳转登录
+
+状态：已修复
+
+原问题：
+
+- 当 JWT 过期或无效时，后端返回 401。
+- 前端 `http.ts` 的 `getJson` 和 `requestJson` 仅抛出错误，不处理 401 自动跳转。
+- 用户会看到一堆错误提示而非被重定向到登录页。
+
+修复证据：
+
+- `frontend/src/api/http.ts` 新增 `handleUnauthorized` 函数。
+- `getJson` 和 `requestJson` 在收到 401 时清除 token 并跳转到 `/login`。
+- 使用 `TOKEN_KEY` 常量替代硬编码的 localStorage key。
+
 ### P2-5 Dashboard 趋势图未集成
 
 状态：规划中
