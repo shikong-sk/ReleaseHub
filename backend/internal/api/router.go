@@ -39,6 +39,8 @@ func NewRouter(deps Dependencies) http.Handler {
 	registerTokenRoutes(router, deps.DB)
 	registerConfigRoutes(router, deps.Config)
 	registerStorageRoutes(router, deps.DB)
+	registerProxyRoutes(router, deps.DB)
+	registerNotificationRoutes(router, deps.DB)
 
 	router.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{

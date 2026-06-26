@@ -2,6 +2,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import DashboardView from '@/views/DashboardView.vue'
 import FilesView from '@/views/FilesView.vue'
+import NotificationsView from '@/views/NotificationsView.vue'
+import ProxiesView from '@/views/ProxiesView.vue'
 import RepositoriesView from '@/views/RepositoriesView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import StoragesView from '@/views/StoragesView.vue'
@@ -34,6 +36,16 @@ const router = createRouter({
       path: '/storages',
       name: 'storages',
       component: StoragesView
+    },
+    {
+      path: '/proxies',
+      name: 'proxies',
+      component: ProxiesView
+    },
+    {
+      path: '/notifications',
+      name: 'notifications',
+      component: NotificationsView
     },
     {
       path: '/settings',

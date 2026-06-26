@@ -17,6 +17,8 @@ import {
 import type { SelectOption } from 'naive-ui'
 
 import { useTokensStore } from '@/stores/tokens'
+import { useStoragesStore } from '@/stores/storages'
+import { useProxiesStore } from '@/stores/proxies'
 import type { Repository, RepositoryFilterMode, RepositoryFormMode, RepositoryPayload } from '@/types/repository'
 
 const props = defineProps<{
@@ -32,8 +34,9 @@ const emit = defineEmits<{
 }>()
 
 const tokensStore = useTokensStore()
+const storagesStore = useStoragesStore()
+const proxiesStore = useProxiesStore()
 
-// NSelect 不支持 null 值，内部用 undefined 表示"无 Token"
 const selectedTokenId = computed<number | undefined>({
   get: () => form.githubTokenId ?? undefined,
   set: (val: number | undefined) => {
@@ -41,10 +44,26 @@ const selectedTokenId = computed<number | undefined>({
   }
 })
 
+const selectedStorageId = computed<number | undefined>({
+  get: () => form.storageId ?? undefined,
+  set: (val: number | undefined) => {
+    form.storageId = val ?? null
+  }
+})
+
+const selectedProxyId = computed<number | undefined>({
+  get: () => form.proxyId ?? undefined,
+  set: (val: number | undefined) => {
+    form.proxyId = val ?? null
+  }
+})
+
 const form = reactive<RepositoryPayload>({
   owner: '',
   repo: '',
   githubTokenId: null,
+  storageId: null,
+  proxyId: null,
   enabled: true,
   intervalSeconds: 1800,
   filterMode: 'glob',
@@ -69,14 +88,37 @@ const tokenOptions = computed<SelectOption[]>(() => {
   return options
 })
 
+const storageOptions = computed<SelectOption[]>(() => {
+  const options: SelectOption[] = [
+    { label: '默认存储', value: 0 }
+  ]
+  for (const storage of storagesStore.items) {
+    options.push({
+      label: `${storage.name} (${storage.type.toUpperCase()})`,
+      value: storage.id
+    })
+  }
+  return options
+})
+
+const proxyOptions = computed<SelectOption[]>(() => {
+  const options: SelectOption[] = [
+    { label: '不使用代理', value: 0 }
+  ]
+  for (const proxy of proxiesStore.items) {
+    options.push({
+      label: `${proxy.name} (${proxy.type.toUpperCase()} ${proxy.host}:${proxy.port})`,
+      value: proxy.id
+    })
+  }
+  return options
+})
+
 watch(
   () => [props.show, props.repository, props.mode] as const,
   () => {
-    if (!props.show) {
-      return
-    }
-    // 打开抽屉时刷新 Token 列表，确保选项最新
-    void tokensStore.refresh()
+    if (!props.show) return
+    void Promise.all([tokensStore.refresh(), storagesStore.refresh(), proxiesStore.refresh()])
     resetForm()
   },
   { immediate: true }
@@ -86,6 +128,8 @@ function resetForm() {
   form.owner = props.repository?.owner ?? ''
   form.repo = props.repository?.repo ?? ''
   form.githubTokenId = props.repository?.githubTokenId ?? null
+  form.storageId = props.repository?.storageId ?? null
+  form.proxyId = props.repository?.proxyId ?? null
   form.enabled = props.repository?.enabled ?? true
   form.intervalSeconds = props.repository?.intervalSeconds ?? 1800
   form.filterMode = (props.repository?.filterMode ?? 'glob') as RepositoryFilterMode
@@ -95,12 +139,15 @@ function resetForm() {
 }
 
 function submit() {
-  // value=0 表示"无 Token"，转换为 null
   const tokenId = form.githubTokenId
+  const storageId = form.storageId
+  const proxyId = form.proxyId
   emit('submit', {
     owner: form.owner.trim(),
     repo: form.repo.trim(),
     githubTokenId: tokenId === 0 || tokenId === null ? null : tokenId,
+    storageId: storageId === 0 || storageId === null ? null : storageId,
+    proxyId: proxyId === 0 || proxyId === null ? null : proxyId,
     enabled: form.enabled,
     intervalSeconds: form.intervalSeconds,
     filterMode: form.filterMode,
@@ -133,6 +180,22 @@ function submit() {
             v-model:value="selectedTokenId"
             :options="tokenOptions"
             placeholder="选择 Token 或使用匿名请求"
+          />
+        </NFormItem>
+
+        <NFormItem label="存储目标">
+          <NSelect
+            v-model:value="selectedStorageId"
+            :options="storageOptions"
+            placeholder="选择存储目标"
+          />
+        </NFormItem>
+
+        <NFormItem label="代理">
+          <NSelect
+            v-model:value="selectedProxyId"
+            :options="proxyOptions"
+            placeholder="选择代理"
           />
         </NFormItem>
 

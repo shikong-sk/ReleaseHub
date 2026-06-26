@@ -72,6 +72,7 @@ type Repository struct {
 	Enabled              bool             `json:"enabled" gorm:"column:enabled;not null"`
 	GitHubTokenID        *uint            `json:"githubTokenId" gorm:"column:github_token_id"`
 	StorageID            *uint            `json:"storageId" gorm:"column:storage_id"`
+	ProxyID             *uint            `json:"proxyId" gorm:"column:proxy_id"`
 	IntervalSeconds      int              `json:"intervalSeconds" gorm:"column:interval_seconds;not null;default:1800"`
 	FilterMode           string           `json:"filterMode" gorm:"column:filter_mode;size:20;not null;default:glob"`
 	AssetIncludePatterns string           `json:"assetIncludePatterns" gorm:"column:asset_include_patterns;type:text"`
@@ -138,4 +139,30 @@ type Task struct {
 	CreatedAt    time.Time      `json:"createdAt" gorm:"column:created_at"`
 	UpdatedAt    time.Time      `json:"updatedAt" gorm:"column:updated_at"`
 	DeletedAt    gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
+}
+
+type Proxy struct {
+	ID        uint           `json:"id" gorm:"primaryKey"`
+	Name      string         `json:"name" gorm:"column:name;size:120;not null"`
+	Type      string         `json:"type" gorm:"column:type;size:20;not null;default:http"`
+	Host      string         `json:"host" gorm:"column:host;size:512;not null"`
+	Port      int            `json:"port" gorm:"column:port;not null"`
+	Username  string         `json:"username" gorm:"column:username;size:255"`
+	Password  string         `json:"-" gorm:"column:password;size:512"`
+	CreatedAt time.Time      `json:"createdAt" gorm:"column:created_at"`
+	UpdatedAt time.Time      `json:"updatedAt" gorm:"column:updated_at"`
+	DeletedAt gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
+}
+
+type Notification struct {
+	ID        uint           `json:"id" gorm:"primaryKey"`
+	Name      string         `json:"name" gorm:"column:name;size:120;not null"`
+	Type      string         `json:"type" gorm:"column:type;size:20;not null"`
+	ServerURL string         `json:"serverUrl" gorm:"column:server_url;size:1024"`
+	Token     string         `json:"-" gorm:"column:token;size:512"`
+	Enabled   bool           `json:"enabled" gorm:"column:enabled;not null;default:true"`
+	Events    string         `json:"events" gorm:"column:events;type:text"`
+	CreatedAt time.Time      `json:"createdAt" gorm:"column:created_at"`
+	UpdatedAt time.Time      `json:"updatedAt" gorm:"column:updated_at"`
+	DeletedAt gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
 }

@@ -28,6 +28,14 @@ const menuOptions = computed<MenuOption[]>(() => [
     key: 'storages'
   },
   {
+    label: () => hRouterLink('/proxies', '代理'),
+    key: 'proxies'
+  },
+  {
+    label: () => hRouterLink('/notifications', '通知'),
+    key: 'notifications'
+  },
+  {
     label: () => hRouterLink('/settings', '设置'),
     key: 'settings'
   }

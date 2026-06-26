@@ -9,6 +9,7 @@ export interface Repository {
   enabled: boolean
   githubTokenId: number | null
   storageId: number | null
+  proxyId: number | null
   intervalSeconds: number
   filterMode: RepositoryFilterMode
   assetIncludePatterns: string
@@ -29,6 +30,8 @@ export interface RepositoryPayload {
   owner: string
   repo: string
   githubTokenId?: number | null
+  storageId?: number | null
+  proxyId?: number | null
   enabled?: boolean
   provider?: string
   intervalSeconds: number

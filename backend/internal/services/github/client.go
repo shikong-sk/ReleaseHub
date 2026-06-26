@@ -54,6 +54,26 @@ func NewClient(apiBaseURL string) (*Client, error) {
 	}, nil
 }
 
+// NewClientWithTransport 创建使用指定 Transport 的 GitHub 客户端（用于代理支持）
+func NewClientWithTransport(apiBaseURL string, transport *http.Transport) (*Client, error) {
+	if strings.TrimSpace(apiBaseURL) == "" {
+		apiBaseURL = "https://api.github.com"
+	}
+
+	baseURL, err := url.Parse(apiBaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API 地址无效: %w", err)
+	}
+
+	return &Client{
+		baseURL: baseURL,
+		httpClient: &http.Client{
+			Timeout:   20 * time.Second,
+			Transport: transport,
+		},
+	}, nil
+}
+
 // GetLatestRelease 获取仓库最新的 Release
 func (c *Client) GetLatestRelease(ctx context.Context, owner string, repo string, token string) (*Release, error) {
 	endpoint := *c.baseURL

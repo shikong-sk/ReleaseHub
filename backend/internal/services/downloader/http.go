@@ -19,10 +19,21 @@ type Result struct {
 	SHA256 string
 }
 
+// NewHTTPDownloader 创建默认的 HTTP 下载器
 func NewHTTPDownloader() *HTTPDownloader {
 	return &HTTPDownloader{
 		client: &http.Client{
 			Timeout: 30 * time.Minute,
+		},
+	}
+}
+
+// NewHTTPDownloaderWithTransport 创建使用指定 Transport 的 HTTP 下载器
+func NewHTTPDownloaderWithTransport(transport *http.Transport) *HTTPDownloader {
+	return &HTTPDownloader{
+		client: &http.Client{
+			Timeout:   30 * time.Minute,
+			Transport: transport,
 		},
 	}
 }

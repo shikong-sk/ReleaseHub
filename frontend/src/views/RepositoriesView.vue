@@ -55,6 +55,8 @@ async function submitRepository(payload: RepositoryPayload) {
     } else if (editingRepository.value) {
       await repositoryStore.update(editingRepository.value.id, {
         githubTokenId: payload.githubTokenId,
+        storageId: payload.storageId,
+        proxyId: payload.proxyId,
         enabled: payload.enabled,
         intervalSeconds: payload.intervalSeconds,
         filterMode: payload.filterMode,

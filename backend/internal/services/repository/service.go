@@ -38,6 +38,7 @@ type CreateInput struct {
 	Enabled              *bool  `json:"enabled"`
 	GitHubTokenID        *uint  `json:"githubTokenId"`
 	StorageID            *uint  `json:"storageId"`
+	ProxyID              *uint  `json:"proxyId"`
 	IntervalSeconds      int    `json:"intervalSeconds"`
 	FilterMode           string `json:"filterMode"`
 	AssetIncludePatterns string `json:"assetIncludePatterns"`
@@ -48,7 +49,8 @@ type CreateInput struct {
 type UpdateInput struct {
 	Enabled              *bool   `json:"enabled"`
 	GitHubTokenID        *uint   `json:"githubTokenId"`
-	StorageID            *uint   `json:"storageId"`
+	StorageID            *uint  `json:"storageId"`
+	ProxyID              *uint  `json:"proxyId"`
 	IntervalSeconds      *int    `json:"intervalSeconds"`
 	FilterMode           *string `json:"filterMode"`
 	AssetIncludePatterns *string `json:"assetIncludePatterns"`
@@ -120,6 +122,9 @@ func (s *Service) Update(ctx context.Context, id uint, input UpdateInput) (*mode
 	}
 	if input.StorageID != nil {
 		repository.StorageID = input.StorageID
+	}
+	if input.ProxyID != nil {
+		repository.ProxyID = input.ProxyID
 	}
 	if input.IntervalSeconds != nil {
 		if err := validateInterval(*input.IntervalSeconds); err != nil {
@@ -214,6 +219,7 @@ func buildRepository(input CreateInput) (*models.Repository, error) {
 		Enabled:              enabled,
 		GitHubTokenID:        input.GitHubTokenID,
 		StorageID:            input.StorageID,
+		ProxyID:              input.ProxyID,
 		IntervalSeconds:      interval,
 		FilterMode:           filterMode,
 		AssetIncludePatterns: strings.TrimSpace(input.AssetIncludePatterns),

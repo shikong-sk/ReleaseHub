@@ -52,5 +52,7 @@ func Migrate(db *gorm.DB) error {
 		&models.Release{},
 		&models.Asset{},
 		&models.Task{},
+		&models.Proxy{},
+		&models.Notification{},
 	)
 }
