@@ -10,6 +10,7 @@ import RepositoryToolbar from '@/components/repository/RepositoryToolbar.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useRepositoriesStore } from '@/stores/repositories'
 import { useReleasesStore } from '@/stores/releases'
+import { deleteAsset } from '@/api/releases'
 import type { Asset } from '@/types/release'
 import type { Repository, RepositoryFormMode, RepositoryPayload } from '@/types/repository'
 
@@ -67,6 +68,7 @@ async function submitRepository(payload: RepositoryPayload) {
         githubTokenId: payload.githubTokenId,
         storageId: payload.storageId,
         proxyId: payload.proxyId,
+        providerApiBaseUrl: payload.providerApiBaseUrl,
         enabled: payload.enabled,
         intervalSeconds: payload.intervalSeconds,
         filterMode: payload.filterMode,
@@ -140,6 +142,15 @@ async function downloadAsset(asset: Asset) {
   }
 }
 
+async function handleDeleteAsset(asset: Asset) {
+  try {
+    await deleteAsset(asset.id)
+    message.success(`已删除 ${asset.name}`)
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '删除资产失败')
+  }
+}
+
 async function retryAsset(asset: Asset) {
   try {
     const downloadedAsset = await releaseStore.redownload(asset)
@@ -206,6 +217,7 @@ async function retryAsset(asset: Asset) {
       :downloading-asset-id="releaseStore.downloadingAssetId"
       @download="downloadAsset"
       @retry="retryAsset"
+      @delete="handleDeleteAsset"
     />
 
     <ReleaseHistoryDrawer

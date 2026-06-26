@@ -514,6 +514,48 @@
 2. 再设计插件 manifest、版本兼容、权限声明。
 3. 最后实现插件安装与启停 UI。
 
+### P1-28 编辑仓库时未传 providerApiBaseUrl
+
+状态：已修复
+
+原问题：
+
+- RepositoriesView 的 `submitRepository` 在编辑模式下调用 `repositoryStore.update` 时未传递 `providerApiBaseUrl`。
+
+修复证据：
+
+- `submitRepository` 的 update payload 新增 `providerApiBaseUrl: payload.providerApiBaseUrl`。
+
+### P1-29 AssetPanel 缺少删除资产按钮
+
+状态：已修复
+
+原问题：
+
+- AssetPanel 中已验证/已下载资产和失败资产没有删除操作入口。
+- 文件页面的 FileTable 有删除按钮，但 AssetPanel 没有。
+
+修复证据：
+
+- AssetPanel 新增 `delete` emit 事件。
+- 已验证/已下载资产和失败资产的操作列新增"删除"按钮（带 NPopconfirm 确认）。
+- RepositoriesView 新增 `handleDeleteAsset` 方法处理删除事件。
+
+### P2-5 Dashboard 趋势图未集成
+
+状态：规划中
+
+问题：
+
+- 后端已有 `GET /api/stats/trend` 返回时间序列数据。
+- 前端 Dashboard 未调用此接口，未展示趋势图。
+
+建议补全：
+
+1. 前端调用 `getTrendStats` API。
+2. 引入 ECharts 或轻量图表库。
+3. 展示 Release 检查趋势和下载量趋势。
+
 ### P2-4 Dashboard 统计体验仍偏基础
 
 状态：规划中

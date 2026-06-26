@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, h, shallowRef } from 'vue'
-import { NButton, NCard, NDataTable, NTag, NTooltip, useMessage } from 'naive-ui'
+import { NButton, NCard, NDataTable, NPopconfirm, NTag, NTooltip, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { Upload } from 'lucide-vue-next'
+import { Trash2, Upload } from 'lucide-vue-next'
 
 import { uploadAsset } from '@/api/upload'
 import type { Asset, CheckReleaseResult } from '@/types/release'
@@ -15,6 +15,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   download: [asset: Asset]
   retry: [asset: Asset]
+  delete: [asset: Asset]
   refresh: []
 }>()
 
@@ -92,6 +93,21 @@ const columns = computed<DataTableColumns<Asset>>(() => [
             { default: () => '重试' }
           )
         )
+        buttons.push(
+          h(NPopconfirm, {
+            onPositiveClick: () => emit('delete', row)
+          }, {
+            trigger: () =>
+              h(NButton, {
+                size: 'small',
+                type: 'error',
+                secondary: true
+              }, {
+                icon: () => h(Trash2, { size: 14 })
+              }),
+            default: () => `删除 ${row.name}？`
+          })
+        )
       }
       if (row.status === 'verified' || row.status === 'downloaded') {
         buttons.push(
@@ -106,6 +122,22 @@ const columns = computed<DataTableColumns<Asset>>(() => [
             },
             { default: () => '下载文件' }
           )
+        )
+        buttons.push(
+          h(NPopconfirm, {
+            onPositiveClick: () => emit('delete', row)
+          }, {
+            trigger: () =>
+              h(NButton, {
+                size: 'small',
+                type: 'error',
+                secondary: true
+              }, {
+                icon: () => h(Trash2, { size: 14 }),
+                default: () => '删除'
+              }),
+            default: () => `删除 ${row.name}？`
+          })
         )
       }
       if (row.status === 'pending') {
