@@ -86,7 +86,14 @@ const form = reactive<RepositoryPayload>({
 const title = computed(() => (props.mode === 'create' ? '新增 GitHub 仓库' : '编辑仓库'))
 const ownerDisabled = computed(() => props.mode === 'edit')
 
-const tokenOptions = computed<SelectOption[]>(() => {
+const providerOptions = computed<SelectOption[]>(() => [
+    { label: 'GitHub', value: 'github' },
+    { label: 'GitLab', value: 'gitlab' },
+    { label: 'Gitea', value: 'gitea' },
+    { label: 'Forgejo', value: 'forgejo' }
+  ])
+
+  const tokenOptions = computed<SelectOption[]>(() => {
   const options: SelectOption[] = [
     { label: '无 Token（使用匿名请求）', value: 0 }
   ]
@@ -218,6 +225,10 @@ function sampleAssetNames(): string[] {
   >
     <NDrawerContent :title="title" closable>
       <NForm class="repository-form" label-placement="top">
+        <NFormItem label="Provider">
+          <NSelect v-model:value="form.provider" :options="providerOptions" />
+        </NFormItem>
+
         <NFormItem label="Owner">
           <NInput v-model:value="form.owner" :disabled="ownerDisabled" placeholder="hashicorp" />
         </NFormItem>

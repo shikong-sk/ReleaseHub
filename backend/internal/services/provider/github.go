@@ -72,3 +72,8 @@ func toProviderRelease(r *githubsvc.Release) *ProviderRelease {
 		Assets:      assets,
 	}
 }
+
+// newGitHubClient 创建 GitHub Client（供 registry 使用）
+func newGitHubClient(apiBaseURL string) (*githubsvc.Client, error) {
+	return githubsvc.NewClient(apiBaseURL)
+}

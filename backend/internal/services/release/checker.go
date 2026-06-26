@@ -10,12 +10,14 @@ import (
 	"releasehub/backend/internal/services/filter"
 	githubsvc "releasehub/backend/internal/services/github"
 	notifysvc "releasehub/backend/internal/services/notify"
+	"releasehub/backend/internal/services/provider"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
+// GitHubClient 接口保持向后兼容，内部转换为 ReleaseProvider
 type GitHubClient interface {
 	GetLatestRelease(ctx context.Context, owner string, repo string, token string) (*githubsvc.Release, error)
 	ListAllReleases(ctx context.Context, owner string, repo string, token string, maxPages int) ([]githubsvc.Release, error)
@@ -25,6 +27,7 @@ type CheckService struct {
 	db            *gorm.DB
 	github        GitHubClient
 	githubFactory *githubsvc.ClientFactory
+	providers     *provider.Registry
 	notifier      *notifysvc.Service
 	retention     RetentionRunner
 	logger        *zap.Logger
@@ -77,6 +80,11 @@ func (s *CheckService) WithGitHubFactory(factory *githubsvc.ClientFactory) *Chec
 	return s
 }
 
+func (s *CheckService) WithProviderRegistry(registry *provider.Registry) *CheckService {
+	s.providers = registry
+	return s
+}
+
 func (s *CheckService) CheckLatest(ctx context.Context, repositoryID uint) (*CheckResult, error) {
 	var repository models.Repository
 	if err := s.db.WithContext(ctx).First(&repository, repositoryID).Error; err != nil {
@@ -103,19 +111,19 @@ func (s *CheckService) CheckLatest(ctx context.Context, repositoryID uint) (*Che
 		return nil, err
 	}
 
-	githubClient, err := s.githubClient(ctx, repository)
+	releaseProvider, err := s.resolveProvider(ctx, repository)
 	if err != nil {
 		s.failTask(ctx, &task, err)
 		return nil, err
 	}
 
-	githubRelease, err := githubClient.GetLatestRelease(ctx, repository.Owner, repository.Repo, token)
+	providerRelease, err := releaseProvider.GetLatestRelease(ctx, repository.Owner, repository.Repo, token)
 	if err != nil {
 		s.markRepositoryFailed(ctx, repository.ID)
 		s.failTask(ctx, &task, err)
 		return nil, err
 	}
-	isNewRelease, err := s.releaseMissing(ctx, repository.ID, githubRelease.TagName)
+	isNewRelease, err := s.releaseMissing(ctx, repository.ID, providerRelease.TagName)
 	if err != nil {
 		s.failTask(ctx, &task, err)
 		return nil, err
@@ -128,7 +136,7 @@ func (s *CheckService) CheckLatest(ctx context.Context, repositoryID uint) (*Che
 		return nil, fmt.Errorf("资产过滤规则无效: %w", err)
 	}
 
-	result, err := s.persistRelease(ctx, repository, task, githubRelease, matcher)
+	result, err := s.persistProviderRelease(ctx, repository, task, providerRelease, matcher)
 	if err != nil {
 		s.failTask(ctx, &task, err)
 		return nil, err
@@ -171,13 +179,13 @@ func (s *CheckService) CheckAll(ctx context.Context, repositoryID uint) (*CheckA
 		return nil, err
 	}
 
-	githubClient, err := s.githubClient(ctx, repository)
+	releaseProvider, err := s.resolveProvider(ctx, repository)
 	if err != nil {
 		s.failTask(ctx, &task, err)
 		return nil, err
 	}
 
-	githubReleases, err := githubClient.ListAllReleases(ctx, repository.Owner, repository.Repo, token, 10)
+	providerReleases, err := releaseProvider.ListAllReleases(ctx, repository.Owner, repository.Repo, token, 10)
 	if err != nil {
 		s.markRepositoryFailed(ctx, repository.ID)
 		s.failTask(ctx, &task, err)
@@ -193,7 +201,7 @@ func (s *CheckService) CheckAll(ctx context.Context, repositoryID uint) (*CheckA
 
 	result := &CheckAllResult{
 		Repository: repository,
-		Releases:   len(githubReleases),
+		Releases:   len(providerReleases),
 	}
 
 	newReleases := 0
@@ -201,12 +209,12 @@ func (s *CheckService) CheckAll(ctx context.Context, repositoryID uint) (*CheckA
 	pendingAssets := 0
 	skippedAssets := 0
 
-	for i, githubRelease := range githubReleases {
+	for i, providerRelease := range providerReleases {
 		isLatest := i == 0
-		persistResult, err := s.persistReleaseWithLatest(ctx, repository, &githubRelease, matcher, isLatest)
+		persistResult, err := s.persistProviderReleaseWithLatest(ctx, repository, &providerRelease, matcher, isLatest)
 		if err != nil {
 			s.logger.Warn("持久化 Release 失败",
-				zap.String("tag", githubRelease.TagName),
+				zap.String("tag", providerRelease.TagName),
 				zap.Error(err))
 			continue
 		}
@@ -226,11 +234,18 @@ func (s *CheckService) CheckAll(ctx context.Context, repositoryID uint) (*CheckA
 
 	now := time.Now().UTC()
 	repository.LastCheckAt = &now
-	if len(githubReleases) > 0 {
-		repository.LastReleaseTag = githubReleases[0].TagName
+	if len(providerReleases) > 0 {
+		repository.LastReleaseTag = providerReleases[0].TagName
 	}
 	repository.LastStatus = models.RepositoryStatusHealthy
 	_ = s.db.WithContext(ctx).Save(&repository).Error
+
+	// 确保第一个 Release 标记为 is_latest（循环中可能被覆盖）
+	if len(providerReleases) > 0 {
+		_ = s.db.WithContext(ctx).Model(&models.Release{}).
+			Where("repository_id = ? AND tag = ?", repository.ID, providerReleases[0].TagName).
+			Update("is_latest", true).Error
+	}
 
 	result.NewReleases = newReleases
 	result.TotalAssets = totalAssets
@@ -241,142 +256,47 @@ func (s *CheckService) CheckAll(ctx context.Context, repositoryID uint) (*CheckA
 	task.Status = models.TaskStatusSucceeded
 	task.FinishedAt = &now
 	_ = s.db.WithContext(ctx).Save(&task).Error
+
 	result.Task = task
-
-	if s.retention != nil {
-		_ = s.retention.CleanupRepository(ctx, result.Repository)
-	}
-
 	return result, nil
 }
 
-type persistResult struct {
-	isNew  bool
-	assets []models.Asset
-}
-
-func (s *CheckService) persistReleaseWithLatest(ctx context.Context, repository models.Repository, githubRelease *githubsvc.Release, matcher *filter.Matcher, isLatest bool) (*persistResult, error) {
-	// 检查是否已存在
-	var existingRelease models.Release
-	err := s.db.WithContext(ctx).
-		Where("repository_id = ? AND tag = ?", repository.ID, githubRelease.TagName).
-		First(&existingRelease).Error
-	if err == nil {
-		// 已存在，更新 is_latest 标记
-		if existingRelease.IsLatest != isLatest {
-			_ = s.db.WithContext(ctx).Model(&existingRelease).Update("is_latest", isLatest).Error
+// resolveProvider 根据仓库配置选择对应的 ReleaseProvider
+func (s *CheckService) resolveProvider(ctx context.Context, repository models.Repository) (provider.ReleaseProvider, error) {
+	if s.providers != nil {
+		// 使用 provider registry，GitHub provider 可根据 proxy 选择 transport
+		if repository.Provider == "github" || repository.Provider == "" {
+			githubClient, err := s.githubClient(ctx, repository)
+			if err != nil {
+				return nil, err
+			}
+			concrete, ok := githubClient.(*githubsvc.Client)
+			if !ok {
+				return nil, fmt.Errorf("GitHub Client 类型不兼容")
+			}
+			return provider.NewGitHubProvider(concrete), nil
 		}
-		// 加载已有资产
-		var assets []models.Asset
-		_ = s.db.WithContext(ctx).Where("release_id = ?", existingRelease.ID).Order("name ASC").Find(&assets).Error
-		return &persistResult{isNew: false, assets: assets}, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
+		return s.providers.GetProvider(repository.Provider, "")
 	}
 
-	// 新 Release，需要持久化
-	publishedAt := githubRelease.PublishedAt
-	release := models.Release{
-		RepositoryID:      repository.ID,
-		ProviderReleaseID: githubRelease.ID,
-		Tag:               githubRelease.TagName,
-		Name:              githubRelease.Name,
-		PublishedAt:       &publishedAt,
-		Body:              githubRelease.Body,
-		HTMLURL:           githubRelease.HTMLURL,
-		APIURL:            githubRelease.URL,
-		IsLatest:          isLatest,
-		SyncStatus:        "checked",
+	// 回退：仅支持 GitHub
+	if repository.Provider != "" && repository.Provider != "github" {
+		return nil, fmt.Errorf("未配置 provider registry，暂不支持 provider: %s", repository.Provider)
 	}
 
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 先清除其他 Release 的 is_latest 标记
-		if isLatest {
-			if err := tx.Model(&models.Release{}).
-				Where("repository_id = ? AND is_latest = ?", repository.ID, true).
-				Update("is_latest", false).Error; err != nil {
-				return err
-			}
-		}
-
-		if err := tx.Clauses(clause.OnConflict{
-			Columns: []clause.Column{
-				{Name: "repository_id"},
-				{Name: "tag"},
-			},
-			DoUpdates: clause.AssignmentColumns([]string{
-				"provider_release_id",
-				"name",
-				"published_at",
-				"body",
-				"html_url",
-				"api_url",
-				"is_latest",
-				"sync_status",
-				"updated_at",
-			}),
-		}).Create(&release).Error; err != nil {
-			return err
-		}
-
-		if err := tx.Where("repository_id = ? AND tag = ?", repository.ID, githubRelease.TagName).First(&release).Error; err != nil {
-			return err
-		}
-
-		for _, githubAsset := range githubRelease.Assets {
-			matched, matchErr := matcher.Match(githubAsset.Name)
-			if matchErr != nil {
-				return matchErr
-			}
-
-			status := models.AssetStatusSkipped
-			if matched {
-				status = models.AssetStatusPending
-			}
-
-			asset := models.Asset{
-				ReleaseID:          release.ID,
-				ProviderAssetID:    githubAsset.ID,
-				Name:               githubAsset.Name,
-				Size:               githubAsset.Size,
-				ContentType:        githubAsset.ContentType,
-				DownloadURL:        githubAsset.URL,
-				BrowserDownloadURL: githubAsset.BrowserDownloadURL,
-				Status:             status,
-			}
-
-			if err := tx.Clauses(clause.OnConflict{
-				Columns: []clause.Column{
-					{Name: "release_id"},
-					{Name: "name"},
-				},
-				DoUpdates: clause.AssignmentColumns([]string{
-					"provider_asset_id",
-					"size",
-					"content_type",
-					"download_url",
-					"browser_download_url",
-					"status",
-					"updated_at",
-				}),
-			}).Create(&asset).Error; err != nil {
-				return err
-			}
-		}
-
-		return nil
-	})
+	githubClient, err := s.githubClient(ctx, repository)
 	if err != nil {
 		return nil, err
 	}
-
-	var assets []models.Asset
-	_ = s.db.WithContext(ctx).Where("release_id = ?", release.ID).Order("name ASC").Find(&assets).Error
-	return &persistResult{isNew: true, assets: assets}, nil
+	concrete, ok := githubClient.(*githubsvc.Client)
+	if !ok {
+		return nil, fmt.Errorf("GitHub Client 类型不兼容")
+	}
+	return provider.NewGitHubProvider(concrete), nil
 }
 
-func (s *CheckService) persistRelease(ctx context.Context, repository models.Repository, task models.Task, githubRelease *githubsvc.Release, matcher *filter.Matcher) (*CheckResult, error) {
+// persistProviderRelease 将 ProviderRelease 持久化到数据库
+func (s *CheckService) persistProviderRelease(ctx context.Context, repository models.Repository, task models.Task, pRelease *provider.ProviderRelease, matcher *filter.Matcher) (*CheckResult, error) {
 	now := time.Now().UTC()
 	result := &CheckResult{}
 
@@ -387,16 +307,16 @@ func (s *CheckService) persistRelease(ctx context.Context, repository models.Rep
 			return err
 		}
 
-		publishedAt := githubRelease.PublishedAt
+		publishedAt := pRelease.PublishedAt
 		release := models.Release{
 			RepositoryID:      repository.ID,
-			ProviderReleaseID: githubRelease.ID,
-			Tag:               githubRelease.TagName,
-			Name:              githubRelease.Name,
+			ProviderReleaseID: pRelease.ID,
+			Tag:               pRelease.TagName,
+			Name:              pRelease.Name,
 			PublishedAt:       &publishedAt,
-			Body:              githubRelease.Body,
-			HTMLURL:           githubRelease.HTMLURL,
-			APIURL:            githubRelease.URL,
+			Body:              pRelease.Body,
+			HTMLURL:           pRelease.HTMLURL,
+			APIURL:            pRelease.APIURL,
 			IsLatest:          true,
 			SyncStatus:        "checked",
 		}
@@ -421,13 +341,13 @@ func (s *CheckService) persistRelease(ctx context.Context, repository models.Rep
 			return err
 		}
 
-		if err := tx.Where("repository_id = ? AND tag = ?", repository.ID, githubRelease.TagName).First(&release).Error; err != nil {
+		if err := tx.Where("repository_id = ? AND tag = ?", repository.ID, pRelease.TagName).First(&release).Error; err != nil {
 			return err
 		}
 
-		assets := make([]models.Asset, 0, len(githubRelease.Assets))
-		for _, githubAsset := range githubRelease.Assets {
-			matched, err := matcher.Match(githubAsset.Name)
+		assets := make([]models.Asset, 0, len(pRelease.Assets))
+		for _, pAsset := range pRelease.Assets {
+			matched, err := matcher.Match(pAsset.Name)
 			if err != nil {
 				return err
 			}
@@ -438,7 +358,7 @@ func (s *CheckService) persistRelease(ctx context.Context, repository models.Rep
 			}
 
 			var existingAsset models.Asset
-			existingErr := tx.Where("release_id = ? AND name = ?", release.ID, githubAsset.Name).First(&existingAsset).Error
+			existingErr := tx.Where("release_id = ? AND name = ?", release.ID, pAsset.Name).First(&existingAsset).Error
 			if existingErr != nil && !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 				return existingErr
 			}
@@ -448,12 +368,12 @@ func (s *CheckService) persistRelease(ctx context.Context, repository models.Rep
 
 			asset := models.Asset{
 				ReleaseID:          release.ID,
-				ProviderAssetID:    githubAsset.ID,
-				Name:               githubAsset.Name,
-				Size:               githubAsset.Size,
-				ContentType:        githubAsset.ContentType,
-				DownloadURL:        githubAsset.URL,
-				BrowserDownloadURL: githubAsset.BrowserDownloadURL,
+				ProviderAssetID:    pAsset.ID,
+				Name:               pAsset.Name,
+				Size:               pAsset.Size,
+				ContentType:        pAsset.ContentType,
+				DownloadURL:        pAsset.URL,
+				BrowserDownloadURL: pAsset.BrowserDownloadURL,
 				Status:             status,
 			}
 
@@ -504,6 +424,111 @@ func (s *CheckService) persistRelease(ctx context.Context, repository models.Rep
 	}
 
 	return result, nil
+}
+
+type persistResult struct {
+	isNew  bool
+	assets []models.Asset
+}
+
+func (s *CheckService) persistProviderReleaseWithLatest(ctx context.Context, repository models.Repository, pRelease *provider.ProviderRelease, matcher *filter.Matcher, isLatest bool) (*persistResult, error) {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.Release{}).
+			Where("repository_id = ?", repository.ID).
+			Update("is_latest", false).Error; err != nil {
+			return err
+		}
+
+		publishedAt := pRelease.PublishedAt
+		release := models.Release{
+			RepositoryID:      repository.ID,
+			ProviderReleaseID: pRelease.ID,
+			Tag:               pRelease.TagName,
+			Name:              pRelease.Name,
+			PublishedAt:       &publishedAt,
+			Body:              pRelease.Body,
+			HTMLURL:           pRelease.HTMLURL,
+			APIURL:            pRelease.APIURL,
+			IsLatest:          isLatest,
+			SyncStatus:        "checked",
+		}
+
+		if err := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "repository_id"},
+				{Name: "tag"},
+			},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"provider_release_id",
+				"name",
+				"published_at",
+				"body",
+				"html_url",
+				"api_url",
+				"is_latest",
+				"sync_status",
+				"updated_at",
+			}),
+		}).Create(&release).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Where("repository_id = ? AND tag = ?", repository.ID, pRelease.TagName).First(&release).Error; err != nil {
+			return err
+		}
+
+		for _, pAsset := range pRelease.Assets {
+			matched, matchErr := matcher.Match(pAsset.Name)
+			if matchErr != nil {
+				return matchErr
+			}
+
+			status := models.AssetStatusSkipped
+			if matched {
+				status = models.AssetStatusPending
+			}
+
+			asset := models.Asset{
+				ReleaseID:          release.ID,
+				ProviderAssetID:    pAsset.ID,
+				Name:               pAsset.Name,
+				Size:               pAsset.Size,
+				ContentType:        pAsset.ContentType,
+				DownloadURL:        pAsset.URL,
+				BrowserDownloadURL: pAsset.BrowserDownloadURL,
+				Status:             status,
+			}
+
+			if err := tx.Clauses(clause.OnConflict{
+				Columns: []clause.Column{
+					{Name: "release_id"},
+					{Name: "name"},
+				},
+				DoUpdates: clause.AssignmentColumns([]string{
+					"provider_asset_id",
+					"size",
+					"content_type",
+					"download_url",
+					"browser_download_url",
+					"status",
+					"updated_at",
+				}),
+			}).Create(&asset).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var assets []models.Asset
+	var release models.Release
+	_ = s.db.WithContext(ctx).Where("repository_id = ? AND tag = ?", repository.ID, pRelease.TagName).First(&release).Error
+	_ = s.db.WithContext(ctx).Where("release_id = ?", release.ID).Order("name ASC").Find(&assets).Error
+	return &persistResult{isNew: true, assets: assets}, nil
 }
 
 func (s *CheckService) githubToken(ctx context.Context, tokenID *uint) (string, error) {

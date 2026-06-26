@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"releasehub/backend/internal/models"
+	"releasehub/backend/internal/services/provider"
 
 	"gorm.io/gorm"
 )
@@ -169,12 +170,13 @@ func (s *Service) Delete(ctx context.Context, id uint) error {
 }
 
 func buildRepository(input CreateInput) (*models.Repository, error) {
-	provider := strings.ToLower(strings.TrimSpace(input.Provider))
-	if provider == "" {
-		provider = defaultProvider
+	providerName := strings.ToLower(strings.TrimSpace(input.Provider))
+	if providerName == "" {
+		providerName = defaultProvider
 	}
-	if provider != defaultProvider {
-		return nil, fmt.Errorf("%w: 暂不支持 provider %q", errInvalidInput, provider)
+	// 支持所有已注册的 Provider
+	if !provider.IsSupported(providerName) {
+		return nil, fmt.Errorf("%w: 暂不支持 provider %q，支持: %v", errInvalidInput, providerName, provider.SupportedProviders())
 	}
 
 	owner := strings.TrimSpace(input.Owner)
@@ -213,7 +215,7 @@ func buildRepository(input CreateInput) (*models.Repository, error) {
 	}
 
 	return &models.Repository{
-		Provider:             provider,
+		Provider:             providerName,
 		Owner:                owner,
 		Repo:                 repo,
 		Enabled:              enabled,
@@ -231,10 +233,10 @@ func buildRepository(input CreateInput) (*models.Repository, error) {
 
 func validateOwnerRepo(owner string, repo string) error {
 	if !ownerPattern.MatchString(owner) {
-		return fmt.Errorf("%w: owner 必须是有效的 GitHub owner", errInvalidInput)
+		return fmt.Errorf("%w: owner 格式无效", errInvalidInput)
 	}
 	if !repositoryPattern.MatchString(repo) {
-		return fmt.Errorf("%w: repo 必须是有效的 GitHub 仓库名", errInvalidInput)
+		return fmt.Errorf("%w: repo 格式无效", errInvalidInput)
 	}
 
 	return nil

@@ -16,6 +16,7 @@ import (
 	releasesvc "releasehub/backend/internal/services/release"
 	retentionsvc "releasehub/backend/internal/services/retention"
 	schedulersvc "releasehub/backend/internal/services/scheduler"
+	providersvc "releasehub/backend/internal/services/provider"
 	syncersvc "releasehub/backend/internal/services/syncer"
 
 	"go.uber.org/zap"
@@ -62,7 +63,8 @@ func main() {
 			logger.Fatal("GitHub Client 初始化失败", zap.Error(err))
 		}
 		checkService := releasesvc.NewCheckService(db, githubClient).
-			WithGitHubFactory(githubsvc.NewClientFactory(cfg.GitHub.APIBaseURL, db))
+			WithGitHubFactory(githubsvc.NewClientFactory(cfg.GitHub.APIBaseURL, db)).
+			WithProviderRegistry(providersvc.NewRegistry(cfg.GitHub.APIBaseURL))
 		retentionService, err := retentionsvc.NewService(db, cfg.Storage)
 		if err != nil {
 			logger.Fatal("保留策略服务初始化失败", zap.Error(err))

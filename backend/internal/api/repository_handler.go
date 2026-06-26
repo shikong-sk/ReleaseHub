@@ -9,6 +9,7 @@ import (
 	"releasehub/backend/internal/models"
 	githubsvc "releasehub/backend/internal/services/github"
 	releasesvc "releasehub/backend/internal/services/release"
+	providersvc "releasehub/backend/internal/services/provider"
 	repositorysvc "releasehub/backend/internal/services/repository"
 	retentionsvc "releasehub/backend/internal/services/retention"
 	syncersvc "releasehub/backend/internal/services/syncer"
@@ -26,8 +27,10 @@ type repositoryHandler struct {
 }
 
 func registerRepositoryRoutes(router *gin.Engine, db *gorm.DB, storageConfig config.StorageConfig, githubAPIBaseURL string, githubClient *githubsvc.Client, githubClientErr error) {
+	providerRegistry := providersvc.NewRegistry(githubAPIBaseURL)
 	checkService := releasesvc.NewCheckService(db, githubClient).
-		WithGitHubFactory(githubsvc.NewClientFactory(githubAPIBaseURL, db))
+		WithGitHubFactory(githubsvc.NewClientFactory(githubAPIBaseURL, db)).
+		WithProviderRegistry(providerRegistry)
 	if retentionService, err := retentionsvc.NewService(db, storageConfig); err == nil {
 		checkService.WithRetention(retentionService)
 	}
