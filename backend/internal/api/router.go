@@ -59,7 +59,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	registerSearchRoutes(router, deps.DB)
 	registerStatsRoutes(router, deps.DB)
 	registerUploadRoutes(router, deps.DB)
-	registerReconcileRoutes(router, deps.DB, deps.Logger)
+	registerReconcileRoutes(router, deps.DB, deps.Config.Storage, deps.Logger)
 	registerAPIKeyRoutes(router, deps.DB)
 
 	router.NoRoute(func(c *gin.Context) {

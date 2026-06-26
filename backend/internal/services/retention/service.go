@@ -14,10 +14,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// 确保 Service 使用 Driver 接口
+// Service 保留策略清理服务
 type Service struct {
 	db         *gorm.DB
-	storage    storage.Driver
+	storage    storage.Driver // 兼容旧接口，仅当 storages 为 nil 时使用
+	storages   *storage.DriverFactory
 	logService *tasklogsvc.Service
 }
 
@@ -35,6 +36,15 @@ func NewService(db *gorm.DB, storageConfig config.StorageConfig) (*Service, erro
 	}
 
 	return NewServiceWithDriver(db, localStorage), nil
+}
+
+// NewServiceWithFactory 使用 DriverFactory 创建服务，按仓库动态选择存储
+func NewServiceWithFactory(db *gorm.DB, storageConfig config.StorageConfig) *Service {
+	return &Service{
+		db:         db,
+		storages:   storage.NewDriverFactory(db, storageConfig),
+		logService: tasklogsvc.NewService(db),
+	}
 }
 
 func NewServiceWithDriver(db *gorm.DB, driver storage.Driver) *Service {
@@ -103,11 +113,18 @@ func (s *Service) Cleanup(ctx context.Context, repository models.Repository) (*C
 		return result, err
 	}
 
+	// 按仓库动态选择存储驱动
+	driver, err := s.storageDriver(ctx, repository)
+	if err != nil {
+		s.failTaskWithLog(ctx, &task, err, "获取仓库存储驱动失败")
+		return result, err
+	}
+
 	for _, asset := range assets {
 		if strings.TrimSpace(asset.StoragePath) == "" {
 			continue
 		}
-		if err := s.storage.Delete(ctx, asset.StoragePath); err != nil {
+		if err := driver.Delete(ctx, asset.StoragePath); err != nil {
 			cleanupErr := fmt.Errorf("删除资产文件 %s 失败: %w", asset.StoragePath, err)
 			s.failTaskWithLog(ctx, &task, cleanupErr, "删除存储文件失败")
 			return result, cleanupErr
@@ -165,6 +182,14 @@ func (s *Service) Cleanup(ctx context.Context, repository models.Repository) (*C
 	))
 
 	return result, nil
+}
+
+// storageDriver 按仓库配置动态选择存储驱动
+func (s *Service) storageDriver(ctx context.Context, repository models.Repository) (storage.Driver, error) {
+	if s.storages != nil {
+		return s.storages.DriverForRepository(ctx, repository)
+	}
+	return s.storage, nil
 }
 
 func (s *Service) failTask(ctx context.Context, task *models.Task, err error) {

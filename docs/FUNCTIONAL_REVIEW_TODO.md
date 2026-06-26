@@ -290,6 +290,67 @@
 
 - `frontend/src/views/DashboardView.vue` 新增失败任务告警卡片，当存在失败任务时提示用户查看任务页面。
 
+### P1-15 Retention 清理未按仓库选择存储驱动
+
+状态：已修复
+
+原问题：
+
+- `retention/service.go` 使用单一 `storage.Driver`，当仓库配置了非默认存储（如 S3/WebDAV）时，清理会从错误的存储删除文件。
+
+修复证据：
+
+- `Service` 新增 `storages *storage.DriverFactory` 字段。
+- 新增 `NewServiceWithFactory` 构造函数。
+- `Cleanup` 方法在删除资产前通过 `storageDriver()` 按仓库动态选择驱动。
+- 保留 `NewServiceWithDriver` 兼容旧调用。
+
+### P1-16 Reconcile 对账未按仓库选择存储驱动
+
+状态：已修复
+
+原问题：
+
+- `reconcile_handler.go` 使用硬编码的 `createStorageDriver` 和 `NewLocalStorage("data/releases")`，不尊重仓库的存储配置。
+
+修复证据：
+
+- `reconcileHandler` 新增 `storages *storage.DriverFactory` 字段。
+- `registerReconcileRoutes` 接收 `config.StorageConfig` 参数。
+- `getStorageDriver` 改为调用 `DriverFactory.DriverForRepository`。
+- `router.go` 传入 `deps.Config.Storage`。
+
+### P1-17 通知发送失败无日志记录
+
+状态：已修复
+
+原问题：
+
+- `notify.Service.Notify()` 在发送失败时仅收集错误到 `errs`，不记录任何日志，运维无法感知通知渠道异常。
+
+修复证据：
+
+- `Service` 新增 `logger *zap.Logger` 字段。
+- 新增 `NewServiceWithLogger` 构造函数。
+- 创建通知渠道失败和发送失败时均通过 `s.logger.Warn` 记录渠道名称、事件类型和错误详情。
+- `NewService` 默认使用 `zap.NewNop()` 保持向后兼容。
+
+### P1-18 Token 健康检查无前端入口
+
+状态：已修复
+
+原问题：
+
+- 后端已有 `/api/tokens/:id/health` 和 `/api/tokens/:id/rate-limit` 接口。
+- 前端 SettingsView 的 Token 管理面板没有调用这些接口。
+
+修复证据：
+
+- `frontend/src/api/tokens.ts` 新增 `checkTokenHealth` 和 `checkTokenRateLimit` API 封装。
+- `frontend/src/views/SettingsView.vue` Token 表格新增"状态"列，展示 Token 有效性及 Rate Limit 余量。
+- 操作列新增"检查"按钮，点击后调用 health API 并展示结果。
+- 健康检查结果通过 Tooltip 展示详细 Rate Limit 信息（剩余/上限/已用/重置时间）。
+
 ## 规划中
 
 ### P2-1 PostgreSQL 未实现

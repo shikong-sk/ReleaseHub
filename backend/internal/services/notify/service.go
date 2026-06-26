@@ -8,15 +8,25 @@ import (
 
 	"releasehub/backend/internal/models"
 
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 type Service struct {
-	db *gorm.DB
+	db     *gorm.DB
+	logger *zap.Logger
 }
 
 func NewService(db *gorm.DB) *Service {
-	return &Service{db: db}
+	return &Service{db: db, logger: zap.NewNop()}
+}
+
+// NewServiceWithLogger 创建带日志的通知服务
+func NewServiceWithLogger(db *gorm.DB, logger *zap.Logger) *Service {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	return &Service{db: db, logger: logger}
 }
 
 func (s *Service) Notify(ctx context.Context, event Event, title string, message string) error {
@@ -36,11 +46,20 @@ func (s *Service) Notify(ctx context.Context, event Event, title string, message
 
 		notifier, err := NewNotifierFromModel(notification)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", notification.Name, err))
+			createErr := fmt.Errorf("%s: %w", notification.Name, err)
+			errs = append(errs, createErr)
+			s.logger.Warn("创建通知渠道失败",
+				zap.String("channel", notification.Name),
+				zap.Error(createErr))
 			continue
 		}
 		if err := notifier.Send(ctx, title, message); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", notification.Name, err))
+			sendErr := fmt.Errorf("%s: %w", notification.Name, err)
+			errs = append(errs, sendErr)
+			s.logger.Warn("通知发送失败",
+				zap.String("channel", notification.Name),
+				zap.String("event", string(event)),
+				zap.Error(sendErr))
 		}
 	}
 

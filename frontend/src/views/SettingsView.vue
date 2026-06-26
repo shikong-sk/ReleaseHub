@@ -14,13 +14,15 @@ import {
   NPopconfirm,
   NSpace,
   NTag,
+  NTooltip,
   useMessage
 } from 'naive-ui'
-import { Plus, RefreshCw } from 'lucide-vue-next'
+import { Activity, Plus, RefreshCw } from 'lucide-vue-next'
 import type { DataTableColumns } from 'naive-ui'
 
 import { getAppConfig } from '@/api/settings'
 import APIKeyPanel from '@/components/settings/APIKeyPanel.vue'
+import { checkTokenHealth, checkTokenRateLimit, type TokenHealthResult } from '@/api/tokens'
 import { useTokensStore } from '@/stores/tokens'
 import type { TokenItem } from '@/types/token'
 
@@ -38,10 +40,35 @@ const authEnabled = shallowRef(false)
 const showModal = shallowRef(false)
 const formName = shallowRef('')
 const formToken = shallowRef('')
+const healthResults = shallowRef<Record<number, TokenHealthResult>>({})
+const healthLoading = shallowRef<Record<number, boolean>>({})
 
 const tokenColumns: DataTableColumns<TokenItem> = [
   { title: '名称', key: 'name', width: 200 },
   { title: 'Token', key: 'tokenHint', ellipsis: { tooltip: true } },
+  {
+    title: '状态',
+    key: 'health',
+    width: 120,
+    render: (row) => {
+      const result = healthResults.value[row.id]
+      if (!result) return h('span', { style: 'color: #8c8c8c' }, '-')
+      if (result.valid) {
+        const rl = result.rateLimit
+        const label = rl ? `${rl.remaining}/${rl.limit}` : '有效'
+        return h(NTooltip, {}, {
+          trigger: () => h(NTag, { size: 'small', type: 'success' }, { default: () => label }),
+          default: () => rl
+            ? `剩余 ${rl.remaining}/${rl.limit} 次，已用 ${rl.used} 次，重置于 ${new Date(rl.resetAt * 1000).toLocaleString()}`
+            : 'Token 有效'
+        })
+      }
+      return h(NTooltip, {}, {
+        trigger: () => h(NTag, { size: 'small', type: 'error' }, { default: () => '无效' }),
+        default: () => result.error || 'Token 无效'
+      })
+    }
+  },
   {
     title: '创建时间',
     key: 'createdAt',
@@ -51,12 +78,23 @@ const tokenColumns: DataTableColumns<TokenItem> = [
   {
     title: '操作',
     key: 'actions',
-    width: 100,
+    width: 160,
     render: (row) =>
-      h(NPopconfirm, { onPositiveClick: () => handleDelete(row.id) }, {
-        trigger: () => h(NButton, { size: 'small', type: 'error', secondary: true, loading: tokensStore.saving }, { default: () => '删除' }),
-        default: () => `删除 Token "${row.name}"？`
-      })
+      h('div', { style: 'display: flex; gap: 8px;' }, [
+        h(NButton, {
+          size: 'small',
+          secondary: true,
+          loading: healthLoading.value[row.id] || false,
+          onClick: () => handleHealthCheck(row.id)
+        }, {
+          icon: () => h(Activity),
+          default: () => '检查'
+        }),
+        h(NPopconfirm, { onPositiveClick: () => handleDelete(row.id) }, {
+          trigger: () => h(NButton, { size: 'small', type: 'error', secondary: true, loading: tokensStore.saving }, { default: () => '删除' }),
+          default: () => `删除 Token "${row.name}"？`
+        })
+      ])
   }
 ]
 
@@ -93,6 +131,23 @@ async function handleCreate() {
     showModal.value = false
   } catch (err) {
     message.error(err instanceof Error ? err.message : '添加 Token 失败')
+  }
+}
+
+async function handleHealthCheck(id: number) {
+  healthLoading.value = { ...healthLoading.value, [id]: true }
+  try {
+    const result = await checkTokenHealth(id)
+    healthResults.value = { ...healthResults.value, [id]: result }
+    if (result.valid) {
+      message.success(`Token 有效${result.rateLimit ? `，剩余 ${result.rateLimit.remaining}/${result.rateLimit.limit}` : ''}`)
+    } else {
+      message.warning(`Token 无效: ${result.error || '未知错误'}`)
+    }
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '健康检查失败')
+  } finally {
+    healthLoading.value = { ...healthLoading.value, [id]: false }
   }
 }
 

@@ -28,3 +28,32 @@ export async function deleteToken(id: number): Promise<void> {
     method: 'DELETE'
   })
 }
+
+
+// Token 健康检查结果
+export interface TokenHealthResult {
+  valid: boolean
+  rateLimit?: {
+    limit: number
+    remaining: number
+    resetAt: number
+    used: number
+  }
+  error?: string
+}
+
+// Token Rate Limit 结果
+export interface TokenRateLimitResult {
+  limit: number
+  remaining: number
+  resetAt: number
+  used: number
+}
+
+export function checkTokenHealth(id: number): Promise<TokenHealthResult> {
+  return getJson<TokenHealthResult>(`/api/tokens/${id}/health`)
+}
+
+export function checkTokenRateLimit(id: number): Promise<TokenRateLimitResult | null> {
+  return getJson<TokenRateLimitResult | null>(`/api/tokens/${id}/rate-limit`)
+}

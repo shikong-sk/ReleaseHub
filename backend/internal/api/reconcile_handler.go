@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"releasehub/backend/internal/config"
 	"releasehub/backend/internal/models"
 	"releasehub/backend/internal/services/storage"
 
@@ -13,8 +14,9 @@ import (
 )
 
 type reconcileHandler struct {
-	db     *gorm.DB
-	logger *zap.Logger
+	db       *gorm.DB
+	logger   *zap.Logger
+	storages *storage.DriverFactory
 }
 
 type reconcileResult struct {
@@ -23,8 +25,12 @@ type reconcileResult struct {
 	OrphanedAssets   []uint   `json:"orphanedAssets"`
 }
 
-func registerReconcileRoutes(router *gin.Engine, db *gorm.DB, logger *zap.Logger) {
-	handler := &reconcileHandler{db: db, logger: logger}
+func registerReconcileRoutes(router *gin.Engine, db *gorm.DB, storageConfig config.StorageConfig, logger *zap.Logger) {
+	handler := &reconcileHandler{
+		db:       db,
+		logger:   logger,
+		storages: storage.NewDriverFactory(db, storageConfig),
+	}
 	router.POST("/api/reconcile", handler.reconcile)
 }
 
@@ -83,12 +89,5 @@ func (h *reconcileHandler) getRepo(c *gin.Context, asset models.Asset) (*models.
 }
 
 func (h *reconcileHandler) getStorageDriver(c *gin.Context, repo models.Repository) (storage.Driver, error) {
-	if repo.StorageID == nil {
-		return storage.NewLocalStorage("data/releases")
-	}
-	var s models.Storage
-	if err := h.db.WithContext(c.Request.Context()).First(&s, *repo.StorageID).Error; err != nil {
-		return nil, err
-	}
-	return createStorageDriver(s)
+	return h.storages.DriverForRepository(c.Request.Context(), repo)
 }
