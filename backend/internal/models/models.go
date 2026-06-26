@@ -166,3 +166,23 @@ type Notification struct {
 	UpdatedAt time.Time      `json:"updatedAt" gorm:"column:updated_at"`
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
 }
+
+type TaskLog struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	TaskID    uint      `json:"taskId" gorm:"column:task_id;not null;index"`
+	Level     string    `json:"level" gorm:"column:level;size:20;not null;default:info"`
+	Message   string    `json:"message" gorm:"column:message;type:text;not null"`
+	Timestamp time.Time `json:"timestamp" gorm:"column:timestamp;not null;index"`
+}
+
+type User struct {
+	ID           uint           `json:"id" gorm:"primaryKey"`
+	Username     string         `json:"username" gorm:"column:username;size:120;not null;uniqueIndex"`
+	PasswordHash string         `json:"-" gorm:"column:password_hash;size:512;not null"`
+	Role         string         `json:"role" gorm:"column:role;size:40;not null;default:viewer"`
+	Enabled      bool           `json:"enabled" gorm:"column:enabled;not null;default:true"`
+	LastLoginAt  *time.Time     `json:"lastLoginAt" gorm:"column:last_login_at"`
+	CreatedAt    time.Time      `json:"createdAt" gorm:"column:created_at"`
+	UpdatedAt    time.Time      `json:"updatedAt" gorm:"column:updated_at"`
+	DeletedAt    gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
+}

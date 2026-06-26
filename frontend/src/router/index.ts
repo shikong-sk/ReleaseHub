@@ -8,6 +8,7 @@ import RepositoriesView from '@/views/RepositoriesView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import StoragesView from '@/views/StoragesView.vue'
 import TasksView from '@/views/TasksView.vue'
+import UsersView from '@/views/UsersView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -46,6 +47,11 @@ const router = createRouter({
       path: '/notifications',
       name: 'notifications',
       component: NotificationsView
+    },
+    {
+      path: '/users',
+      name: 'users',
+      component: UsersView
     },
     {
       path: '/settings',

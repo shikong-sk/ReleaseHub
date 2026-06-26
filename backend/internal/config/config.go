@@ -14,11 +14,13 @@ type Config struct {
 	Storage   StorageConfig
 	GitHub    GitHubConfig
 	Scheduler SchedulerConfig
+	Auth      AuthConfig
 }
 
 type AppConfig struct {
-	Name string
-	Env  string
+	Name      string
+	Env       string
+	JWTSecret string
 }
 
 type HTTPConfig struct {
@@ -49,6 +51,10 @@ type SchedulerConfig struct {
 	MaxConcurrent int
 }
 
+type AuthConfig struct {
+	Enabled bool
+}
+
 func Load() (*Config, error) {
 	v := viper.New()
 	v.SetEnvPrefix("RELEASEHUB")
@@ -57,6 +63,7 @@ func Load() (*Config, error) {
 
 	v.SetDefault("app.name", "ReleaseHub")
 	v.SetDefault("app.env", "development")
+	v.SetDefault("app.jwt_secret", "")
 	v.SetDefault("http.host", "0.0.0.0")
 	v.SetDefault("http.port", 8080)
 	v.SetDefault("database.driver", "sqlite")
@@ -66,11 +73,13 @@ func Load() (*Config, error) {
 	v.SetDefault("scheduler.enabled", true)
 	v.SetDefault("scheduler.tick_seconds", 60)
 	v.SetDefault("scheduler.max_concurrent", 5)
+	v.SetDefault("auth.enabled", false)
 
 	cfg := &Config{
 		App: AppConfig{
-			Name: v.GetString("app.name"),
-			Env:  v.GetString("app.env"),
+			Name:      v.GetString("app.name"),
+			Env:       v.GetString("app.env"),
+			JWTSecret: v.GetString("app.jwt_secret"),
 		},
 		HTTP: HTTPConfig{
 			Host: v.GetString("http.host"),
@@ -90,6 +99,9 @@ func Load() (*Config, error) {
 			Enabled:       v.GetBool("scheduler.enabled"),
 			TickSeconds:   v.GetInt("scheduler.tick_seconds"),
 			MaxConcurrent: v.GetInt("scheduler.max_concurrent"),
+		},
+		Auth: AuthConfig{
+			Enabled: v.GetBool("auth.enabled"),
 		},
 	}
 

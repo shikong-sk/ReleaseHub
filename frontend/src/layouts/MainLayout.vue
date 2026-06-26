@@ -36,6 +36,10 @@ const menuOptions = computed<MenuOption[]>(() => [
     key: 'notifications'
   },
   {
+    label: () => hRouterLink('/users', '用户'),
+    key: 'users'
+  },
+  {
     label: () => hRouterLink('/settings', '设置'),
     key: 'settings'
   }
