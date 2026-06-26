@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,7 +20,7 @@ import (
 
 type Service struct {
 	db         *gorm.DB
-	storage    *storage.LocalStorage
+	storage    storage.Driver
 	downloader *downloader.HTTPDownloader
 }
 
@@ -35,11 +35,16 @@ func NewService(db *gorm.DB, storageConfig config.StorageConfig) (*Service, erro
 		return nil, err
 	}
 
+	return NewServiceWithDriver(db, localStorage), nil
+}
+
+// NewServiceWithDriver 使用指定存储驱动创建资产服务
+func NewServiceWithDriver(db *gorm.DB, driver storage.Driver) *Service {
 	return &Service{
 		db:         db,
-		storage:    localStorage,
+		storage:    driver,
 		downloader: downloader.NewHTTPDownloader(),
-	}, nil
+	}
 }
 
 func (s *Service) Download(ctx context.Context, assetID uint) (*DownloadResult, error) {
@@ -89,13 +94,13 @@ func (s *Service) Download(ctx context.Context, assetID uint) (*DownloadResult, 
 	}
 
 	objectPath := buildObjectPath(repository, release, asset)
-	storedObject, err := s.storage.Put(objectPath, &buffer)
+	storedObject, err := s.storage.Put(ctx, objectPath, &buffer)
 	if err != nil {
 		s.markAssetFailed(ctx, &asset, err)
 		s.failTask(ctx, &task, err)
 		return nil, err
 	}
-	if err := s.storage.SetLatestTag(repository.Provider, repository.Owner, repository.Repo, release.Tag); err != nil {
+	if err := s.storage.SetLatestTag(ctx, repository.Provider, repository.Owner, repository.Repo, release.Tag); err != nil {
 		s.markAssetFailed(ctx, &asset, err)
 		s.failTask(ctx, &task, err)
 		return nil, err
@@ -130,7 +135,8 @@ func (s *Service) Download(ctx context.Context, assetID uint) (*DownloadResult, 
 	}, nil
 }
 
-func (s *Service) Open(ctx context.Context, assetID uint) (*models.Asset, *storage.StoredObject, *os.File, error) {
+// OpenReader 返回资产的读取流（兼容所有存储驱动）
+func (s *Service) OpenReader(ctx context.Context, assetID uint) (*models.Asset, *storage.StoredObject, io.ReadCloser, error) {
 	asset, _, _, err := s.loadAssetContext(ctx, assetID)
 	if err != nil {
 		return nil, nil, nil, err
@@ -139,12 +145,17 @@ func (s *Service) Open(ctx context.Context, assetID uint) (*models.Asset, *stora
 		return nil, nil, nil, fmt.Errorf("资产尚未下载")
 	}
 
-	file, object, err := s.storage.Open(asset.StoragePath)
+	reader, object, err := s.storage.Open(ctx, asset.StoragePath)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	return &asset, object, file, nil
+	return &asset, object, reader, nil
+}
+
+// Open 兼容旧接口，返回 *os.File（仅 Local 存储驱动可用）
+func (s *Service) Open(ctx context.Context, assetID uint) (*models.Asset, *storage.StoredObject, io.ReadCloser, error) {
+	return s.OpenReader(ctx, assetID)
 }
 
 func (s *Service) Delete(ctx context.Context, assetID uint) error {
@@ -154,7 +165,7 @@ func (s *Service) Delete(ctx context.Context, assetID uint) error {
 	}
 
 	if strings.TrimSpace(asset.StoragePath) != "" {
-		if err := s.storage.Delete(asset.StoragePath); err != nil {
+		if err := s.storage.Delete(ctx, asset.StoragePath); err != nil {
 			return err
 		}
 	}

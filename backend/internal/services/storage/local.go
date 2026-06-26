@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,9 @@ import (
 	"strings"
 	"time"
 )
+
+// 确保 LocalStorage 实现 Driver 接口
+var _ Driver = (*LocalStorage)(nil)
 
 type LocalStorage struct {
 	baseDir string
@@ -43,7 +47,7 @@ func NewLocalStorage(baseDir string) (*LocalStorage, error) {
 	return &LocalStorage{baseDir: absBaseDir}, nil
 }
 
-func (s *LocalStorage) Put(objectPath string, reader io.Reader) (*StoredObject, error) {
+func (s *LocalStorage) Put(ctx context.Context, objectPath string, reader io.Reader) (*StoredObject, error) {
 	safePath, err := s.safePath(objectPath)
 	if err != nil {
 		return nil, err
@@ -83,7 +87,7 @@ func (s *LocalStorage) Put(objectPath string, reader io.Reader) (*StoredObject, 
 	}, nil
 }
 
-func (s *LocalStorage) Open(objectPath string) (*os.File, *StoredObject, error) {
+func (s *LocalStorage) Open(ctx context.Context, objectPath string) (io.ReadCloser, *StoredObject, error) {
 	safePath, err := s.safePath(objectPath)
 	if err != nil {
 		return nil, nil, err
@@ -108,7 +112,7 @@ func (s *LocalStorage) Open(objectPath string) (*os.File, *StoredObject, error) 
 	}, nil
 }
 
-func (s *LocalStorage) Delete(objectPath string) error {
+func (s *LocalStorage) Delete(ctx context.Context, objectPath string) error {
 	safePath, err := s.safePath(objectPath)
 	if err != nil {
 		return err
@@ -125,7 +129,7 @@ func (s *LocalStorage) Delete(objectPath string) error {
 	return nil
 }
 
-func (s *LocalStorage) SetLatestTag(provider string, owner string, repo string, tag string) error {
+func (s *LocalStorage) SetLatestTag(ctx context.Context, provider string, owner string, repo string, tag string) error {
 	repositoryPath := filepath.ToSlash(filepath.Join(
 		safeSegment(provider),
 		safeSegment(owner),
@@ -148,6 +152,11 @@ func (s *LocalStorage) SetLatestTag(provider string, owner string, repo string, 
 
 	manifestPath := filepath.Join(repositoryDir, "latest.json")
 	return s.writeLatestManifest(manifestPath, tag)
+}
+
+// Capabilities 声明 Local 存储支持符号链接
+func (s *LocalStorage) Capabilities() Capabilities {
+	return Capabilities{CanSymlink: true}
 }
 
 func (s *LocalStorage) safePath(objectPath string) (string, error) {

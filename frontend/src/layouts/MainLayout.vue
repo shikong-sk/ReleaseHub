@@ -24,6 +24,10 @@ const menuOptions = computed<MenuOption[]>(() => [
     key: 'files'
   },
   {
+    label: () => hRouterLink('/storages', '存储'),
+    key: 'storages'
+  },
+  {
     label: () => hRouterLink('/settings', '设置'),
     key: 'settings'
   }

@@ -13,9 +13,10 @@ import (
 	"gorm.io/gorm"
 )
 
+// 确保 Service 使用 Driver 接口
 type Service struct {
 	db      *gorm.DB
-	storage *storage.LocalStorage
+	storage storage.Driver
 }
 
 type CleanupResult struct {
@@ -31,13 +32,13 @@ func NewService(db *gorm.DB, storageConfig config.StorageConfig) (*Service, erro
 		return nil, err
 	}
 
-	return NewServiceWithStorage(db, localStorage), nil
+	return NewServiceWithDriver(db, localStorage), nil
 }
 
-func NewServiceWithStorage(db *gorm.DB, localStorage *storage.LocalStorage) *Service {
+func NewServiceWithDriver(db *gorm.DB, driver storage.Driver) *Service {
 	return &Service{
 		db:      db,
-		storage: localStorage,
+		storage: driver,
 	}
 }
 
@@ -98,7 +99,7 @@ func (s *Service) Cleanup(ctx context.Context, repository models.Repository) (*C
 		if strings.TrimSpace(asset.StoragePath) == "" {
 			continue
 		}
-		if err := s.storage.Delete(asset.StoragePath); err != nil {
+		if err := s.storage.Delete(ctx, asset.StoragePath); err != nil {
 			cleanupErr := fmt.Errorf("删除资产文件 %s 失败: %w", asset.StoragePath, err)
 			s.failTask(ctx, &task, cleanupErr)
 			return result, cleanupErr

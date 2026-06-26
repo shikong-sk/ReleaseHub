@@ -56,7 +56,7 @@ func TestCleanupRepositoryKeepsLatestReleasesAndDeletesOldAssets(t *testing.T) {
 	oldAssetPath := "github/acme/tool/v1.0.0/tool-linux-amd64.tar.gz"
 	keptAssetPath := "github/acme/tool/v1.2.0/tool-linux-amd64.tar.gz"
 
-	service := NewServiceWithStorage(db, localStorage)
+	service := NewServiceWithDriver(db, localStorage)
 	result, err := service.Cleanup(ctx, repository)
 	if err != nil {
 		t.Fatalf("清理旧版本失败: %v", err)
@@ -69,13 +69,13 @@ func TestCleanupRepositoryKeepsLatestReleasesAndDeletesOldAssets(t *testing.T) {
 		t.Fatalf("清理任务状态不符合预期: %+v", result.Task)
 	}
 
-	if _, _, err := localStorage.Open(oldAssetPath); !errors.Is(err, os.ErrNotExist) {
+	if _, _, err := localStorage.Open(ctx, oldAssetPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("旧资产文件应被删除，实际错误: %v", err)
 	}
-	if file, _, err := localStorage.Open(keptAssetPath); err != nil {
+	if reader, _, err := localStorage.Open(ctx, keptAssetPath); err != nil {
 		t.Fatalf("保留版本资产文件不应被删除: %v", err)
 	} else {
-		_ = file.Close()
+		_ = reader.Close()
 	}
 
 	var remainingReleases []models.Release
@@ -142,7 +142,7 @@ func createRetentionTestReleases(t *testing.T, ctx context.Context, db *gorm.DB,
 		}
 
 		objectPath := filepath.ToSlash(filepath.Join("github", "acme", "tool", tag, "tool-linux-amd64.tar.gz"))
-		if _, err := localStorage.Put(objectPath, strings.NewReader("asset-"+tag)); err != nil {
+		if _, err := localStorage.Put(ctx, objectPath, strings.NewReader("asset-"+tag)); err != nil {
 			t.Fatalf("写入测试资产失败: %v", err)
 		}
 

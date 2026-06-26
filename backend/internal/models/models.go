@@ -51,6 +51,14 @@ type Storage struct {
 	Type      string         `json:"type" gorm:"column:type;size:40;not null;default:local"`
 	BasePath  string         `json:"basePath" gorm:"column:base_path;size:1024;not null"`
 	IsDefault bool           `json:"isDefault" gorm:"column:is_default;not null;default:false"`
+	Endpoint  string         `json:"endpoint" gorm:"column:endpoint;size:1024"`
+	Bucket    string         `json:"bucket" gorm:"column:bucket;size:255"`
+	Region    string         `json:"region" gorm:"column:region;size:64"`
+	AccessKey string         `json:"-" gorm:"column:access_key;size:512"`
+	SecretKey string         `json:"-" gorm:"column:secret_key;size:512"`
+	Username  string         `json:"username" gorm:"column:username;size:255"`
+	Password  string         `json:"-" gorm:"column:password;size:512"`
+	RemoteURL string         `json:"remoteUrl" gorm:"column:remote_url;size:1024"`
 	CreatedAt time.Time      `json:"createdAt" gorm:"column:created_at"`
 	UpdatedAt time.Time      `json:"updatedAt" gorm:"column:updated_at"`
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
