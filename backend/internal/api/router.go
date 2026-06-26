@@ -29,7 +29,7 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	healthService := health.NewService(deps.DB)
 
-	// 公开接口（不需要认证）
+	// 公开接口
 	router.GET("/api/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, healthService.Check(c.Request.Context()))
 	})
@@ -37,8 +37,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	// 认证路由
 	registerAuthRoutes(router, deps.DB)
 
-	// 需要认证的 API（当启用认证时通过中间件保护）
-	// 目前默认不启用认证，后续可通过配置开关控制
+	// 核心 API
 	githubClient, githubClientErr := githubsvc.NewClient(deps.Config.GitHub.APIBaseURL)
 	registerRepositoryRoutes(router, deps.DB, deps.Config.Storage, githubClient, githubClientErr)
 	registerReleaseRoutes(router, deps.DB, deps.Config.Storage)
@@ -51,6 +50,10 @@ func NewRouter(deps Dependencies) http.Handler {
 	registerProxyRoutes(router, deps.DB)
 	registerNotificationRoutes(router, deps.DB)
 	registerFilterRoutes(router)
+	registerSearchRoutes(router, deps.DB)
+	registerStatsRoutes(router, deps.DB)
+	registerUploadRoutes(router, deps.DB)
+	registerReconcileRoutes(router, deps.DB, deps.Logger)
 
 	router.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{
