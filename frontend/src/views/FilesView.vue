@@ -1,16 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, shallowRef } from 'vue'
-import { NAlert, NButton, NCard, NGrid, NGi, NInput, NStatistic } from 'naive-ui'
-import { RefreshCw } from 'lucide-vue-next'
+import { NAlert, NButton, NCard, NCollapse, NCollapseItem, NGrid, NGi, NInput, NStatistic, NTag } from 'naive-ui'
+import { RefreshCw, Search } from 'lucide-vue-next'
 
 import FileTable from '@/components/file/FileTable.vue'
 import { useFilesStore } from '@/stores/files'
+import { search as apiSearch, type SearchResult } from '@/api/search'
 
 const filesStore = useFilesStore()
-const search = shallowRef('')
+const localSearch = shallowRef('')
+const globalQuery = shallowRef('')
+const globalLoading = shallowRef(false)
+const globalError = shallowRef<string | null>(null)
+const globalResult = shallowRef<SearchResult | null>(null)
 
 const filteredFiles = computed(() => {
-  const keyword = search.value.trim().toLowerCase()
+  const keyword = localSearch.value.trim().toLowerCase()
   if (!keyword) {
     return filesStore.items
   }
@@ -32,6 +37,20 @@ function formatBytes(size: number) {
     return `${(size / 1024).toFixed(1)} KB`
   }
   return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
+
+async function handleGlobalSearch() {
+  const q = globalQuery.value.trim()
+  if (!q) return
+  globalLoading.value = true
+  globalError.value = null
+  try {
+    globalResult.value = await apiSearch(q, 30)
+  } catch (err) {
+    globalError.value = err instanceof Error ? err.message : '搜索失败'
+  } finally {
+    globalLoading.value = false
+  }
 }
 </script>
 
@@ -63,12 +82,47 @@ function formatBytes(size: number) {
       </NGi>
     </NGrid>
 
+    <NCard :bordered="false" title="全局搜索">
+      <div class="search-row">
+        <NInput v-model:value="globalQuery" clearable placeholder="搜索仓库、Release 或资产" @keydown.enter="handleGlobalSearch" />
+        <NButton type="primary" :loading="globalLoading" @click="handleGlobalSearch">
+          <template #icon><Search /></template>
+          搜索
+        </NButton>
+      </div>
+      <NAlert v-if="globalError" type="error" closable>{{ globalError }}</NAlert>
+      <div v-if="globalResult" class="search-results">
+        <NCollapse>
+          <NCollapseItem :title="`仓库 (${globalResult.repositories.length})`" v-if="globalResult.repositories.length">
+            <div v-for="repo in globalResult.repositories" :key="repo.id" class="search-item">
+              <NTag size="small">仓库</NTag>
+              <span>{{ repo.owner }}/{{ repo.repo }}</span>
+              <NTag size="small" :type="repo.lastStatus === 'healthy' ? 'success' : 'default'">{{ repo.lastStatus }}</NTag>
+            </div>
+          </NCollapseItem>
+          <NCollapseItem :title="`Release (${globalResult.releases.length})`" v-if="globalResult.releases.length">
+            <div v-for="rel in globalResult.releases" :key="rel.id" class="search-item">
+              <NTag size="small">Release</NTag>
+              <span>{{ rel.tag }}</span>
+            </div>
+          </NCollapseItem>
+          <NCollapseItem :title="`资产 (${globalResult.assets.length})`" v-if="globalResult.assets.length">
+            <div v-for="asset in globalResult.assets" :key="asset.id" class="search-item">
+              <NTag size="small" :type="asset.status === 'verified' ? 'success' : 'default'">{{ asset.status }}</NTag>
+              <span>{{ asset.name }}</span>
+            </div>
+          </NCollapseItem>
+        </NCollapse>
+        <p v-if="globalResult.total === 0" class="no-result">未找到匹配结果。</p>
+      </div>
+    </NCard>
+
     <NAlert v-if="filesStore.error" type="error" closable>
       {{ filesStore.error }}
     </NAlert>
 
-    <NCard :bordered="false">
-      <NInput v-model:value="search" class="file-search" clearable placeholder="搜索 owner/repo/tag/name" />
+    <NCard :bordered="false" title="本地文件">
+      <NInput v-model:value="localSearch" class="file-search" clearable placeholder="搜索 owner/repo/tag/name" />
       <FileTable class="file-table" :files="filteredFiles" :loading="filesStore.loading" />
     </NCard>
   </main>
@@ -101,6 +155,31 @@ function formatBytes(size: number) {
 .files-heading p {
   margin: 6px 0 0;
   color: #667085;
+}
+
+.search-row {
+  display: flex;
+  gap: 8px;
+  max-width: 480px;
+}
+
+.search-results {
+  margin-top: 12px;
+}
+
+.search-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+  color: #344054;
+}
+
+.no-result {
+  color: #667085;
+  font-size: 13px;
+  margin: 8px 0 0;
 }
 
 .file-search {

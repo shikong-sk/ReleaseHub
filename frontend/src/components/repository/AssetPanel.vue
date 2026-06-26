@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, h } from 'vue'
-import { NButton, NCard, NDataTable, NTag, NTooltip } from 'naive-ui'
+import { computed, h, shallowRef } from 'vue'
+import { NButton, NCard, NDataTable, NTag, NTooltip, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
+import { Upload } from 'lucide-vue-next'
 
+import { uploadAsset } from '@/api/upload'
 import type { Asset, CheckReleaseResult } from '@/types/release'
 
 const props = defineProps<{
@@ -13,7 +15,11 @@ const props = defineProps<{
 const emit = defineEmits<{
   download: [asset: Asset]
   retry: [asset: Asset]
+  refresh: []
 }>()
+
+const message = useMessage()
+const uploading = shallowRef(false)
 
 const assets = computed(() => props.result?.assets ?? [])
 const title = computed(() => {
@@ -165,10 +171,37 @@ function formatBytes(size: number) {
   }
   return `${(size / 1024 / 1024).toFixed(1)} MB`
 }
+
+function triggerUpload() {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.multiple = false
+  input.onchange = async () => {
+    const file = input.files?.[0]
+    if (!file || !props.result) return
+    uploading.value = true
+    try {
+      await uploadAsset(props.result.repository.id, props.result.release.id, file)
+      message.success(`${file.name} 上传成功`)
+      emit('refresh')
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '上传失败')
+    } finally {
+      uploading.value = false
+    }
+  }
+  input.click()
+}
 </script>
 
 <template>
-  <NCard v-if="result" class="asset-panel" :title="title" :bordered="false">
+  <NCard v-if="result" class="asset-panel" :bordered="false">
+    <template #header-extra>
+      <NButton size="small" secondary :loading="uploading" @click="triggerUpload">
+        <template #icon><Upload /></template>
+        上传
+      </NButton>
+    </template>
     <NDataTable
       :columns="columns"
       :data="assets"

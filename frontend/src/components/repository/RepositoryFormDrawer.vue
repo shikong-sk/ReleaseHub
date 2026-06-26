@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
+import { computed, reactive, shallowRef, watch } from 'vue'
 import {
+  NAlert,
   NButton,
   NDrawer,
   NDrawerContent,
@@ -8,14 +9,18 @@ import {
   NFormItem,
   NInput,
   NInputNumber,
+  NModal,
   NRadioButton,
   NRadioGroup,
   NSelect,
   NSpace,
-  NSwitch
+  NSwitch,
+  NTag,
+  useMessage
 } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
 
+import { previewFilter, type FilterPreviewResult } from '@/api/filter'
 import { useTokensStore } from '@/stores/tokens'
 import { useStoragesStore } from '@/stores/storages'
 import { useProxiesStore } from '@/stores/proxies'
@@ -32,6 +37,12 @@ const emit = defineEmits<{
   'update:show': [value: boolean]
   submit: [payload: RepositoryPayload]
 }>()
+
+const message = useMessage()
+const showPreview = shallowRef(false)
+const previewLoading = shallowRef(false)
+const previewResults = shallowRef<FilterPreviewResult[]>([])
+const previewError = shallowRef<string | null>(null)
 
 const tokensStore = useTokensStore()
 const storagesStore = useStoragesStore()
@@ -156,6 +167,46 @@ function submit() {
     retentionKeepLatest: form.retentionKeepLatest
   })
 }
+
+async function handlePreview() {
+  previewLoading.value = true
+  previewError.value = null
+  try {
+    const resp = await previewFilter({
+      assetNames: sampleAssetNames(),
+      filterMode: form.filterMode,
+      includePatterns: form.assetIncludePatterns,
+      excludePatterns: form.assetExcludePatterns
+    })
+    if (resp.error) {
+      previewError.value = resp.error
+    }
+    previewResults.value = resp.results
+    showPreview.value = true
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '预览失败')
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+function sampleAssetNames(): string[] {
+  const owner = form.owner.trim() || 'owner'
+  const repo = form.repo.trim() || 'repo'
+  return [
+    `${repo}_linux_amd64.tar.gz`,
+    `${repo}_linux_arm64.tar.gz`,
+    `${repo}_darwin_amd64.zip`,
+    `${repo}_darwin_arm64.zip`,
+    `${repo}_windows_amd64.zip`,
+    `${repo}_windows_arm64.zip`,
+    `${owner}-${repo}-1.0.0.apk`,
+    `checksums.txt`,
+    `SHA256SUMS`,
+    `${repo}_linux_amd64.deb`,
+    `${repo}-debug.apk`
+  ]
+}
 </script>
 
 <template>
@@ -215,11 +266,14 @@ function submit() {
         </NFormItem>
 
         <NFormItem label="Include 规则">
-          <NInput
-            v-model:value="form.assetIncludePatterns"
-            type="textarea"
-            placeholder="例如：*linux*amd64*"
-          />
+          <div class="filter-row">
+            <NInput
+              v-model:value="form.assetIncludePatterns"
+              type="textarea"
+              placeholder="例如：*linux*amd64*"
+            />
+            <NButton size="small" secondary :loading="previewLoading" @click="handlePreview">预览</NButton>
+          </div>
         </NFormItem>
 
         <NFormItem label="Exclude 规则">
@@ -243,10 +297,44 @@ function submit() {
       </template>
     </NDrawerContent>
   </NDrawer>
+
+  <NModal v-model:show="showPreview" preset="dialog" title="过滤规则预览" positive-text="关闭">
+    <NAlert v-if="previewError" type="error" :show-icon="false">{{ previewError }}</NAlert>
+    <div class="preview-list">
+      <div v-for="item in previewResults" :key="item.name" class="preview-item">
+        <NTag size="small" :type="item.matched ? 'success' : 'default'">{{ item.matched ? '匹配' : '跳过' }}</NTag>
+        <span class="preview-name">{{ item.name }}</span>
+      </div>
+    </div>
+  </NModal>
 </template>
 
 <style scoped>
 .repository-form {
   padding-right: 4px;
+}
+
+.filter-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.preview-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.preview-name {
+  font-size: 13px;
+  color: #344054;
 }
 </style>
