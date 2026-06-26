@@ -2,8 +2,6 @@
 
 ReleaseHub 是面向 GitHub Releases 的 Artifact 管理平台，目标是长期自动同步几十到几百个仓库的 Release Assets，并提供接近 Sonarr/Radarr 的 Web 管理体验。
 
-当前状态：项目骨架与第一版本地运行闭环。已包含 Go API 服务、SQLite 初始化、健康检查、Vue 管理台壳、Docker 本地启动配置。
-
 ## 技术栈
 
 - 后端：Go、Gin、GORM、SQLite、Viper、Zap
@@ -73,9 +71,10 @@ http://localhost:8088
 | `RELEASEHUB_DATABASE_DRIVER` | `sqlite` | 数据库类型 |
 | `RELEASEHUB_DATABASE_DSN` | `data/releasehub.db` | SQLite 数据库路径 |
 | `RELEASEHUB_STORAGE_DATA_DIR` | `data/releases` | 本地资产存储目录 |
-| `RELEASEHUB_GITHUB_API_BASE_URL` | `https://api.github.com` | GitHub API 地址，测试或代理场景可覆盖 |
+| `RELEASEHUB_GITHUB_API_BASE_URL` | `https://api.github.com` | GitHub API 地址 |
 | `RELEASEHUB_SCHEDULER_ENABLED` | `true` | 是否启用定时检查 |
 | `RELEASEHUB_SCHEDULER_TICK_SECONDS` | `60` | Scheduler 扫描间隔，最小 10 秒 |
+| `RELEASEHUB_SCHEDULER_MAX_CONCURRENT` | `5` | Scheduler 最大并发同步数 |
 
 ## 当前 API
 
@@ -87,6 +86,7 @@ GET /api/repositories/:id
 PATCH /api/repositories/:id
 DELETE /api/repositories/:id
 POST /api/repositories/:id/check
+POST /api/repositories/:id/check-all
 POST /api/repositories/:id/sync
 GET /api/repositories/:id/releases
 GET /api/releases/:id
@@ -99,7 +99,38 @@ GET /api/tasks
 GET /api/tasks/:id
 GET /api/files
 GET /api/files/download?assetId=:id
+GET /api/tokens
+POST /api/tokens
+GET /api/tokens/:id
+DELETE /api/tokens/:id
+GET /api/config
 ```
 
-当前已支持 API 与数据库健康检查、GitHub 仓库配置的增删改查、latest Release 检查、Release/Asset 入库与查询、按过滤规则同步资产、资产下载/重新下载/删除、本地存储 latest 映射、SHA256 计算、基础保留策略、本地文件读取、任务查询和文件浏览。
+## 功能
 
+- 添加/编辑/删除 GitHub 仓库，支持关联 GitHub Token
+- 手动检查最新 Release、全量检查所有 Release
+- 手动同步（检查 + 下载）
+- Asset glob/regex 过滤
+- SHA256 校验
+- 本地存储：`github/owner/repo/tag/` 目录结构 + `latest` 映射
+- 保留策略：保留最近 N 个版本，自动清理旧版本
+- 失败资产重试
+- Scheduler 定时同步，全局并发控制
+- Web 浏览、搜索、下载已同步文件
+- GitHub Token 管理（创建/删除，Token 值不暴露）
+- 任务状态与错误信息可查询
+
+## 路线图
+
+完整规划见 [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md)。
+
+| 版本 | 功能 |
+| --- | --- |
+| v0.1 MVP | 仓库管理、Release 检查与全量拉取、资产过滤与下载、本地存储、SHA256、保留策略、Scheduler、Web 管理、Docker 部署 |
+| v0.2 | 多存储（S3/WebDAV）、代理、通知（Gotify/Webhook） |
+| v0.3 | 过滤增强、Token 健康、认证、日志队列 |
+| v0.4 | 流式下载、断点续传、aria2 RPC、SHA256 远程比对 |
+| v0.5 | 双向同步、搜索、ECharts 统计 |
+| v0.6 | GitLab/Gitea/Forgejo Provider |
+| v1.0 | 插件系统、RBAC、API Key、Prometheus、OpenAPI |

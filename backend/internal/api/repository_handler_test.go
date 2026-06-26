@@ -726,3 +726,130 @@ func TestConcurrentSyncWithMultipleAssets(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckAllReleasesPersistsMultipleReleases(t *testing.T) {
+	t.Parallel()
+
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// 只响应 releases 列表请求（不含 /latest）
+		if r.URL.Path == "/repos/acme/tool/releases" {
+			_, _ = w.Write([]byte(`[
+				{
+					"id": 7001,
+					"tag_name": "v3.0.0",
+					"name": "Release v3.0.0",
+					"body": "major release",
+					"html_url": "https://github.com/acme/tool/releases/tag/v3.0.0",
+					"url": "https://api.github.com/repos/acme/tool/releases/7001",
+					"published_at": "2026-06-01T10:00:00Z",
+					"assets": [
+						{
+							"id": 8001,
+							"name": "tool_linux_amd64.tar.gz",
+							"size": 20,
+							"content_type": "application/gzip",
+							"url": "https://api.github.com/repos/acme/tool/releases/assets/8001",
+							"browser_download_url": "https://github.com/acme/tool/releases/download/v3.0.0/tool_linux_amd64.tar.gz"
+						}
+					]
+				},
+				{
+					"id": 7002,
+					"tag_name": "v2.1.0",
+					"name": "Release v2.1.0",
+					"body": "minor release",
+					"html_url": "https://github.com/acme/tool/releases/tag/v2.1.0",
+					"url": "https://api.github.com/repos/acme/tool/releases/7002",
+					"published_at": "2026-05-15T10:00:00Z",
+					"assets": [
+						{
+							"id": 8002,
+							"name": "tool_linux_amd64.tar.gz",
+							"size": 18,
+							"content_type": "application/gzip",
+							"url": "https://api.github.com/repos/acme/tool/releases/assets/8002",
+							"browser_download_url": "https://github.com/acme/tool/releases/download/v2.1.0/tool_linux_amd64.tar.gz"
+						},
+						{
+							"id": 8003,
+							"name": "tool_darwin_amd64.tar.gz",
+							"size": 19,
+							"content_type": "application/gzip",
+							"url": "https://api.github.com/repos/acme/tool/releases/assets/8003",
+							"browser_download_url": "https://github.com/acme/tool/releases/download/v2.1.0/tool_darwin_amd64.tar.gz"
+						}
+					]
+				}
+			]`))
+			return
+		}
+
+		http.NotFound(w, r)
+	}))
+	defer githubServer.Close()
+
+	storageDir := filepath.Join(t.TempDir(), "releases")
+	router := newTestRouterWithGitHubBaseURLAndStorageDir(t, githubServer.URL, storageDir)
+
+	// 创建仓库
+	createRec := performRequest(router, http.MethodPost, "/api/repositories", []byte(`{
+		"owner": "acme",
+		"repo": "tool"
+	}`))
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("创建仓库失败: %d %s", createRec.Code, createRec.Body.String())
+	}
+
+	// 全量检查
+	checkAllRec := performRequest(router, http.MethodPost, "/api/repositories/1/check-all", nil)
+	if checkAllRec.Code != http.StatusOK {
+		t.Fatalf("全量检查失败: %d %s", checkAllRec.Code, checkAllRec.Body.String())
+	}
+
+	var result struct {
+		Releases      int `json:"releases"`
+		NewReleases   int `json:"newReleases"`
+		TotalAssets   int `json:"totalAssets"`
+		PendingAssets int `json:"pendingAssets"`
+		SkippedAssets int `json:"skippedAssets"`
+	}
+	if err := json.Unmarshal(checkAllRec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("解析全量检查响应失败: %v", err)
+	}
+	if result.Releases != 2 {
+		t.Fatalf("期望 2 个 Release，实际 %d", result.Releases)
+	}
+	if result.NewReleases != 2 {
+		t.Fatalf("期望 2 个新增 Release，实际 %d", result.NewReleases)
+	}
+	if result.TotalAssets != 3 {
+		t.Fatalf("期望 3 个资产，实际 %d", result.TotalAssets)
+	}
+
+	// 验证 Release 列表
+	releasesRec := performRequest(router, http.MethodGet, "/api/repositories/1/releases", nil)
+	if releasesRec.Code != http.StatusOK {
+		t.Fatalf("查询 Release 列表失败: %d", releasesRec.Code)
+	}
+	var releasesBody struct {
+		Items []struct {
+			Tag      string `json:"tag"`
+			IsLatest bool   `json:"isLatest"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(releasesRec.Body.Bytes(), &releasesBody); err != nil {
+		t.Fatalf("解析 Release 列表失败: %v", err)
+	}
+	if len(releasesBody.Items) != 2 {
+		t.Fatalf("期望 2 个 Release 记录，实际 %d", len(releasesBody.Items))
+	}
+	// 第一个（最新的）应为 isLatest=true
+	if !releasesBody.Items[0].IsLatest {
+		t.Fatal("第一个 Release 应为 isLatest=true")
+	}
+	if releasesBody.Items[1].IsLatest {
+		t.Fatal("第二个 Release 不应为 isLatest=true")
+	}
+}
