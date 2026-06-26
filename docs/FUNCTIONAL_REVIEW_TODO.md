@@ -130,19 +130,26 @@
 
 ### P1-3 通知服务未接入业务事件
 
-状态：待完善
+状态：已修复核心事件
 
-问题：
+原问题：
 
 - Notification CRUD 和 Gotify/Webhook/Email/Telegram notifier 已存在。
 - 下载开始、下载完成、下载失败、发现新版本、同步完成等事件没有统一调用通知服务。
 
-建议补全：
+修复证据：
 
-1. 增加事件模型，例如 `release.discovered`、`asset.download.succeeded`、`asset.download.failed`。
-2. 在 checker、asset service、syncer 中发布事件。
-3. notification service 根据启用项 fan-out 发送。
-4. 失败通知要包含 repo、tag、asset、错误信息、任务 ID。
+- `backend/internal/services/notify/factory.go` 下沉 notifier 创建逻辑。
+- `backend/internal/services/notify/service.go` 新增通知派发服务，按 `enabled` 和 `events` 过滤渠道。
+- `backend/internal/services/release/checker.go` 在发现新 latest release 时触发 `new_release`。
+- `backend/internal/services/asset/download.go` 在资产下载成功/失败时触发 `download_ok`/`download_err`。
+- `backend/internal/services/syncer/service.go` 在同步成功/失败时触发 `sync_success`/`sync_failed`。
+
+遗留风险：
+
+- 暂未触发“开始下载”事件，避免高频通知噪声；后续可做成独立开关。
+- 通知发送失败目前不阻断主流程，也未写入 task log；后续应增加可观测性。
+- 通知发送是同步 fan-out，后续可进入队列并增加重试。
 
 ### P1-4 API Key scope 未执行权限判断
 

@@ -12,6 +12,7 @@ import (
 	"releasehub/backend/internal/config"
 	"releasehub/backend/internal/models"
 	"releasehub/backend/internal/services/downloader"
+	notifysvc "releasehub/backend/internal/services/notify"
 	proxysvc "releasehub/backend/internal/services/proxy"
 	"releasehub/backend/internal/services/storage"
 	"releasehub/backend/internal/services/tasklog"
@@ -25,6 +26,7 @@ type Service struct {
 	storages   *storage.DriverFactory
 	downloader *downloader.HTTPDownloader
 	logService *tasklog.Service
+	notifier   *notifysvc.Service
 }
 
 type DownloadResult struct {
@@ -50,6 +52,7 @@ func NewServiceWithDriver(db *gorm.DB, driver storage.Driver) *Service {
 		storage:    driver,
 		downloader: downloader.NewHTTPDownloader(),
 		logService: tasklog.NewService(db),
+		notifier:   notifysvc.NewService(db),
 	}
 }
 
@@ -60,6 +63,7 @@ func NewServiceWithDownloaderAndDriver(db *gorm.DB, driver storage.Driver, dl *d
 		storage:    driver,
 		downloader: dl,
 		logService: tasklog.NewService(db),
+		notifier:   notifysvc.NewService(db),
 	}
 }
 
@@ -69,6 +73,7 @@ func NewServiceWithFactory(db *gorm.DB, storageConfig config.StorageConfig) *Ser
 		storages:   storage.NewDriverFactory(db, storageConfig),
 		downloader: downloader.NewHTTPDownloader(),
 		logService: tasklog.NewService(db),
+		notifier:   notifysvc.NewService(db),
 	}
 }
 
@@ -172,17 +177,20 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 	if downloadErr != nil {
 		s.markAssetFailed(ctx, &asset, downloadErr)
 		s.failTaskWithLog(ctx, &task, downloadErr, "下载请求失败")
+		s.notifyDownloadFailed(ctx, repository, release, asset, downloadErr)
 		return nil, downloadErr
 	}
 	if storageErr != nil {
 		s.markAssetFailed(ctx, &asset, storageErr)
 		s.failTaskWithLog(ctx, &task, storageErr, "存储写入失败")
+		s.notifyDownloadFailed(ctx, repository, release, asset, storageErr)
 		return nil, storageErr
 	}
 
 	if err := storageDriver.SetLatestTag(ctx, repository.Provider, repository.Owner, repository.Repo, release.Tag); err != nil {
 		s.markAssetFailed(ctx, &asset, err)
 		s.failTaskWithLog(ctx, &task, err, "设置 latest 标签失败")
+		s.notifyDownloadFailed(ctx, repository, release, asset, err)
 		return nil, err
 	}
 
@@ -211,6 +219,7 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 
 	_ = s.logService.Append(ctx, task.ID, "info",
 		fmt.Sprintf("下载完成: %s (%d bytes, SHA256: %s)", asset.Name, downloadResult.Size, shortSHA256(downloadResult.SHA256)))
+	s.notifyDownloadOK(ctx, repository, release, asset)
 
 	return &DownloadResult{
 		Asset: asset,
@@ -373,6 +382,24 @@ func (s *Service) downloaderForRepository(ctx context.Context, repository models
 		return nil, err
 	}
 	return downloader.NewHTTPDownloaderWithTransport(transport), nil
+}
+
+func (s *Service) notifyDownloadOK(ctx context.Context, repository models.Repository, release models.Release, asset models.Asset) {
+	if s.notifier == nil {
+		return
+	}
+	title := fmt.Sprintf("ReleaseHub 下载完成: %s/%s", repository.Owner, repository.Repo)
+	message := fmt.Sprintf("版本: %s\n资产: %s\nSHA256: %s", release.Tag, asset.Name, shortSHA256(asset.SHA256))
+	_ = s.notifier.Notify(ctx, notifysvc.EventDownloadOK, title, message)
+}
+
+func (s *Service) notifyDownloadFailed(ctx context.Context, repository models.Repository, release models.Release, asset models.Asset, err error) {
+	if s.notifier == nil {
+		return
+	}
+	title := fmt.Sprintf("ReleaseHub 下载失败: %s/%s", repository.Owner, repository.Repo)
+	message := fmt.Sprintf("版本: %s\n资产: %s\n错误: %s", release.Tag, asset.Name, err.Error())
+	_ = s.notifier.Notify(ctx, notifysvc.EventDownloadErr, title, message)
 }
 
 func (s *Service) failTask(ctx context.Context, task *models.Task, err error) {

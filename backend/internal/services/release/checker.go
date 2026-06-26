@@ -9,6 +9,7 @@ import (
 	"releasehub/backend/internal/models"
 	"releasehub/backend/internal/services/filter"
 	githubsvc "releasehub/backend/internal/services/github"
+	notifysvc "releasehub/backend/internal/services/notify"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -24,6 +25,7 @@ type CheckService struct {
 	db            *gorm.DB
 	github        GitHubClient
 	githubFactory *githubsvc.ClientFactory
+	notifier      *notifysvc.Service
 	retention     RetentionRunner
 	logger        *zap.Logger
 }
@@ -51,9 +53,10 @@ type RetentionRunner interface {
 
 func NewCheckService(db *gorm.DB, github GitHubClient) *CheckService {
 	return &CheckService{
-		db:     db,
-		github: github,
-		logger: zap.NewNop(),
+		db:       db,
+		github:   github,
+		notifier: notifysvc.NewService(db),
+		logger:   zap.NewNop(),
 	}
 }
 
@@ -112,6 +115,11 @@ func (s *CheckService) CheckLatest(ctx context.Context, repositoryID uint) (*Che
 		s.failTask(ctx, &task, err)
 		return nil, err
 	}
+	isNewRelease, err := s.releaseMissing(ctx, repository.ID, githubRelease.TagName)
+	if err != nil {
+		s.failTask(ctx, &task, err)
+		return nil, err
+	}
 
 	matcher, err := filter.NewMatcher(repository.FilterMode, repository.AssetIncludePatterns, repository.AssetExcludePatterns)
 	if err != nil {
@@ -128,6 +136,9 @@ func (s *CheckService) CheckLatest(ctx context.Context, repositoryID uint) (*Che
 
 	if s.retention != nil {
 		_ = s.retention.CleanupRepository(ctx, result.Repository)
+	}
+	if isNewRelease {
+		s.notifyNewRelease(ctx, result.Repository, result.Release, result.Assets)
 	}
 
 	return result, nil
@@ -519,6 +530,26 @@ func (s *CheckService) githubClient(ctx context.Context, repository models.Repos
 		return nil, fmt.Errorf("GitHub Client 未初始化")
 	}
 	return s.github, nil
+}
+
+func (s *CheckService) releaseMissing(ctx context.Context, repositoryID uint, tag string) (bool, error) {
+	var count int64
+	if err := s.db.WithContext(ctx).
+		Model(&models.Release{}).
+		Where("repository_id = ? AND tag = ?", repositoryID, tag).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count == 0, nil
+}
+
+func (s *CheckService) notifyNewRelease(ctx context.Context, repository models.Repository, release models.Release, assets []models.Asset) {
+	if s.notifier == nil {
+		return
+	}
+	title := fmt.Sprintf("ReleaseHub 发现新版本: %s/%s", repository.Owner, repository.Repo)
+	message := fmt.Sprintf("版本: %s\n资产数量: %d\n页面: %s", release.Tag, len(assets), release.HTMLURL)
+	_ = s.notifier.Notify(ctx, notifysvc.EventNewRelease, title, message)
 }
 
 func (s *CheckService) failTask(ctx context.Context, task *models.Task, err error) {

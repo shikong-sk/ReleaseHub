@@ -11,6 +11,7 @@ import (
 	"releasehub/backend/internal/config"
 	"releasehub/backend/internal/models"
 	assetsvc "releasehub/backend/internal/services/asset"
+	notifysvc "releasehub/backend/internal/services/notify"
 	releasesvc "releasehub/backend/internal/services/release"
 
 	"gorm.io/gorm"
@@ -22,6 +23,7 @@ type Service struct {
 	db                     *gorm.DB
 	checker                *releasesvc.CheckService
 	assetService           *assetsvc.Service
+	notifier               *notifysvc.Service
 	maxConcurrentDownloads int
 }
 
@@ -51,6 +53,7 @@ func NewService(db *gorm.DB, checker *releasesvc.CheckService, storageConfig con
 		db:                     db,
 		checker:                checker,
 		assetService:           assetService,
+		notifier:               notifysvc.NewService(db),
 		maxConcurrentDownloads: defaultMaxConcurrentDownloads,
 	}, nil
 }
@@ -70,6 +73,7 @@ func (s *Service) SyncRepository(ctx context.Context, repositoryID uint) (*Resul
 	checkResult, err := s.checker.CheckLatest(ctx, repositoryID)
 	if err != nil {
 		s.failTask(ctx, &task, err)
+		s.notifySyncFailed(ctx, repositoryID, err)
 		return nil, err
 	}
 
@@ -101,6 +105,7 @@ func (s *Service) SyncRepository(ctx context.Context, repositoryID uint) (*Resul
 			return result, err
 		}
 		result.Task = task
+		s.notifySyncFailed(ctx, repositoryID, errors.New(task.ErrorMessage))
 		return result, errors.New(task.ErrorMessage)
 	}
 
@@ -109,6 +114,7 @@ func (s *Service) SyncRepository(ctx context.Context, repositoryID uint) (*Resul
 		return result, err
 	}
 	result.Task = task
+	s.notifySyncSuccess(ctx, result.Repository, result.Release, len(downloadResults))
 	return result, nil
 }
 
@@ -193,6 +199,27 @@ func (s *Service) failTask(ctx context.Context, task *models.Task, err error) {
 	task.ErrorMessage = err.Error()
 	task.FinishedAt = &now
 	_ = s.db.WithContext(ctx).Save(task).Error
+}
+
+func (s *Service) notifySyncSuccess(ctx context.Context, repository models.Repository, release models.Release, downloaded int) {
+	if s.notifier == nil {
+		return
+	}
+	title := fmt.Sprintf("ReleaseHub 同步完成: %s/%s", repository.Owner, repository.Repo)
+	message := fmt.Sprintf("版本: %s\n下载资产: %d", release.Tag, downloaded)
+	_ = s.notifier.Notify(ctx, notifysvc.EventSyncSuccess, title, message)
+}
+
+func (s *Service) notifySyncFailed(ctx context.Context, repositoryID uint, err error) {
+	if s.notifier == nil {
+		return
+	}
+	var repository models.Repository
+	title := "ReleaseHub 同步失败"
+	if dbErr := s.db.WithContext(ctx).First(&repository, repositoryID).Error; dbErr == nil {
+		title = fmt.Sprintf("ReleaseHub 同步失败: %s/%s", repository.Owner, repository.Repo)
+	}
+	_ = s.notifier.Notify(ctx, notifysvc.EventSyncFailed, title, err.Error())
 }
 
 func joinAssetErrors(failedAssets []AssetError) string {
