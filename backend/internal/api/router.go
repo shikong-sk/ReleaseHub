@@ -33,6 +33,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	router.GET("/api/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, healthService.Check(c.Request.Context()))
 	})
+	router.GET("/api/metrics", metricsHandler(deps.DB))
 
 	// 认证路由
 	registerAuthRoutes(router, deps.DB)
@@ -54,6 +55,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	registerStatsRoutes(router, deps.DB)
 	registerUploadRoutes(router, deps.DB)
 	registerReconcileRoutes(router, deps.DB, deps.Logger)
+	registerAPIKeyRoutes(router, deps.DB)
 
 	router.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{

@@ -186,3 +186,17 @@ type User struct {
 	UpdatedAt    time.Time      `json:"updatedAt" gorm:"column:updated_at"`
 	DeletedAt    gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
 }
+
+type APIKey struct {
+	ID        uint           `json:"id" gorm:"primaryKey"`
+	Name      string         `json:"name" gorm:"column:name;size:120;not null"`
+	Key       string         `json:"-" gorm:"column:key;size:128;not null;uniqueIndex"`
+	KeyHint   string         `json:"keyHint" gorm:"column:key_hint;size:32"`
+	Scope     string         `json:"scope" gorm:"column:scope;size:255;not null;default:*"`
+	UserID    *uint          `json:"userId" gorm:"column:user_id"`
+	Enabled   bool           `json:"enabled" gorm:"column:enabled;not null;default:true"`
+	LastUsedAt *time.Time    `json:"lastUsedAt" gorm:"column:last_used_at"`
+	CreatedAt time.Time      `json:"createdAt" gorm:"column:created_at"`
+	UpdatedAt time.Time      `json:"updatedAt" gorm:"column:updated_at"`
+	DeletedAt gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
+}
