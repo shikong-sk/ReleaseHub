@@ -12,6 +12,7 @@ import (
 	"releasehub/backend/internal/config"
 	"releasehub/backend/internal/models"
 	"releasehub/backend/internal/services/downloader"
+	proxysvc "releasehub/backend/internal/services/proxy"
 	"releasehub/backend/internal/services/storage"
 	"releasehub/backend/internal/services/tasklog"
 
@@ -21,6 +22,7 @@ import (
 type Service struct {
 	db         *gorm.DB
 	storage    storage.Driver
+	storages   *storage.DriverFactory
 	downloader *downloader.HTTPDownloader
 	logService *tasklog.Service
 }
@@ -36,7 +38,9 @@ func NewService(db *gorm.DB, storageConfig config.StorageConfig) (*Service, erro
 		return nil, err
 	}
 
-	return NewServiceWithDriver(db, localStorage), nil
+	service := NewServiceWithFactory(db, storageConfig)
+	service.storage = localStorage
+	return service, nil
 }
 
 // NewServiceWithDriver 使用指定存储驱动创建资产服务
@@ -55,6 +59,15 @@ func NewServiceWithDownloaderAndDriver(db *gorm.DB, driver storage.Driver, dl *d
 		db:         db,
 		storage:    driver,
 		downloader: dl,
+		logService: tasklog.NewService(db),
+	}
+}
+
+func NewServiceWithFactory(db *gorm.DB, storageConfig config.StorageConfig) *Service {
+	return &Service{
+		db:         db,
+		storages:   storage.NewDriverFactory(db, storageConfig),
+		downloader: downloader.NewHTTPDownloader(),
 		logService: tasklog.NewService(db),
 	}
 }
@@ -110,6 +123,17 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 	objectPath := buildObjectPath(repository, release, asset)
 
 	// 使用 pipe 连接下载器和存储
+	storageDriver, err := s.storageDriver(ctx, repository)
+	if err != nil {
+		s.failTask(ctx, &task, err)
+		return nil, err
+	}
+	downloadClient, err := s.downloaderForRepository(ctx, repository)
+	if err != nil {
+		s.failTask(ctx, &task, err)
+		return nil, err
+	}
+
 	pr, pw := io.Pipe()
 	var downloadResult *downloader.Result
 	var downloadErr error
@@ -123,7 +147,7 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 		if downloadErr != nil {
 			return
 		}
-		downloadResult, downloadErr = s.downloader.Download(ctx, downloadURL, token, pw)
+		downloadResult, downloadErr = downloadClient.Download(ctx, downloadURL, token, pw)
 		if downloadErr != nil {
 			_ = pw.CloseWithError(downloadErr)
 			return
@@ -135,7 +159,7 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 	storageDone := make(chan struct{})
 	go func() {
 		defer close(storageDone)
-		storedObject, storageErr = s.storage.Put(ctx, objectPath, pr)
+		storedObject, storageErr = storageDriver.Put(ctx, objectPath, pr)
 		if storageErr != nil {
 			pr.CloseWithError(storageErr)
 		}
@@ -156,7 +180,7 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 		return nil, storageErr
 	}
 
-	if err := s.storage.SetLatestTag(ctx, repository.Provider, repository.Owner, repository.Repo, release.Tag); err != nil {
+	if err := storageDriver.SetLatestTag(ctx, repository.Provider, repository.Owner, repository.Repo, release.Tag); err != nil {
 		s.markAssetFailed(ctx, &asset, err)
 		s.failTaskWithLog(ctx, &task, err, "设置 latest 标签失败")
 		return nil, err
@@ -233,7 +257,7 @@ func (s *Service) RetryDownload(ctx context.Context, assetID uint) (*DownloadRes
 
 // OpenReader 返回资产的读取流（兼容所有存储驱动）
 func (s *Service) OpenReader(ctx context.Context, assetID uint) (*models.Asset, *storage.StoredObject, io.ReadCloser, error) {
-	asset, _, _, err := s.loadAssetContext(ctx, assetID)
+	asset, _, repository, err := s.loadAssetContext(ctx, assetID)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -241,7 +265,12 @@ func (s *Service) OpenReader(ctx context.Context, assetID uint) (*models.Asset, 
 		return nil, nil, nil, fmt.Errorf("资产尚未下载")
 	}
 
-	reader, object, err := s.storage.Open(ctx, asset.StoragePath)
+	storageDriver, err := s.storageDriver(ctx, repository)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	reader, object, err := storageDriver.Open(ctx, asset.StoragePath)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -255,13 +284,17 @@ func (s *Service) Open(ctx context.Context, assetID uint) (*models.Asset, *stora
 }
 
 func (s *Service) Delete(ctx context.Context, assetID uint) error {
-	asset, _, _, err := s.loadAssetContext(ctx, assetID)
+	asset, _, repository, err := s.loadAssetContext(ctx, assetID)
 	if err != nil {
 		return err
 	}
 
 	if strings.TrimSpace(asset.StoragePath) != "" {
-		if err := s.storage.Delete(ctx, asset.StoragePath); err != nil {
+		storageDriver, err := s.storageDriver(ctx, repository)
+		if err != nil {
+			return err
+		}
+		if err := storageDriver.Delete(ctx, asset.StoragePath); err != nil {
 			return err
 		}
 	}
@@ -321,6 +354,25 @@ func (s *Service) markAssetFailed(ctx context.Context, asset *models.Asset, err 
 	asset.Status = models.AssetStatusFailed
 	asset.ErrorMessage = err.Error()
 	_ = s.db.WithContext(ctx).Save(asset).Error
+}
+
+func (s *Service) storageDriver(ctx context.Context, repository models.Repository) (storage.Driver, error) {
+	if s.storages != nil {
+		return s.storages.DriverForRepository(ctx, repository)
+	}
+	return s.storage, nil
+}
+
+func (s *Service) downloaderForRepository(ctx context.Context, repository models.Repository) (*downloader.HTTPDownloader, error) {
+	if repository.ProxyID == nil {
+		return s.downloader, nil
+	}
+
+	transport, err := proxysvc.TransportForRepository(ctx, s.db, repository)
+	if err != nil {
+		return nil, err
+	}
+	return downloader.NewHTTPDownloaderWithTransport(transport), nil
 }
 
 func (s *Service) failTask(ctx context.Context, task *models.Task, err error) {

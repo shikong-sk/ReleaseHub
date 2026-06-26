@@ -45,7 +45,7 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	// 核心 API
 	githubClient, githubClientErr := githubsvc.NewClient(deps.Config.GitHub.APIBaseURL)
-	registerRepositoryRoutes(router, deps.DB, deps.Config.Storage, githubClient, githubClientErr)
+	registerRepositoryRoutes(router, deps.DB, deps.Config.Storage, deps.Config.GitHub.APIBaseURL, githubClient, githubClientErr)
 	registerReleaseRoutes(router, deps.DB, deps.Config.Storage)
 	registerTaskRoutes(router, deps.DB)
 	registerFileRoutes(router, deps.DB)

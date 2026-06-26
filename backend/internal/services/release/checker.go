@@ -21,10 +21,11 @@ type GitHubClient interface {
 }
 
 type CheckService struct {
-	db        *gorm.DB
-	github    GitHubClient
-	retention RetentionRunner
-	logger    *zap.Logger
+	db            *gorm.DB
+	github        GitHubClient
+	githubFactory *githubsvc.ClientFactory
+	retention     RetentionRunner
+	logger        *zap.Logger
 }
 
 type CheckResult struct {
@@ -68,6 +69,11 @@ func (s *CheckService) WithLogger(logger *zap.Logger) *CheckService {
 	return s
 }
 
+func (s *CheckService) WithGitHubFactory(factory *githubsvc.ClientFactory) *CheckService {
+	s.githubFactory = factory
+	return s
+}
+
 func (s *CheckService) CheckLatest(ctx context.Context, repositoryID uint) (*CheckResult, error) {
 	var repository models.Repository
 	if err := s.db.WithContext(ctx).First(&repository, repositoryID).Error; err != nil {
@@ -94,7 +100,13 @@ func (s *CheckService) CheckLatest(ctx context.Context, repositoryID uint) (*Che
 		return nil, err
 	}
 
-	githubRelease, err := s.github.GetLatestRelease(ctx, repository.Owner, repository.Repo, token)
+	githubClient, err := s.githubClient(ctx, repository)
+	if err != nil {
+		s.failTask(ctx, &task, err)
+		return nil, err
+	}
+
+	githubRelease, err := githubClient.GetLatestRelease(ctx, repository.Owner, repository.Repo, token)
 	if err != nil {
 		s.markRepositoryFailed(ctx, repository.ID)
 		s.failTask(ctx, &task, err)
@@ -148,7 +160,13 @@ func (s *CheckService) CheckAll(ctx context.Context, repositoryID uint) (*CheckA
 		return nil, err
 	}
 
-	githubReleases, err := s.github.ListAllReleases(ctx, repository.Owner, repository.Repo, token, 10)
+	githubClient, err := s.githubClient(ctx, repository)
+	if err != nil {
+		s.failTask(ctx, &task, err)
+		return nil, err
+	}
+
+	githubReleases, err := githubClient.ListAllReleases(ctx, repository.Owner, repository.Repo, token, 10)
 	if err != nil {
 		s.markRepositoryFailed(ctx, repository.ID)
 		s.failTask(ctx, &task, err)
@@ -491,6 +509,16 @@ func (s *CheckService) githubToken(ctx context.Context, tokenID *uint) (string, 
 	}
 
 	return token.Token, nil
+}
+
+func (s *CheckService) githubClient(ctx context.Context, repository models.Repository) (GitHubClient, error) {
+	if s.githubFactory != nil {
+		return s.githubFactory.ClientForRepository(ctx, repository)
+	}
+	if s.github == nil {
+		return nil, fmt.Errorf("GitHub Client 未初始化")
+	}
+	return s.github, nil
 }
 
 func (s *CheckService) failTask(ctx context.Context, task *models.Task, err error) {

@@ -255,28 +255,7 @@ func (h *storageHandler) testConnection(c *gin.Context) {
 
 // createStorageDriver 根据存储配置创建对应的驱动
 func createStorageDriver(s models.Storage) (storage.Driver, error) {
-	switch s.Type {
-	case "local":
-		return storage.NewLocalStorage(s.BasePath)
-	case "s3":
-		return storage.NewS3Storage(storage.S3Config{
-			Endpoint:  s.Endpoint,
-			Bucket:    s.Bucket,
-			Region:    s.Region,
-			AccessKey: s.AccessKey,
-			SecretKey: s.SecretKey,
-			Prefix:    s.BasePath,
-		})
-	case "webdav":
-		return storage.NewWebDAVStorage(storage.WebDAVConfig{
-			URL:      s.RemoteURL,
-			Username: s.Username,
-			Password: s.Password,
-			BasePath: s.BasePath,
-		})
-	default:
-		return nil, errors.New("不支持的存储类型: " + s.Type)
-	}
+	return storage.NewDriverFromModel(s)
 }
 
 func toStorageResponse(s models.Storage) storageResponse {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"releasehub/backend/internal/models"
+	proxysvc "releasehub/backend/internal/services/proxy"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -212,40 +213,12 @@ func (h proxyHandler) testConnection(c *gin.Context) {
 
 // BuildProxyURL 根据代理配置构建 *url.URL
 func BuildProxyURL(proxy models.Proxy) (*url.URL, error) {
-	scheme := "http"
-	switch proxy.Type {
-	case "https":
-		scheme = "https"
-	case "socks5":
-		scheme = "socks5"
-	}
-	proxyURL := &url.URL{
-		Scheme: scheme,
-		Host:   fmt.Sprintf("%s:%d", proxy.Host, proxy.Port),
-	}
-	if proxy.Username != "" {
-		proxyURL.User = url.UserPassword(proxy.Username, proxy.Password)
-	}
-	return proxyURL, nil
+	return proxysvc.BuildURL(proxy)
 }
 
 // GetProxyTransport 根据代理 ID 构建带代理的 http.Transport
 func GetProxyTransport(ctx context.Context, db *gorm.DB, proxyID *uint) (*http.Transport, error) {
-	if proxyID == nil {
-		return &http.Transport{}, nil
-	}
-	var proxy models.Proxy
-	if err := db.WithContext(ctx).First(&proxy, *proxyID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("代理不存在 (id=%d)", *proxyID)
-		}
-		return nil, err
-	}
-	proxyURL, err := BuildProxyURL(proxy)
-	if err != nil {
-		return nil, err
-	}
-	return &http.Transport{Proxy: http.ProxyURL(proxyURL)}, nil
+	return proxysvc.TransportForID(ctx, db, proxyID)
 }
 
 func toProxyResponse(p models.Proxy) proxyResponse {

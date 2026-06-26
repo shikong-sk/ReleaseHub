@@ -80,13 +80,11 @@
 
 - 已删除 `frontend/src/types/repository.ts.orig`。
 
-## 待完善
-
 ### P1-1 Repository 的 storage/proxy 配置没有进入核心同步链路
 
-状态：待完善
+状态：已修复
 
-问题：
+原问题：
 
 - `models.Repository` 已有 `StorageID`、`ProxyID`。
 - 仓库表单也允许选择 storage/proxy。
@@ -94,19 +92,29 @@
 - `backend/internal/services/asset/download.go` 的 `Service` 持有单一 `storage.Driver` 和单一 downloader，下载、打开、删除资产时不会按仓库选择 storage/proxy。
 - `backend/internal/services/github/factory.go` 已有基于 proxy 创建 GitHub client 的工厂，但 `backend/internal/services/release/checker.go` 注入的是单一 GitHub client。
 
-建议补全：
+修复证据：
 
-1. 增加 `storage.DriverFactory`，根据 `repository.StorageID` 解析 Local/WebDAV/S3 驱动；无配置时回退全局 `storage.data_dir`。
-2. 增加 `downloader.Factory`，根据 `repository.ProxyID` 构建 HTTP transport。
-3. 将 asset service 改为每次下载/打开/删除时通过 asset -> release -> repository 动态选择 driver/downloader。
-4. release checker 通过 `github.ClientFactory` 按仓库 proxy 创建 GitHub client。
-5. 为“仓库 A 指向 S3，仓库 B 指向 Local”的下载路径补集成测试。
+- `backend/internal/services/storage/factory.go` 新增 `DriverFactory`，按 repository storage、默认 storage、全局 `storage.data_dir` 的顺序解析驱动。
+- `backend/internal/services/proxy/factory.go` 新增 proxy transport 构造能力。
+- `backend/internal/services/asset/download.go` 在下载、打开、删除资产时按资产所属仓库动态选择 storage；下载时按仓库 proxy 构建 HTTP downloader。
+- `backend/internal/services/release/checker.go` 支持 `github.ClientFactory`，手动检查、全量检查可按仓库 proxy 创建 GitHub client。
+- `backend/internal/api/repository_handler.go` 与 `backend/cmd/releasehub/main.go` 已注入 GitHub client factory。
+- `backend/internal/services/storage/factory_test.go` 覆盖仓库指定 storage、全局回退、缺失 storage 错误。
+
+遗留风险：
+
+- S3 当前仍是简化 HTTP Basic Auth 实现，不是 AWS V4 签名。
+- WebDAV/S3 driver 内部仍会读取完整上传内容，后续需要分片或真正流式上传。
+- 代理链路需要在真实 HTTP/SOCKS5 环境做集成测试。
+
+## 待完善
 
 ### P1-2 多平台 Provider 只有骨架，未接入业务
 
 状态：待完善
 
 问题：
+
 
 - `backend/internal/services/provider/*` 已有 GitHub/GitLab/Gitea/Forgejo provider 抽象与实现。
 - `backend/internal/services/repository/service.go` 仍限制 provider 只能为 `github`。
@@ -267,5 +275,5 @@
 ## 本轮审查备注
 
 - 本轮主要修复不需要大规模重构即可闭环的 P0 缺口。
-- storage/proxy/provider 真实接入会影响 release checker、asset service、syncer、文件浏览和删除路径，建议作为下一阶段独立提交处理。
+- storage/proxy 核心链路已接入 release checker、asset service、syncer、文件打开和删除路径；provider 多平台接入仍建议作为下一阶段独立提交处理。
 - 曾尝试按 code-review skill 使用独立审查通道，但当前 native-hook surface 不具备可直接使用的 tmux OMX question bridge，因此本文件由当前工作区证据独立整理。

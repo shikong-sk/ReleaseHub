@@ -25,8 +25,9 @@ type repositoryHandler struct {
 	githubClientErr error
 }
 
-func registerRepositoryRoutes(router *gin.Engine, db *gorm.DB, storageConfig config.StorageConfig, githubClient *githubsvc.Client, githubClientErr error) {
-	checkService := releasesvc.NewCheckService(db, githubClient)
+func registerRepositoryRoutes(router *gin.Engine, db *gorm.DB, storageConfig config.StorageConfig, githubAPIBaseURL string, githubClient *githubsvc.Client, githubClientErr error) {
+	checkService := releasesvc.NewCheckService(db, githubClient).
+		WithGitHubFactory(githubsvc.NewClientFactory(githubAPIBaseURL, db))
 	if retentionService, err := retentionsvc.NewService(db, storageConfig); err == nil {
 		checkService.WithRetention(retentionService)
 	}

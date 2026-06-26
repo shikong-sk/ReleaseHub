@@ -61,7 +61,8 @@ func main() {
 		if err != nil {
 			logger.Fatal("GitHub Client 初始化失败", zap.Error(err))
 		}
-		checkService := releasesvc.NewCheckService(db, githubClient)
+		checkService := releasesvc.NewCheckService(db, githubClient).
+			WithGitHubFactory(githubsvc.NewClientFactory(cfg.GitHub.APIBaseURL, db))
 		retentionService, err := retentionsvc.NewService(db, cfg.Storage)
 		if err != nil {
 			logger.Fatal("保留策略服务初始化失败", zap.Error(err))
