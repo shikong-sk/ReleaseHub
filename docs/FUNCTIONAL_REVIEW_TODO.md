@@ -153,37 +153,45 @@
 
 ### P1-4 API Key scope 未执行权限判断
 
-状态：待完善
+状态：已修复
 
-问题：
+原问题：
 
 - `models.APIKey.Scope` 和 API Key 创建接口已有 scope。
 - `middleware.APIKeyOrAuth` 只校验 key 是否存在、启用，不判断 scope。
 
-建议补全：
+修复证据：
 
-1. 定义 scope 规范，例如 `repo:read`、`repo:write`、`asset:download`、`admin:*`。
-2. 为路由注册权限元数据。
-3. middleware 中按 route scope 执行匹配。
-4. 前端 API Key 面板增加 scope 模板选择。
+- `backend/internal/middleware/permission.go` 新增统一授权中间件，按 route resource 和 HTTP method 映射 `read/write/admin`。
+- API Key 支持 `*`、`read`、`write`、`admin`、`admin:*`、`repo:read`、`repo:write`、`asset:download` 等 scope。
+- `backend/internal/api/router.go` 在 `auth.enabled=true` 时对核心 API 串联 `APIKeyOrAuth` 与 `AuthorizeRequest`。
+- `frontend/src/components/settings/APIKeyPanel.vue` 创建 API Key 时提供常用 scope 模板。
+- `backend/internal/middleware/permission_test.go` 覆盖角色与 scope 判断。
+
+遗留风险：
+
+- Scope 文档还未独立整理到用户文档。
+- API Key 暂不支持编辑 scope，只能删除后重建。
 
 ### P1-5 RBAC 只覆盖用户管理
 
-状态：待完善
+状态：已修复后端核心权限
 
-问题：
+原问题：
 
 - 用户有 admin/operator/viewer 角色。
 - 目前只有 `/api/users` 使用 admin 限制。
 - 核心 API 在 JWT 登录下没有按角色控制读写能力。
 
-建议补全：
+修复证据：
 
-1. 定义角色权限矩阵。
-2. viewer 只能读 dashboard/files/releases/tasks。
-3. operator 可触发检查、同步、下载、重试。
-4. admin 可管理用户、存储、代理、通知、API Key。
-5. 前端根据 `/api/auth/me` 结果隐藏或禁用不可用操作。
+- `backend/internal/middleware/permission.go` 定义角色矩阵：admin 全部权限，operator 可读写非管理资源，viewer 只读。
+- storage/proxy/notification/token/apikey/upload/reconcile 被归类为 admin 资源。
+- repository/release/asset/task/file/search/stats 按 method 区分 read/write。
+
+遗留风险：
+
+- 前端还未根据 `/api/auth/me` 角色隐藏菜单或禁用按钮，后端会兜底拒绝。
 
 ### P1-6 TaskLog 覆盖不完整，重试退避未任务化
 

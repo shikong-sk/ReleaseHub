@@ -10,6 +10,7 @@ import {
   NInput,
   NModal,
   NPopconfirm,
+  NSelect,
   NSpace,
   NTag,
   useMessage
@@ -28,6 +29,14 @@ const showCreatedModal = shallowRef(false)
 const formName = shallowRef('')
 const formScope = shallowRef('*')
 const createdKey = shallowRef('')
+const scopeOptions = [
+  { label: '全部权限 (*)', value: '*' },
+  { label: '只读 (read)', value: 'read' },
+  { label: '同步与下载 (write)', value: 'write' },
+  { label: '仓库写入 (repo:write)', value: 'repo:write' },
+  { label: '资产下载 (asset:download)', value: 'asset:download' },
+  { label: '管理权限 (admin)', value: 'admin' }
+]
 
 const columns: DataTableColumns<APIKeyItem> = [
   { title: '名称', key: 'name', width: 180 },
@@ -134,7 +143,7 @@ async function handleDelete(id: number) {
           <NInput v-model:value="formName" placeholder="例如：automation" />
         </NFormItem>
         <NFormItem label="Scope">
-          <NInput v-model:value="formScope" placeholder="例如：*" />
+          <NSelect v-model:value="formScope" filterable tag :options="scopeOptions" placeholder="例如：*" />
         </NFormItem>
       </NForm>
     </NModal>

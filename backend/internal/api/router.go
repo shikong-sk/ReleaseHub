@@ -41,6 +41,7 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	if deps.Config.Auth.Enabled {
 		router.Use(middleware.APIKeyOrAuth(deps.DB))
+		router.Use(middleware.AuthorizeRequest())
 	}
 
 	// 核心 API

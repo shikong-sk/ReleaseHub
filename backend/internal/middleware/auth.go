@@ -106,6 +106,7 @@ func AuthRequired(db *gorm.DB) gin.HandlerFunc {
 		c.Set("userID", user.ID)
 		c.Set("username", user.Username)
 		c.Set("role", user.Role)
+		c.Set("authType", "jwt")
 		c.Next()
 	}
 }
