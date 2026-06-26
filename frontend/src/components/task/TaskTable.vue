@@ -1,13 +1,18 @@
 <script setup lang="ts">
 import { computed, h } from 'vue'
-import { NDataTable, NTag } from 'naive-ui'
+import { NButton, NDataTable, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
+import { ScrollText } from 'lucide-vue-next'
 
 import type { Task } from '@/types/task'
 
 defineProps<{
   tasks: Task[]
   loading: boolean
+}>()
+
+const emit = defineEmits<{
+  viewLogs: [task: Task]
 }>()
 
 const columns = computed<DataTableColumns<Task>>(() => [
@@ -65,6 +70,24 @@ const columns = computed<DataTableColumns<Task>>(() => [
       tooltip: true
     },
     render: (row) => row.errorMessage || '-'
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 110,
+    render: (row) =>
+      h(
+        NButton,
+        {
+          size: 'small',
+          secondary: true,
+          onClick: () => emit('viewLogs', row)
+        },
+        {
+          icon: () => h(ScrollText),
+          default: () => '日志'
+        }
+      )
   }
 ])
 

@@ -185,14 +185,14 @@
 问题：
 
 - 下载流程已有部分 task log。
+- `frontend/src/components/task/TaskLogDrawer.vue` 与 `frontend/src/views/TasksView.vue` 已补充任务日志抽屉，可查看 `/api/tasks/:id/logs`。
 - 检查 release、批量 sync、scheduler 触发等路径缺少系统性日志。
 - `RetryDownload` 目前记录退避时间，但没有延迟执行机制。
 
 建议补全：
 
 1. 为 check/sync/scheduler 每个任务写入开始、阶段、完成、失败日志。
-2. 为任务详情页展示 task log。
-3. 将 retry 改为任务队列或 scheduler 延迟执行，避免同步请求长时间 sleep。
+2. 将 retry 改为任务队列或 scheduler 延迟执行，避免同步请求长时间 sleep。
 
 ### P1-7 前端页面仍有功能入口缺口
 
@@ -201,16 +201,14 @@
 问题：
 
 - `frontend/src/api/search.ts` 已有 API 封装，但没有搜索页面。
-- `frontend/src/api/taskLogs.ts` 已有 API 封装，但任务页面没有日志详情。
 - `frontend/src/api/filter.ts` 已有封装，但仓库表单没有过滤预览 UI。
 - 上传 API 存在，但前端没有手动上传入口。
 
 建议补全：
 
 1. 增加 Files/Search 页面或在文件页集成搜索。
-2. 任务页增加日志抽屉。
-3. 仓库表单增加 Regex/Glob 过滤预览。
-4. 文件页或 Release 详情页增加手动上传入口。
+2. 仓库表单增加 Regex/Glob 过滤预览。
+3. 文件页或 Release 详情页增加手动上传入口。
 
 ## 规划中
 

@@ -1,16 +1,41 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, shallowRef } from 'vue'
 import { NAlert, NButton, NCard, NGrid, NGi, NStatistic } from 'naive-ui'
 import { RefreshCw } from 'lucide-vue-next'
 
+import { listTaskLogs, type TaskLogItem } from '@/api/taskLogs'
+import TaskLogDrawer from '@/components/task/TaskLogDrawer.vue'
 import TaskTable from '@/components/task/TaskTable.vue'
 import { useTasksStore } from '@/stores/tasks'
+import type { Task } from '@/types/task'
 
 const tasksStore = useTasksStore()
+const selectedTask = shallowRef<Task | null>(null)
+const taskLogs = shallowRef<TaskLogItem[]>([])
+const logsLoading = shallowRef(false)
+const logsError = shallowRef<string | null>(null)
+const showLogs = shallowRef(false)
 
 onMounted(() => {
   void tasksStore.refresh()
 })
+
+async function handleViewLogs(task: Task) {
+  selectedTask.value = task
+  showLogs.value = true
+  logsLoading.value = true
+  logsError.value = null
+  taskLogs.value = []
+
+  try {
+    const result = await listTaskLogs(task.id, 200)
+    taskLogs.value = result.items
+  } catch (err) {
+    logsError.value = err instanceof Error ? err.message : '任务日志加载失败'
+  } finally {
+    logsLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -51,8 +76,16 @@ onMounted(() => {
     </NAlert>
 
     <NCard :bordered="false">
-      <TaskTable :tasks="tasksStore.items" :loading="tasksStore.loading" />
+      <TaskTable :tasks="tasksStore.items" :loading="tasksStore.loading" @view-logs="handleViewLogs" />
     </NCard>
+
+    <TaskLogDrawer
+      v-model:show="showLogs"
+      :task="selectedTask"
+      :logs="taskLogs"
+      :loading="logsLoading"
+      :error="logsError"
+    />
   </main>
 </template>
 
