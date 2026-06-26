@@ -16,6 +16,7 @@ import (
 	releasesvc "releasehub/backend/internal/services/release"
 	retentionsvc "releasehub/backend/internal/services/retention"
 	schedulersvc "releasehub/backend/internal/services/scheduler"
+	syncersvc "releasehub/backend/internal/services/syncer"
 
 	"go.uber.org/zap"
 )
@@ -66,12 +67,20 @@ func main() {
 			logger.Fatal("保留策略服务初始化失败", zap.Error(err))
 		}
 		checkService.WithRetention(retentionService)
+
+		syncService, err := syncersvc.NewService(db, checkService, cfg.Storage)
+		if err != nil {
+			logger.Fatal("同步服务初始化失败", zap.Error(err))
+		}
+
 		scheduler := schedulersvc.NewService(
 			db,
 			checkService,
 			logger,
 			time.Duration(cfg.Scheduler.TickSeconds)*time.Second,
 		)
+		// 定时任务执行同步（检查+下载），而非仅检查
+		scheduler.WithSyncer(syncService)
 		scheduler.Start(appCtx)
 	}
 

@@ -24,9 +24,8 @@ const menuOptions = computed<MenuOption[]>(() => [
     key: 'files'
   },
   {
-    label: '设置',
-    key: 'settings',
-    disabled: true
+    label: () => hRouterLink('/settings', '设置'),
+    key: 'settings'
   }
 ])
 
@@ -98,37 +97,19 @@ function hRouterLink(to: string, label: string) {
 .brand-copy {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  line-height: 1.2;
+}
+
+.brand-copy strong {
+  font-size: 16px;
+  color: #101828;
 }
 
 .brand-copy span {
-  color: #667085;
   font-size: 12px;
-}
-
-.main-menu {
-  flex: 1;
+  color: #667085;
 }
 
 .app-content {
   padding: 24px;
-}
-
-@media (max-width: 760px) {
-  .app-header {
-    align-items: flex-start;
-    flex-direction: column;
-    height: auto;
-    padding: 16px;
-  }
-
-  .brand {
-    min-width: 0;
-  }
-
-  .app-content {
-    padding: 16px;
-  }
 }
 </style>

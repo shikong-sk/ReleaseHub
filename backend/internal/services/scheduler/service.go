@@ -7,18 +7,16 @@ import (
 
 	"releasehub/backend/internal/models"
 	releasesvc "releasehub/backend/internal/services/release"
+	syncersvc "releasehub/backend/internal/services/syncer"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
-type Checker interface {
-	CheckLatest(ctx context.Context, repositoryID uint) (*releasesvc.CheckResult, error)
-}
-
 type Service struct {
 	db       *gorm.DB
-	checker  Checker
+	checker  *releasesvc.CheckService
+	syncer   *syncersvc.Service
 	logger   *zap.Logger
 	interval time.Duration
 
@@ -26,7 +24,7 @@ type Service struct {
 	inFlight map[uint]struct{}
 }
 
-func NewService(db *gorm.DB, checker Checker, logger *zap.Logger, interval time.Duration) *Service {
+func NewService(db *gorm.DB, checker *releasesvc.CheckService, logger *zap.Logger, interval time.Duration) *Service {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -41,6 +39,12 @@ func NewService(db *gorm.DB, checker Checker, logger *zap.Logger, interval time.
 		interval: interval,
 		inFlight: map[uint]struct{}{},
 	}
+}
+
+// WithSyncer 设置同步服务，定时任务将执行同步（检查+下载）而非仅检查
+func (s *Service) WithSyncer(syncer *syncersvc.Service) *Service {
+	s.syncer = syncer
+	return s
 }
 
 func (s *Service) Start(ctx context.Context) {
@@ -80,8 +84,14 @@ func (s *Service) RunDue(ctx context.Context, now time.Time) int {
 		repositoryID := repository.ID
 		go func() {
 			defer s.unmarkRunning(repositoryID)
-			if _, err := s.checker.CheckLatest(ctx, repositoryID); err != nil {
-				s.logger.Warn("定时检查 Release 失败", zap.Uint("repositoryID", repositoryID), zap.Error(err))
+			if s.syncer != nil {
+				if _, err := s.syncer.SyncRepository(ctx, repositoryID); err != nil {
+					s.logger.Warn("定时同步仓库失败", zap.Uint("repositoryID", repositoryID), zap.Error(err))
+				}
+			} else if s.checker != nil {
+				if _, err := s.checker.CheckLatest(ctx, repositoryID); err != nil {
+					s.logger.Warn("定时检查 Release 失败", zap.Uint("repositoryID", repositoryID), zap.Error(err))
+				}
 			}
 		}()
 	}
@@ -131,6 +141,5 @@ func (s *Service) tryMarkRunning(repositoryID uint) bool {
 func (s *Service) unmarkRunning(repositoryID uint) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	delete(s.inFlight, repositoryID)
 }
