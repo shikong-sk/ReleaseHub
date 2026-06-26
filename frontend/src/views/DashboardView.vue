@@ -1,14 +1,25 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, shallowRef } from 'vue'
 import { NGrid, NGi, NCard, NStatistic } from 'naive-ui'
 
 import HealthSummary from '@/components/health/HealthSummary.vue'
 import { useHealthStore } from '@/stores/health'
+import { useRepositoriesStore } from '@/stores/repositories'
+import { useTasksStore } from '@/stores/tasks'
+import { useFilesStore } from '@/stores/files'
 
 const healthStore = useHealthStore()
+const repositoryStore = useRepositoriesStore()
+const tasksStore = useTasksStore()
+const filesStore = useFilesStore()
 
 onMounted(() => {
-  void healthStore.refresh()
+  void Promise.all([
+    healthStore.refresh(),
+    repositoryStore.refresh(),
+    tasksStore.refresh(),
+    filesStore.refresh()
+  ])
 })
 </script>
 
@@ -16,28 +27,28 @@ onMounted(() => {
   <main class="dashboard">
     <section class="dashboard-heading">
       <h1>控制台</h1>
-      <p>第一版基础运行面板，用于确认 API、数据库和本地部署状态。</p>
+      <p>ReleaseHub 运行面板，确认服务状态和同步概览。</p>
     </section>
 
     <NGrid cols="1 s:2 l:4" responsive="screen" :x-gap="16" :y-gap="16">
       <NGi>
         <NCard :bordered="false">
-          <NStatistic label="仓库" value="0" />
+          <NStatistic label="仓库" :value="repositoryStore.totalCount" />
         </NCard>
       </NGi>
       <NGi>
         <NCard :bordered="false">
-          <NStatistic label="Release" value="0" />
+          <NStatistic label="已启用" :value="repositoryStore.enabledCount" />
         </NCard>
       </NGi>
       <NGi>
         <NCard :bordered="false">
-          <NStatistic label="资产" value="0" />
+          <NStatistic label="已同步文件" :value="filesStore.items.length" />
         </NCard>
       </NGi>
       <NGi>
         <NCard :bordered="false">
-          <NStatistic label="任务" value="0" />
+          <NStatistic label="失败任务" :value="tasksStore.failedCount" />
         </NCard>
       </NGi>
     </NGrid>

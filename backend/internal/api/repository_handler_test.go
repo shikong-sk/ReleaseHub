@@ -572,3 +572,157 @@ func performRequest(handler http.Handler, method string, path string, body []byt
 
 	return rec
 }
+
+func TestConcurrentSyncWithMultipleAssets(t *testing.T) {
+	t.Parallel()
+
+	assetContents := map[string][]byte{
+		"tool_linux_amd64.tar.gz":  []byte("linux-amd64-payload"),
+		"tool_linux_arm64.tar.gz":  []byte("linux-arm64-payload"),
+		"tool_darwin_amd64.tar.gz": []byte("darwin-amd64-payload"),
+	}
+	downloadServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contentMap := map[string][]byte{
+			"/linux-amd64":  assetContents["tool_linux_amd64.tar.gz"],
+			"/linux-arm64":  assetContents["tool_linux_arm64.tar.gz"],
+			"/darwin-amd64": assetContents["tool_darwin_amd64.tar.gz"],
+		}
+		if content, ok := contentMap[r.URL.Path]; ok {
+			_, _ = w.Write(content)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer downloadServer.Close()
+
+	githubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": 5001,
+			"tag_name": "v3.0.0",
+			"name": "Release v3.0.0",
+			"body": "",
+			"html_url": "https://github.com/acme/tool/releases/tag/v3.0.0",
+			"url": "https://api.github.com/repos/acme/tool/releases/5001",
+			"published_at": "2026-06-03T10:00:00Z",
+			"assets": [
+				{
+					"id": 6001,
+					"name": "tool_linux_amd64.tar.gz",
+					"size": 17,
+					"content_type": "application/gzip",
+					"url": "` + downloadServer.URL + `/linux-amd64",
+					"browser_download_url": "` + downloadServer.URL + `/linux-amd64"
+				},
+				{
+					"id": 6002,
+					"name": "tool_linux_arm64.tar.gz",
+					"size": 17,
+					"content_type": "application/gzip",
+					"url": "` + downloadServer.URL + `/linux-arm64",
+					"browser_download_url": "` + downloadServer.URL + `/linux-arm64"
+				},
+				{
+					"id": 6003,
+					"name": "tool_darwin_amd64.tar.gz",
+					"size": 18,
+					"content_type": "application/gzip",
+					"url": "` + downloadServer.URL + `/darwin-amd64",
+					"browser_download_url": "` + downloadServer.URL + `/darwin-amd64"
+				}
+			]
+		}`))
+	}))
+	defer githubServer.Close()
+
+	storageDir := filepath.Join(t.TempDir(), "releases")
+	router := newTestRouterWithGitHubBaseURLAndStorageDir(t, githubServer.URL, storageDir)
+	createRec := performRequest(router, http.MethodPost, "/api/repositories", []byte(`{
+		"owner": "acme",
+		"repo": "tool",
+		"filterMode": "regex",
+		"assetIncludePatterns": ".*(linux|darwin).*amd64.*"
+	}`))
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("创建仓库失败: %d %s", createRec.Code, createRec.Body.String())
+	}
+
+	syncRec := performRequest(router, http.MethodPost, "/api/repositories/1/sync", nil)
+	if syncRec.Code != http.StatusOK {
+		t.Fatalf("同步仓库失败: %d %s", syncRec.Code, syncRec.Body.String())
+	}
+
+	var syncBody struct {
+		Task struct {
+			Status string `json:"status"`
+		} `json:"task"`
+		Release struct {
+			Tag string `json:"tag"`
+		} `json:"release"`
+		Assets []struct {
+			ID          uint   `json:"id"`
+			Name        string `json:"name"`
+			Status      string `json:"status"`
+			StoragePath string `json:"storagePath"`
+			SHA256      string `json:"sha256"`
+		} `json:"assets"`
+		DownloadResults []struct {
+			Asset struct {
+				ID uint `json:"id"`
+			} `json:"asset"`
+		} `json:"downloadResults"`
+		FailedAssets json.RawMessage `json:"failedAssets"`
+	}
+	if err := json.Unmarshal(syncRec.Body.Bytes(), &syncBody); err != nil {
+		t.Fatalf("解析同步响应失败: %v", err)
+	}
+	if syncBody.Task.Status != "succeeded" {
+		t.Fatalf("同步任务应成功，实际: %s, failedAssets: %s", syncBody.Task.Status, string(syncBody.FailedAssets))
+	}
+	if len(syncBody.DownloadResults) != 2 {
+		t.Fatalf("期望 2 个下载结果（仅 amd64 匹配），实际 %d", len(syncBody.DownloadResults))
+	}
+
+	verifiedCount := 0
+	for _, asset := range syncBody.Assets {
+		if asset.Status == "verified" {
+			verifiedCount++
+			if asset.StoragePath == "" || asset.SHA256 == "" {
+				t.Fatalf("已验证资产 %s 缺少 storagePath 或 sha256", asset.Name)
+			}
+			fileRec := performRequest(router, http.MethodGet, "/api/assets/"+strconv.Itoa(int(asset.ID))+"/file", nil)
+			if fileRec.Code != http.StatusOK {
+				t.Fatalf("读取资产文件 %s 失败: %d", asset.Name, fileRec.Code)
+			}
+			expectedContent := assetContents[asset.Name]
+			if !bytes.Equal(fileRec.Body.Bytes(), expectedContent) {
+				t.Fatalf("资产 %s 内容不符合预期", asset.Name)
+			}
+		}
+	}
+	if verifiedCount != 2 {
+		t.Fatalf("期望 2 个已验证资产（amd64 匹配），实际 %d", verifiedCount)
+	}
+
+	tasksRec := performRequest(router, http.MethodGet, "/api/tasks", nil)
+	if tasksRec.Code != http.StatusOK {
+		t.Fatalf("查询任务列表失败: %d", tasksRec.Code)
+	}
+	if !bytes.Contains(tasksRec.Body.Bytes(), []byte("download_asset")) {
+		t.Fatalf("任务列表缺少 download_asset")
+	}
+
+	filesRec := performRequest(router, http.MethodGet, "/api/files", nil)
+	if filesRec.Code != http.StatusOK {
+		t.Fatalf("查询文件列表失败: %d", filesRec.Code)
+	}
+	for name, content := range assetContents {
+		_ = content
+		if name == "tool_linux_arm64.tar.gz" {
+			continue
+		}
+		if !bytes.Contains(filesRec.Body.Bytes(), []byte(name)) {
+			t.Fatalf("文件列表缺少 %s", name)
+		}
+	}
+}
