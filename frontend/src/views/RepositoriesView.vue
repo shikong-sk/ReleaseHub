@@ -54,6 +54,7 @@ async function submitRepository(payload: RepositoryPayload) {
       message.success('仓库已新增')
     } else if (editingRepository.value) {
       await repositoryStore.update(editingRepository.value.id, {
+        githubTokenId: payload.githubTokenId,
         enabled: payload.enabled,
         intervalSeconds: payload.intervalSeconds,
         filterMode: payload.filterMode,
@@ -97,6 +98,17 @@ async function checkRepository(repository: Repository) {
   }
 }
 
+async function checkAllRepository(repository: Repository) {
+  try {
+    const result = await repositoryStore.checkAll(repository)
+    message.success(
+      `全量检查完成：${result.releases} 个 Release，${result.newReleases} 个新增，${result.pendingAssets} 个资产待下载`
+    )
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '全量检查失败')
+  }
+}
+
 async function syncRepository(repository: Repository) {
   try {
     const result = await repositoryStore.syncLatest(repository)
@@ -113,6 +125,15 @@ async function downloadAsset(asset: Asset) {
     message.success(`已下载 ${downloadedAsset.name}`)
   } catch (err) {
     message.error(err instanceof Error ? err.message : '下载资产失败')
+  }
+}
+
+async function retryAsset(asset: Asset) {
+  try {
+    const downloadedAsset = await releaseStore.redownload(asset)
+    message.success(`已重新下载 ${downloadedAsset.name}`)
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '重试下载失败')
   }
 }
 </script>
@@ -155,11 +176,13 @@ async function downloadAsset(asset: Asset) {
         :loading="repositoryStore.loading"
         :saving="repositoryStore.saving"
         :checking-id="repositoryStore.checkingId"
+        :checking-all-id="repositoryStore.checkingAllId"
         :syncing-id="repositoryStore.syncingId"
         @edit="openEditDrawer"
         @toggle="toggleRepository"
         @remove="removeRepository"
         @check="checkRepository"
+        @check-all="checkAllRepository"
         @sync="syncRepository"
       />
     </NCard>
@@ -168,6 +191,7 @@ async function downloadAsset(asset: Asset) {
       :result="releaseStore.latestCheck"
       :downloading-asset-id="releaseStore.downloadingAssetId"
       @download="downloadAsset"
+      @retry="retryAsset"
     />
 
     <RepositoryFormDrawer

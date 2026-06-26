@@ -23,3 +23,9 @@ export function downloadAsset(assetId: number): Promise<AssetDownloadResult> {
     method: 'POST'
   })
 }
+
+export function redownloadAsset(assetId: number): Promise<AssetDownloadResult> {
+  return requestJson<AssetDownloadResult>(`/api/assets/${assetId}/redownload`, {
+    method: 'POST'
+  })
+}

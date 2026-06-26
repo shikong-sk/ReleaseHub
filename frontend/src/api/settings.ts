@@ -3,6 +3,7 @@ import { getJson } from './http'
 export interface AppConfig {
   schedulerEnabled: boolean
   schedulerTickSeconds: number
+  schedulerMaxConcurrent: number
   storageDataDir: string
   githubApiBaseUrl: string
 }

@@ -29,6 +29,7 @@ const message = useMessage()
 const configLoaded = shallowRef(false)
 const schedulerEnabled = shallowRef(false)
 const schedulerTickSeconds = shallowRef(60)
+const schedulerMaxConcurrent = shallowRef(5)
 const storageDataDir = shallowRef('')
 const githubApiBaseUrl = shallowRef('')
 
@@ -63,6 +64,7 @@ onMounted(async () => {
     const config = await getAppConfig()
     schedulerEnabled.value = config.schedulerEnabled
     schedulerTickSeconds.value = config.schedulerTickSeconds
+    schedulerMaxConcurrent.value = config.schedulerMaxConcurrent
     storageDataDir.value = config.storageDataDir
     githubApiBaseUrl.value = config.githubApiBaseUrl
     configLoaded.value = true
@@ -142,6 +144,9 @@ async function handleDelete(id: number) {
         </NDescriptionsItem>
         <NDescriptionsItem label="扫描间隔">
           {{ schedulerTickSeconds }} 秒
+        </NDescriptionsItem>
+        <NDescriptionsItem label="最大并发">
+          {{ schedulerMaxConcurrent }}
         </NDescriptionsItem>
         <NDescriptionsItem label="存储目录">
           {{ storageDataDir }}

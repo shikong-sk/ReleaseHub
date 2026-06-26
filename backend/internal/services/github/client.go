@@ -54,6 +54,7 @@ func NewClient(apiBaseURL string) (*Client, error) {
 	}, nil
 }
 
+// GetLatestRelease 获取仓库最新的 Release
 func (c *Client) GetLatestRelease(ctx context.Context, owner string, repo string, token string) (*Release, error) {
 	endpoint := *c.baseURL
 	endpoint.Path = path.Join(endpoint.Path, "repos", owner, repo, "releases", "latest")
@@ -93,4 +94,85 @@ func (c *Client) GetLatestRelease(ctx context.Context, owner string, repo string
 	}
 
 	return &release, nil
+}
+
+// ListReleases 分页列出仓库的所有 Release（按发布时间降序）
+func (c *Client) ListReleases(ctx context.Context, owner string, repo string, token string, page int, perPage int) ([]Release, error) {
+	if perPage < 1 {
+		perPage = 30
+	}
+	if perPage > 100 {
+		perPage = 100
+	}
+	if page < 1 {
+		page = 1
+	}
+
+	endpoint := *c.baseURL
+	endpoint.Path = path.Join(endpoint.Path, "repos", owner, repo, "releases")
+	q := endpoint.Query()
+	q.Set("page", fmt.Sprintf("%d", page))
+	q.Set("per_page", fmt.Sprintf("%d", perPage))
+	endpoint.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "ReleaseHub")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求 GitHub Releases 列表失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("仓库不存在或无权限访问")
+	}
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+		return nil, fmt.Errorf("GitHub API 限流或拒绝访问: HTTP %d", resp.StatusCode)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("GitHub API 返回异常状态: HTTP %d", resp.StatusCode)
+	}
+
+	var releases []Release
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+		return nil, fmt.Errorf("解析 GitHub Releases 列表响应失败: %w", err)
+	}
+
+	return releases, nil
+}
+
+// ListAllReleases 拉取仓库的所有 Release（自动分页，最多 maxPages 页）
+func (c *Client) ListAllReleases(ctx context.Context, owner string, repo string, token string, maxPages int) ([]Release, error) {
+	if maxPages < 1 {
+		maxPages = 10
+	}
+
+	var allReleases []Release
+	page := 1
+	perPage := 100
+
+	for page <= maxPages {
+		releases, err := c.ListReleases(ctx, owner, repo, token, page, perPage)
+		if err != nil {
+			return allReleases, err
+		}
+		if len(releases) == 0 {
+			break
+		}
+		allReleases = append(allReleases, releases...)
+		if len(releases) < perPage {
+			break
+		}
+		page++
+	}
+
+	return allReleases, nil
 }

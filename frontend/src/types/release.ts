@@ -59,6 +59,16 @@ export interface CheckReleaseResult {
   assets: Asset[]
 }
 
+export interface CheckAllReleaseResult {
+  repository: Repository
+  releases: number
+  newReleases: number
+  totalAssets: number
+  pendingAssets: number
+  skippedAssets: number
+  task: Task
+}
+
 export interface AssetDownloadResult {
   asset: Asset
   task: Task

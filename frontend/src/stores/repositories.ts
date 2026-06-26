@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, shallowRef } from 'vue'
 
 import {
+  checkAllRepository,
   checkRepository,
   createRepository,
   deleteRepository,
@@ -10,13 +11,14 @@ import {
   updateRepository
 } from '@/api/repositories'
 import type { Repository, RepositoryPayload } from '@/types/repository'
-import type { CheckReleaseResult, SyncReleaseResult } from '@/types/release'
+import type { CheckAllReleaseResult, CheckReleaseResult, SyncReleaseResult } from '@/types/release'
 
 export const useRepositoriesStore = defineStore('repositories', () => {
   const items = shallowRef<Repository[]>([])
   const loading = shallowRef(false)
   const saving = shallowRef(false)
   const checkingId = shallowRef<number | null>(null)
+  const checkingAllId = shallowRef<number | null>(null)
   const syncingId = shallowRef<number | null>(null)
   const error = shallowRef<string | null>(null)
 
@@ -96,6 +98,21 @@ export const useRepositoriesStore = defineStore('repositories', () => {
     }
   }
 
+  async function checkAll(repository: Repository): Promise<CheckAllReleaseResult> {
+    checkingAllId.value = repository.id
+    error.value = null
+
+    try {
+      const result = await checkAllRepository(repository.id)
+      items.value = items.value.map((item) =>
+        item.id === repository.id ? result.repository : item
+      )
+      return result
+    } finally {
+      checkingAllId.value = null
+    }
+  }
+
   async function syncLatest(repository: Repository): Promise<SyncReleaseResult> {
     syncingId.value = repository.id
     error.value = null
@@ -116,6 +133,7 @@ export const useRepositoriesStore = defineStore('repositories', () => {
     loading,
     saving,
     checkingId,
+    checkingAllId,
     syncingId,
     error,
     enabledCount,
@@ -126,6 +144,7 @@ export const useRepositoriesStore = defineStore('repositories', () => {
     remove,
     toggleEnabled,
     checkLatest,
+    checkAll,
     syncLatest
   }
 })

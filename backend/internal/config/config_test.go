@@ -23,6 +23,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Scheduler.TickSeconds != 60 {
 		t.Fatalf("默认 Scheduler 扫描间隔不正确: %d", cfg.Scheduler.TickSeconds)
 	}
+	if cfg.Scheduler.MaxConcurrent != 5 {
+		t.Fatalf("默认 Scheduler 并发数不正确: %d", cfg.Scheduler.MaxConcurrent)
+	}
 }
 
 func TestLoadRejectsSchedulerTickBelowMinimum(t *testing.T) {
@@ -30,5 +33,25 @@ func TestLoadRejectsSchedulerTickBelowMinimum(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("期望过短 Scheduler 扫描间隔返回错误")
+	}
+}
+
+func TestLoadRejectsSchedulerMaxConcurrentBelowMinimum(t *testing.T) {
+	t.Setenv("RELEASEHUB_SCHEDULER_MAX_CONCURRENT", "0")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("期望 Scheduler 并发数过小返回错误")
+	}
+}
+
+func TestLoadSchedulerMaxConcurrentFromEnv(t *testing.T) {
+	t.Setenv("RELEASEHUB_SCHEDULER_MAX_CONCURRENT", "10")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("加载配置失败: %v", err)
+	}
+	if cfg.Scheduler.MaxConcurrent != 10 {
+		t.Fatalf("期望并发数 10，实际 %d", cfg.Scheduler.MaxConcurrent)
 	}
 }

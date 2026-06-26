@@ -47,6 +47,7 @@ func registerRepositoryRoutes(router *gin.Engine, db *gorm.DB, storageConfig con
 	group.PATCH("/:id", handler.update)
 	group.DELETE("/:id", handler.delete)
 	group.POST("/:id/check", handler.checkLatest)
+	group.POST("/:id/check-all", handler.checkAll)
 	group.POST("/:id/sync", handler.syncLatest)
 	group.GET("/:id/releases", handler.listReleases)
 }
@@ -141,6 +142,26 @@ func (h *repositoryHandler) checkLatest(c *gin.Context) {
 	}
 
 	result, err := h.checkService.CheckLatest(c.Request.Context(), id)
+	if err != nil {
+		writeError(c, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *repositoryHandler) checkAll(c *gin.Context) {
+	if h.githubClientErr != nil {
+		writeError(c, http.StatusInternalServerError, h.githubClientErr.Error())
+		return
+	}
+
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+
+	result, err := h.checkService.CheckAll(c.Request.Context(), id)
 	if err != nil {
 		writeError(c, http.StatusBadGateway, err.Error())
 		return

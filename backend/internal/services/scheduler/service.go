@@ -13,31 +13,46 @@ import (
 	"gorm.io/gorm"
 )
 
+const defaultMaxConcurrent = 5
+
 type Service struct {
-	db       *gorm.DB
-	checker  *releasesvc.CheckService
-	syncer   *syncersvc.Service
-	logger   *zap.Logger
-	interval time.Duration
+	db            *gorm.DB
+	checker       *releasesvc.CheckService
+	syncer        *syncersvc.Service
+	logger        *zap.Logger
+	interval      time.Duration
+	maxConcurrent int
 
 	mu       sync.Mutex
 	inFlight map[uint]struct{}
+
+	// 全局并发信号量，控制同时运行的同步/检查任务数
+	semaphore chan struct{}
 }
 
 func NewService(db *gorm.DB, checker *releasesvc.CheckService, logger *zap.Logger, interval time.Duration) *Service {
+	return NewServiceWithConcurrency(db, checker, logger, interval, defaultMaxConcurrent)
+}
+
+func NewServiceWithConcurrency(db *gorm.DB, checker *releasesvc.CheckService, logger *zap.Logger, interval time.Duration, maxConcurrent int) *Service {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 	if interval <= 0 {
 		interval = time.Minute
 	}
+	if maxConcurrent < 1 {
+		maxConcurrent = defaultMaxConcurrent
+	}
 
 	return &Service{
-		db:       db,
-		checker:  checker,
-		logger:   logger,
-		interval: interval,
-		inFlight: map[uint]struct{}{},
+		db:            db,
+		checker:       checker,
+		logger:        logger,
+		interval:      interval,
+		maxConcurrent: maxConcurrent,
+		inFlight:      map[uint]struct{}{},
+		semaphore:     make(chan struct{}, maxConcurrent),
 	}
 }
 
@@ -49,7 +64,10 @@ func (s *Service) WithSyncer(syncer *syncersvc.Service) *Service {
 
 func (s *Service) Start(ctx context.Context) {
 	go func() {
-		s.logger.Info("Scheduler 已启动", zap.Duration("interval", s.interval))
+		s.logger.Info("Scheduler 已启动",
+			zap.Duration("interval", s.interval),
+			zap.Int("maxConcurrent", s.maxConcurrent),
+		)
 		defer s.logger.Info("Scheduler 已停止")
 
 		timer := time.NewTimer(2 * time.Second)
@@ -80,10 +98,25 @@ func (s *Service) RunDue(ctx context.Context, now time.Time) int {
 			continue
 		}
 
+		// 非阻塞获取信号量：如果已达并发上限则跳过本次
+		select {
+		case s.semaphore <- struct{}{}:
+		default:
+			s.unmarkRunning(repository.ID)
+			s.logger.Debug("跳过仓库同步：已达全局并发上限",
+				zap.Uint("repositoryID", repository.ID),
+				zap.Int("maxConcurrent", s.maxConcurrent),
+			)
+			continue
+		}
+
 		started++
 		repositoryID := repository.ID
 		go func() {
-			defer s.unmarkRunning(repositoryID)
+			defer func() {
+				<-s.semaphore
+				s.unmarkRunning(repositoryID)
+			}()
 			if s.syncer != nil {
 				if _, err := s.syncer.SyncRepository(ctx, repositoryID); err != nil {
 					s.logger.Warn("定时同步仓库失败", zap.Uint("repositoryID", repositoryID), zap.Error(err))

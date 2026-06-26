@@ -44,8 +44,9 @@ type GitHubConfig struct {
 }
 
 type SchedulerConfig struct {
-	Enabled     bool
-	TickSeconds int
+	Enabled       bool
+	TickSeconds   int
+	MaxConcurrent int
 }
 
 func Load() (*Config, error) {
@@ -64,6 +65,7 @@ func Load() (*Config, error) {
 	v.SetDefault("github.api_base_url", "https://api.github.com")
 	v.SetDefault("scheduler.enabled", true)
 	v.SetDefault("scheduler.tick_seconds", 60)
+	v.SetDefault("scheduler.max_concurrent", 5)
 
 	cfg := &Config{
 		App: AppConfig{
@@ -85,8 +87,9 @@ func Load() (*Config, error) {
 			APIBaseURL: v.GetString("github.api_base_url"),
 		},
 		Scheduler: SchedulerConfig{
-			Enabled:     v.GetBool("scheduler.enabled"),
-			TickSeconds: v.GetInt("scheduler.tick_seconds"),
+			Enabled:       v.GetBool("scheduler.enabled"),
+			TickSeconds:   v.GetInt("scheduler.tick_seconds"),
+			MaxConcurrent: v.GetInt("scheduler.max_concurrent"),
 		},
 	}
 
@@ -95,6 +98,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.Scheduler.TickSeconds < 10 {
 		return nil, fmt.Errorf("scheduler.tick_seconds 不能小于 10")
+	}
+	if cfg.Scheduler.MaxConcurrent < 1 {
+		return nil, fmt.Errorf("scheduler.max_concurrent 不能小于 1")
 	}
 
 	return cfg, nil

@@ -1,5 +1,5 @@
 import { getJson, requestJson } from './http'
-import type { CheckReleaseResult, SyncReleaseResult } from '@/types/release'
+import type { CheckAllReleaseResult, CheckReleaseResult, SyncReleaseResult } from '@/types/release'
 import type { Repository, RepositoryListResponse, RepositoryPayload } from '@/types/repository'
 
 export function listRepositories(): Promise<RepositoryListResponse> {
@@ -28,6 +28,12 @@ export async function deleteRepository(id: number): Promise<void> {
 
 export function checkRepository(id: number): Promise<CheckReleaseResult> {
   return requestJson<CheckReleaseResult>(`/api/repositories/${id}/check`, {
+    method: 'POST'
+  })
+}
+
+export function checkAllRepository(id: number): Promise<CheckAllReleaseResult> {
+  return requestJson<CheckAllReleaseResult>(`/api/repositories/${id}/check-all`, {
     method: 'POST'
   })
 }

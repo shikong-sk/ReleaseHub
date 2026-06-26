@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, h } from 'vue'
-import { NButton, NCard, NDataTable, NTag } from 'naive-ui'
+import { NButton, NCard, NDataTable, NTag, NTooltip } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 
 import type { Asset, CheckReleaseResult } from '@/types/release'
@@ -12,6 +12,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   download: [asset: Asset]
+  retry: [asset: Asset]
 }>()
 
 const assets = computed(() => props.result?.assets ?? [])
@@ -41,13 +42,21 @@ const columns = computed<DataTableColumns<Asset>>(() => [
     key: 'status',
     width: 120,
     render: (row) =>
-      h(
-        NTag,
-        {
-          type: statusTagType(row.status)
-        },
-        { default: () => row.status }
-      )
+      row.status === 'failed' && row.errorMessage
+        ? h(NTooltip, {}, {
+            trigger: () =>
+              h(
+                NTag,
+                { type: 'error' },
+                { default: () => '失败' }
+              ),
+            default: () => row.errorMessage
+          })
+        : h(
+            NTag,
+            { type: statusTagType(row.status) },
+            { default: () => statusLabel(row.status) }
+          )
   },
   {
     title: 'SHA256',
@@ -60,20 +69,61 @@ const columns = computed<DataTableColumns<Asset>>(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 140,
-    render: (row) =>
-      h(
-        NButton,
-        {
-          size: 'small',
-          type: 'primary',
-          secondary: true,
-          disabled: row.status === 'skipped',
-          loading: props.downloadingAssetId === row.id,
-          onClick: () => emit('download', row)
-        },
-        { default: () => (row.status === 'verified' ? '重新下载' : '下载') }
-      )
+    width: 180,
+    render: (row) => {
+      const buttons = []
+      if (row.status === 'failed') {
+        buttons.push(
+          h(
+            NButton,
+            {
+              size: 'small',
+              type: 'warning',
+              secondary: true,
+              loading: props.downloadingAssetId === row.id,
+              onClick: () => emit('retry', row)
+            },
+            { default: () => '重试' }
+          )
+        )
+      }
+      if (row.status === 'verified' || row.status === 'downloaded') {
+        buttons.push(
+          h(
+            NButton,
+            {
+              size: 'small',
+              type: 'primary',
+              secondary: true,
+              loading: props.downloadingAssetId === row.id,
+              onClick: () => emit('download', row)
+            },
+            { default: () => '重新下载' }
+          )
+        )
+      }
+      if (row.status === 'pending') {
+        buttons.push(
+          h(
+            NButton,
+            {
+              size: 'small',
+              type: 'primary',
+              secondary: true,
+              loading: props.downloadingAssetId === row.id,
+              onClick: () => emit('download', row)
+            },
+            { default: () => '下载' }
+          )
+        )
+      }
+      if (row.status === 'skipped') {
+        buttons.push(
+          h(NTag, { type: 'default', size: 'small' }, { default: () => '已跳过' })
+        )
+      }
+      return h('div', { style: 'display: flex; gap: 8px;' }, buttons)
+    }
   }
 ])
 
@@ -87,7 +137,23 @@ function statusTagType(status: string) {
   if (status === 'pending') {
     return 'warning'
   }
+  if (status === 'downloading') {
+    return 'info'
+  }
   return 'default'
+}
+
+function statusLabel(status: string) {
+  const map: Record<string, string> = {
+    pending: '待下载',
+    skipped: '已跳过',
+    downloading: '下载中',
+    downloaded: '已下载',
+    verified: '已验证',
+    failed: '失败',
+    deleted: '已删除'
+  }
+  return map[status] ?? status
 }
 
 function formatBytes(size: number) {

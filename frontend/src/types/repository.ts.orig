@@ -28,7 +28,6 @@ export interface RepositoryListResponse {
 export interface RepositoryPayload {
   owner: string
   repo: string
-  githubTokenId?: number | null
   enabled?: boolean
   provider?: string
   intervalSeconds: number

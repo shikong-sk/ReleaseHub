@@ -73,11 +73,12 @@ func main() {
 			logger.Fatal("同步服务初始化失败", zap.Error(err))
 		}
 
-		scheduler := schedulersvc.NewService(
+		scheduler := schedulersvc.NewServiceWithConcurrency(
 			db,
 			checkService,
 			logger,
 			time.Duration(cfg.Scheduler.TickSeconds)*time.Second,
+			cfg.Scheduler.MaxConcurrent,
 		)
 		// 定时任务执行同步（检查+下载），而非仅检查
 		scheduler.WithSyncer(syncService)

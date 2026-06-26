@@ -10,10 +10,13 @@ import {
   NInputNumber,
   NRadioButton,
   NRadioGroup,
+  NSelect,
   NSpace,
   NSwitch
 } from 'naive-ui'
+import type { SelectOption } from 'naive-ui'
 
+import { useTokensStore } from '@/stores/tokens'
 import type { Repository, RepositoryFilterMode, RepositoryFormMode, RepositoryPayload } from '@/types/repository'
 
 const props = defineProps<{
@@ -28,9 +31,20 @@ const emit = defineEmits<{
   submit: [payload: RepositoryPayload]
 }>()
 
+const tokensStore = useTokensStore()
+
+// NSelect 不支持 null 值，内部用 undefined 表示"无 Token"
+const selectedTokenId = computed<number | undefined>({
+  get: () => form.githubTokenId ?? undefined,
+  set: (val: number | undefined) => {
+    form.githubTokenId = val ?? null
+  }
+})
+
 const form = reactive<RepositoryPayload>({
   owner: '',
   repo: '',
+  githubTokenId: null,
   enabled: true,
   intervalSeconds: 1800,
   filterMode: 'glob',
@@ -42,12 +56,27 @@ const form = reactive<RepositoryPayload>({
 const title = computed(() => (props.mode === 'create' ? '新增 GitHub 仓库' : '编辑仓库'))
 const ownerDisabled = computed(() => props.mode === 'edit')
 
+const tokenOptions = computed<SelectOption[]>(() => {
+  const options: SelectOption[] = [
+    { label: '无 Token（使用匿名请求）', value: 0 }
+  ]
+  for (const token of tokensStore.items) {
+    options.push({
+      label: `${token.name} (${token.tokenHint})`,
+      value: token.id
+    })
+  }
+  return options
+})
+
 watch(
   () => [props.show, props.repository, props.mode] as const,
   () => {
     if (!props.show) {
       return
     }
+    // 打开抽屉时刷新 Token 列表，确保选项最新
+    void tokensStore.refresh()
     resetForm()
   },
   { immediate: true }
@@ -56,6 +85,7 @@ watch(
 function resetForm() {
   form.owner = props.repository?.owner ?? ''
   form.repo = props.repository?.repo ?? ''
+  form.githubTokenId = props.repository?.githubTokenId ?? null
   form.enabled = props.repository?.enabled ?? true
   form.intervalSeconds = props.repository?.intervalSeconds ?? 1800
   form.filterMode = (props.repository?.filterMode ?? 'glob') as RepositoryFilterMode
@@ -65,9 +95,12 @@ function resetForm() {
 }
 
 function submit() {
+  // value=0 表示"无 Token"，转换为 null
+  const tokenId = form.githubTokenId
   emit('submit', {
     owner: form.owner.trim(),
     repo: form.repo.trim(),
+    githubTokenId: tokenId === 0 || tokenId === null ? null : tokenId,
     enabled: form.enabled,
     intervalSeconds: form.intervalSeconds,
     filterMode: form.filterMode,
@@ -93,6 +126,14 @@ function submit() {
 
         <NFormItem label="Repository">
           <NInput v-model:value="form.repo" :disabled="ownerDisabled" placeholder="terraform" />
+        </NFormItem>
+
+        <NFormItem label="GitHub Token">
+          <NSelect
+            v-model:value="selectedTokenId"
+            :options="tokenOptions"
+            placeholder="选择 Token 或使用匿名请求"
+          />
         </NFormItem>
 
         <NFormItem label="启用同步">

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"fmt"
 	"releasehub/backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -109,9 +110,9 @@ func (h *tokenHandler) delete(c *gin.Context) {
 	// 检查是否有仓库正在使用此 Token
 	var count int64
 	h.db.WithContext(c.Request.Context()).Model(&models.Repository{}).
-		Where("github_token_id = ?", id).Count(&count)
+		Where("github_token_id = ? AND github_token_id IS NOT NULL", id).Count(&count)
 	if count > 0 {
-		writeError(c, http.StatusConflict, "该 Token 正在被 %d 个仓库使用，无法删除")
+		writeError(c, http.StatusConflict, fmt.Sprintf("该 Token 正在被 %d 个仓库使用，无法删除", count))
 		return
 	}
 

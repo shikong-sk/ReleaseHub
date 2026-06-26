@@ -10,6 +10,7 @@ const props = defineProps<{
   loading: boolean
   saving: boolean
   checkingId: number | null
+  checkingAllId: number | null
   syncingId: number | null
 }>()
 
@@ -18,6 +19,7 @@ const emit = defineEmits<{
   toggle: [repository: Repository]
   remove: [repository: Repository]
   check: [repository: Repository]
+  'check-all': [repository: Repository]
   sync: [repository: Repository]
 }>()
 
@@ -76,7 +78,7 @@ const columns = computed<DataTableColumns<Repository>>(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 340,
+    width: 400,
     render: (row) =>
       h(NSpace, null, {
         default: () => [
@@ -89,7 +91,18 @@ const columns = computed<DataTableColumns<Repository>>(() => [
               loading: props.checkingId === row.id,
               onClick: () => emit('check', row)
             },
-            { default: () => '立即检查' }
+            { default: () => '检查最新' }
+          ),
+          h(
+            NButton,
+            {
+              size: 'small',
+              type: 'info',
+              secondary: true,
+              loading: props.checkingAllId === row.id,
+              onClick: () => emit('check-all', row)
+            },
+            { default: () => '全量检查' }
           ),
           h(
             NButton,

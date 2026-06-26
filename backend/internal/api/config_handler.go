@@ -13,10 +13,11 @@ type configHandler struct {
 }
 
 type configResponse struct {
-	SchedulerEnabled     bool   `json:"schedulerEnabled"`
-	SchedulerTickSeconds int    `json:"schedulerTickSeconds"`
-	StorageDataDir       string `json:"storageDataDir"`
-	GitHubAPIBaseURL     string `json:"githubApiBaseUrl"`
+	SchedulerEnabled       bool   `json:"schedulerEnabled"`
+	SchedulerTickSeconds   int    `json:"schedulerTickSeconds"`
+	SchedulerMaxConcurrent int    `json:"schedulerMaxConcurrent"`
+	StorageDataDir         string `json:"storageDataDir"`
+	GitHubAPIBaseURL       string `json:"githubApiBaseUrl"`
 }
 
 func registerConfigRoutes(router *gin.Engine, cfg *config.Config) {
@@ -28,9 +29,10 @@ func registerConfigRoutes(router *gin.Engine, cfg *config.Config) {
 
 func (h *configHandler) get(c *gin.Context) {
 	c.JSON(http.StatusOK, configResponse{
-		SchedulerEnabled:     h.config.Scheduler.Enabled,
-		SchedulerTickSeconds: h.config.Scheduler.TickSeconds,
-		StorageDataDir:       h.config.Storage.DataDir,
-		GitHubAPIBaseURL:     h.config.GitHub.APIBaseURL,
+		SchedulerEnabled:       h.config.Scheduler.Enabled,
+		SchedulerTickSeconds:   h.config.Scheduler.TickSeconds,
+		SchedulerMaxConcurrent: h.config.Scheduler.MaxConcurrent,
+		StorageDataDir:         h.config.Storage.DataDir,
+		GitHubAPIBaseURL:       h.config.GitHub.APIBaseURL,
 	})
 }
