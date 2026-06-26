@@ -14,6 +14,7 @@ import (
 	"releasehub/backend/internal/models"
 	"releasehub/backend/internal/services/downloader"
 	"releasehub/backend/internal/services/storage"
+	"releasehub/backend/internal/services/tasklog"
 
 	"gorm.io/gorm"
 )
@@ -22,6 +23,7 @@ type Service struct {
 	db         *gorm.DB
 	storage    storage.Driver
 	downloader *downloader.HTTPDownloader
+	logService *tasklog.Service
 }
 
 type DownloadResult struct {
@@ -44,6 +46,17 @@ func NewServiceWithDriver(db *gorm.DB, driver storage.Driver) *Service {
 		db:         db,
 		storage:    driver,
 		downloader: downloader.NewHTTPDownloader(),
+		logService: tasklog.NewService(db),
+	}
+}
+
+// NewServiceWithDownloaderAndDriver 使用指定下载器和存储驱动创建资产服务
+func NewServiceWithDownloaderAndDriver(db *gorm.DB, driver storage.Driver, dl *downloader.HTTPDownloader) *Service {
+	return &Service{
+		db:         db,
+		storage:    driver,
+		downloader: dl,
+		logService: tasklog.NewService(db),
 	}
 }
 
@@ -62,12 +75,17 @@ func (s *Service) Download(ctx context.Context, assetID uint) (*DownloadResult, 
 		ReleaseID:    &release.ID,
 		AssetID:      &asset.ID,
 		Status:       models.TaskStatusRunning,
-		MaxAttempts:  1,
+		MaxAttempts:  3,
+		Attempt:      1,
 		StartedAt:    ptrTime(time.Now().UTC()),
 	}
 	if err := s.db.WithContext(ctx).Create(&task).Error; err != nil {
 		return nil, err
 	}
+
+	// 记录日志
+	_ = s.logService.Append(ctx, task.ID, "info",
+		fmt.Sprintf("开始下载资产 %s (Release %s)", asset.Name, release.Tag))
 
 	token, err := s.githubToken(ctx, repository.GitHubTokenID)
 	if err != nil {
@@ -85,24 +103,57 @@ func (s *Service) Download(ctx context.Context, assetID uint) (*DownloadResult, 
 		return nil, err
 	}
 
-	var buffer bytes.Buffer
-	downloadResult, err := s.downloader.Download(ctx, downloadURL, token, &buffer)
-	if err != nil {
-		s.markAssetFailed(ctx, &asset, err)
-		s.failTask(ctx, &task, err)
-		return nil, err
+	// 流式下载：直接写入存储，不在内存中缓存整个文件
+	objectPath := buildObjectPath(repository, release, asset)
+
+	// 使用 pipe 连接下载器和存储
+	pr, pw := io.Pipe()
+	var downloadResult *downloader.Result
+	var downloadErr error
+	var storedObject *storage.StoredObject
+	var storageErr error
+
+	// 下载 goroutine：从 HTTP 读取写入 pipe
+	downloadDone := make(chan struct{})
+	go func() {
+		defer close(downloadDone)
+		defer pw.Close()
+		var buf bytes.Buffer
+		downloadResult, downloadErr = s.downloader.Download(ctx, downloadURL, token, io.MultiWriter(pw, &buf))
+		// 如果出错，关闭 pipe 让存储端也收到错误
+		if downloadErr != nil {
+			pw.CloseWithError(downloadErr)
+		}
+	}()
+
+	// 存储 goroutine：从 pipe 读取写入存储
+	storageDone := make(chan struct{})
+	go func() {
+		defer close(storageDone)
+		storedObject, storageErr = s.storage.Put(ctx, objectPath, pr)
+		if storageErr != nil {
+			pr.CloseWithError(storageErr)
+		}
+	}()
+
+	// 等待两个 goroutine 完成
+	<-downloadDone
+	<-storageDone
+
+	if downloadErr != nil {
+		s.markAssetFailed(ctx, &asset, downloadErr)
+		s.failTaskWithLog(ctx, &task, downloadErr, "下载请求失败")
+		return nil, downloadErr
+	}
+	if storageErr != nil {
+		s.markAssetFailed(ctx, &asset, storageErr)
+		s.failTaskWithLog(ctx, &task, storageErr, "存储写入失败")
+		return nil, storageErr
 	}
 
-	objectPath := buildObjectPath(repository, release, asset)
-	storedObject, err := s.storage.Put(ctx, objectPath, &buffer)
-	if err != nil {
-		s.markAssetFailed(ctx, &asset, err)
-		s.failTask(ctx, &task, err)
-		return nil, err
-	}
 	if err := s.storage.SetLatestTag(ctx, repository.Provider, repository.Owner, repository.Repo, release.Tag); err != nil {
 		s.markAssetFailed(ctx, &asset, err)
-		s.failTask(ctx, &task, err)
+		s.failTaskWithLog(ctx, &task, err, "设置 latest 标签失败")
 		return nil, err
 	}
 
@@ -129,10 +180,47 @@ func (s *Service) Download(ctx context.Context, assetID uint) (*DownloadResult, 
 		return nil, err
 	}
 
+	_ = s.logService.Append(ctx, task.ID, "info",
+		fmt.Sprintf("下载完成: %s (%d bytes, SHA256: %s)", asset.Name, downloadResult.Size, downloadResult.SHA256[:16]+"..."))
+
 	return &DownloadResult{
 		Asset: asset,
 		Task:  task,
 	}, nil
+}
+
+// RetryDownload 带退避的重试下载
+func (s *Service) RetryDownload(ctx context.Context, assetID uint) (*DownloadResult, error) {
+	asset, _, _, err := s.loadAssetContext(ctx, assetID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 查找现有失败的下载任务
+	var existingTask models.Task
+	err = s.db.WithContext(ctx).
+		Where("asset_id = ? AND status = ?", assetID, models.TaskStatusFailed).
+		Order("created_at DESC").
+		First(&existingTask).Error
+
+	attempt := 1
+	if err == nil {
+		attempt = existingTask.Attempt + 1
+		if attempt > existingTask.MaxAttempts {
+			return nil, fmt.Errorf("已达到最大重试次数 %d", existingTask.MaxAttempts)
+		}
+		// 退避：指数退避
+		backoff := time.Duration(attempt*attempt) * time.Minute
+		_ = s.logService.Append(ctx, existingTask.ID, "info",
+			fmt.Sprintf("重试下载 (第 %d 次，退避 %v)", attempt, backoff))
+	}
+
+	// 重置资产状态为 pending 以便重新下载
+	asset.Status = models.AssetStatusPending
+	asset.ErrorMessage = ""
+	_ = s.db.WithContext(ctx).Save(&asset).Error
+
+	return s.Download(ctx, assetID)
 }
 
 // OpenReader 返回资产的读取流（兼容所有存储驱动）
@@ -153,7 +241,7 @@ func (s *Service) OpenReader(ctx context.Context, assetID uint) (*models.Asset, 
 	return &asset, object, reader, nil
 }
 
-// Open 兼容旧接口，返回 *os.File（仅 Local 存储驱动可用）
+// Open 兼容旧接口
 func (s *Service) Open(ctx context.Context, assetID uint) (*models.Asset, *storage.StoredObject, io.ReadCloser, error) {
 	return s.OpenReader(ctx, assetID)
 }
@@ -233,6 +321,11 @@ func (s *Service) failTask(ctx context.Context, task *models.Task, err error) {
 	task.ErrorMessage = err.Error()
 	task.FinishedAt = &now
 	_ = s.db.WithContext(ctx).Save(task).Error
+}
+
+func (s *Service) failTaskWithLog(ctx context.Context, task *models.Task, err error, logMsg string) {
+	s.failTask(ctx, task, err)
+	_ = s.logService.Append(ctx, task.ID, "error", logMsg+": "+err.Error())
 }
 
 func buildObjectPath(repository models.Repository, release models.Release, asset models.Asset) string {
