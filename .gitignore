@@ -1,0 +1,30 @@
+# 系统与编辑器
+.DS_Store
+.idea/
+.vscode/
+
+# 本地工作流状态
+.omc/
+.omx/
+
+# Go
+backend/bin/
+backend/coverage.out
+
+# Node / Vue
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.env.local
+frontend/.env.*.local
+
+# 运行数据
+/data/
+backend/data/
+/storage/
+*.db
+*.db-shm
+*.db-wal
+
+# 日志
+*.log

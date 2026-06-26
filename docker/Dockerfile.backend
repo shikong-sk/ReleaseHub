@@ -1,0 +1,24 @@
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /src
+
+RUN apk add --no-cache build-base
+
+COPY backend/go.mod backend/go.sum* ./backend/
+COPY go.work ./
+WORKDIR /src/backend
+RUN go mod download
+
+COPY backend/ ./
+RUN CGO_ENABLED=1 go build -o /out/releasehub ./cmd/releasehub
+
+FROM alpine:3.21
+
+RUN apk add --no-cache ca-certificates tzdata
+
+WORKDIR /app
+COPY --from=builder /out/releasehub /app/releasehub
+
+EXPOSE 8080
+
+CMD ["/app/releasehub"]
