@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, h } from 'vue'
-import { History } from 'lucide-vue-next'
+import { FolderOpen, History } from 'lucide-vue-next'
 import { NButton, NDataTable, NPopconfirm, NSpace, NSwitch, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 
@@ -24,6 +24,7 @@ const emit = defineEmits<{
   'check-all': [repository: Repository]
   sync: [repository: Repository]
   history: [repository: Repository]
+  files: [repository: Repository]
 }>()
 
 const columns = computed<DataTableColumns<Repository>>(() => [
@@ -81,7 +82,7 @@ const columns = computed<DataTableColumns<Repository>>(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 400,
+    width: 480,
     render: (row) =>
       h(NSpace, null, {
         default: () => {
@@ -95,6 +96,16 @@ const columns = computed<DataTableColumns<Repository>>(() => [
             }, {
               icon: () => h(History, { size: 14 }),
               default: () => '历史'
+            })
+          )
+          buttons.push(
+            h(NButton, {
+              size: 'small',
+              secondary: true,
+              onClick: () => emit('files', row)
+            }, {
+              icon: () => h(FolderOpen, { size: 14 }),
+              default: () => '文件'
             })
           )
           // 检查操作：所有用户可见
@@ -173,6 +184,7 @@ function statusTagType(status: string) {
     :loading="loading"
     :row-key="(row) => row.id"
     :pagination="{ pageSize: 10 }"
+    :scroll-x="1180"
   />
 </template>
 

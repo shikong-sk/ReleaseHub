@@ -9,6 +9,7 @@ export const useAuthStore = defineStore('auth', () => {
   const user = shallowRef<UserInfo | null>(null)
   const token = shallowRef<string | null>(localStorage.getItem(TOKEN_KEY))
   const loading = shallowRef(false)
+  const bootstrapping = shallowRef(false)
   const error = shallowRef<string | null>(null)
 
   const isLoggedIn = computed(() => !!token.value)
@@ -39,6 +40,16 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  async function ensureUser() {
+    if (!token.value || user.value || bootstrapping.value) return
+    bootstrapping.value = true
+    try {
+      await fetchMe()
+    } finally {
+      bootstrapping.value = false
+    }
+  }
+
   async function changePassword(oldPassword: string, newPassword: string) {
     await apiChangePassword(oldPassword, newPassword)
   }
@@ -56,5 +67,5 @@ export const useAuthStore = defineStore('auth', () => {
   const canWrite = computed(() => isAdmin.value || isOperator.value)
   const canAdmin = computed(() => isAdmin.value)
 
-  return { user, token, loading, error, isLoggedIn, isAdmin, isOperator, isViewer, canWrite, canAdmin, login, fetchMe, changePassword, logout }
+  return { user, token, loading, bootstrapping, error, isLoggedIn, isAdmin, isOperator, isViewer, canWrite, canAdmin, login, fetchMe, ensureUser, changePassword, logout }
 })

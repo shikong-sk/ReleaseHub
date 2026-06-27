@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, shallowRef } from 'vue'
+import { onMounted, onUnmounted, shallowRef } from 'vue'
 import { NAlert, NButton, NCard, NGrid, NGi, NStatistic } from 'naive-ui'
 import { RefreshCw } from 'lucide-vue-next'
 
@@ -15,9 +15,19 @@ const taskLogs = shallowRef<TaskLogItem[]>([])
 const logsLoading = shallowRef(false)
 const logsError = shallowRef<string | null>(null)
 const showLogs = shallowRef(false)
+let refreshTimer: number | undefined
 
 onMounted(() => {
   void tasksStore.refresh()
+  refreshTimer = window.setInterval(() => {
+    void tasksStore.refresh({ silent: true })
+  }, 3000)
+})
+
+onUnmounted(() => {
+  if (refreshTimer) {
+    window.clearInterval(refreshTimer)
+  }
 })
 
 async function handleViewLogs(task: Task) {
@@ -45,7 +55,7 @@ async function handleViewLogs(task: Task) {
         <h1>任务</h1>
         <p>查看检查、下载等后台任务的状态与错误信息。</p>
       </div>
-      <NButton secondary :loading="tasksStore.loading" @click="tasksStore.refresh">
+      <NButton secondary :loading="tasksStore.loading" @click="() => tasksStore.refresh()">
         <template #icon>
           <RefreshCw />
         </template>
@@ -94,8 +104,8 @@ async function handleViewLogs(task: Task) {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  max-width: 1180px;
-  margin: 0 auto;
+  width: 100%;
+  min-width: 0;
 }
 
 .tasks-heading {

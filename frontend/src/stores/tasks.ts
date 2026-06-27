@@ -12,8 +12,10 @@ export const useTasksStore = defineStore('tasks', () => {
   const failedCount = computed(() => items.value.filter((item) => item.status === 'failed').length)
   const runningCount = computed(() => items.value.filter((item) => item.status === 'running').length)
 
-  async function refresh() {
-    loading.value = true
+  async function refresh(options: { silent?: boolean } = {}) {
+    if (!options.silent) {
+      loading.value = true
+    }
     error.value = null
 
     try {
@@ -22,7 +24,9 @@ export const useTasksStore = defineStore('tasks', () => {
     } catch (err) {
       error.value = err instanceof Error ? err.message : '任务列表加载失败'
     } finally {
-      loading.value = false
+      if (!options.silent) {
+        loading.value = false
+      }
     }
   }
 

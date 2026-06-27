@@ -2,7 +2,7 @@
 import { RouterView } from 'vue-router'
 import { NButton, NInput, NLayout, NLayoutContent, NLayoutHeader, NMenu, NModal, NForm, NFormItem, useMessage } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
-import { computed, h, shallowRef } from 'vue'
+import { computed, h, onMounted, shallowRef } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { KeyRound, LogOut } from 'lucide-vue-next'
 
@@ -12,6 +12,11 @@ const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const isLoginRoute = computed(() => route.name === 'login')
+
+onMounted(() => {
+  void authStore.ensureUser()
+})
+
 const menuOptions = computed<MenuOption[]>(() => {
   const items: MenuOption[] = [
     { label: () => hRouterLink('/', '控制台'), key: 'dashboard' },
@@ -179,10 +184,12 @@ async function handleLogout() {
 
 .app-content {
   padding: 24px;
+  min-width: 0;
 }
 
 .main-menu {
   flex: 1;
+  min-width: 0;
 }
 
 .user-actions {

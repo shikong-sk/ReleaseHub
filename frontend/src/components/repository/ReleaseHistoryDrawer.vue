@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, shallowRef, watch } from 'vue'
+import { computed, h, shallowRef, watch } from 'vue'
 import { NButton, NDataTable, NDrawer, NDrawerContent, NTag, NSpin, NAlert } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { Download } from 'lucide-vue-next'
 
 import { listRepositoryReleases, listReleaseAssets } from '@/api/releases'
-import type { Release, Asset, Repository } from '@/types/release'
+import type { Release, Asset } from '@/types/release'
+import type { Repository } from '@/types/repository'
 
 const show = defineModel<boolean>('show', { required: true })
 
@@ -124,7 +125,7 @@ function formatBytes(size: number) {
 </script>
 
 <template>
-  <NDrawer v-model:show="show" :width="640" placement="right">
+  <NDrawer v-model:show="show" :width="760" placement="right">
     <NDrawerContent :title="title" closable>
       <NAlert v-if="error" type="error" closable>{{ error }}</NAlert>
       <NSpin :show="loading">
@@ -133,6 +134,7 @@ function formatBytes(size: number) {
           :data="releases"
           :row-key="(row: Release) => row.id"
           :pagination="{ pageSize: 10 }"
+          :scroll-x="680"
         />
       </NSpin>
 

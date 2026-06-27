@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, onMounted, shallowRef } from 'vue'
+import { computed, h, onMounted, shallowRef } from 'vue'
 import {
   NButton,
   NCard,
@@ -17,7 +17,6 @@ import {
 } from 'naive-ui'
 import { Plus, RefreshCw } from 'lucide-vue-next'
 import type { DataTableColumns } from 'naive-ui'
-import { computed } from 'vue'
 
 import { useProxiesStore } from '@/stores/proxies'
 import type { ProxyItem, ProxyType } from '@/types/proxy'
@@ -33,6 +32,8 @@ const formHost = shallowRef('')
 const formPort = shallowRef(7890)
 const formUsername = shallowRef('')
 const formPassword = shallowRef('')
+const formTestUrl = shallowRef('https://api.github.com/rate_limit')
+const manualTestUrl = shallowRef('https://api.github.com/rate_limit')
 
 const typeOptions = [
   { label: 'HTTP', value: 'http' },
@@ -58,6 +59,25 @@ const proxyColumns = computed<DataTableColumns<ProxyItem>>(() => [
   },
   { title: '用户名', key: 'username', width: 120, render: (row) => row.username || '-' },
   {
+    title: '测试地址',
+    key: 'testUrl',
+    width: 260,
+    ellipsis: { tooltip: true },
+    render: (row) => row.testUrl || 'https://api.github.com/rate_limit'
+  },
+  {
+    title: '最近测试',
+    key: 'lastTestStatus',
+    width: 240,
+    render: (row) => h('div', { class: 'proxy-test-cell' }, [
+      h(NTag, { size: 'small', type: row.lastTestStatus === 'ok' ? 'success' : row.lastTestStatus === 'failed' ? 'error' : 'default' }, {
+        default: () => row.lastTestStatus === 'ok' ? '成功' : row.lastTestStatus === 'failed' ? '失败' : '未测试'
+      }),
+      h('span', row.lastTestedAt ? `${row.lastTestLatencyMs} ms · ${new Date(row.lastTestedAt).toLocaleString()}` : '-'),
+      row.lastTestMessage ? h('span', { class: 'proxy-test-message', title: row.lastTestMessage }, row.lastTestMessage) : null
+    ])
+  },
+  {
     title: '操作',
     key: 'actions',
     width: 240,
@@ -70,7 +90,7 @@ const proxyColumns = computed<DataTableColumns<ProxyItem>>(() => [
               size: 'small',
               type: 'info',
               secondary: true,
-              onClick: () => handleTest(row.id)
+              onClick: () => handleTest(row.id, row.testUrl)
             },
             { default: () => '测试' }
           ),
@@ -104,6 +124,8 @@ function openCreateModal() {
   formPort.value = 7890
   formUsername.value = ''
   formPassword.value = ''
+  formTestUrl.value = 'https://api.github.com/rate_limit'
+  manualTestUrl.value = formTestUrl.value
   showModal.value = true
 }
 
@@ -115,6 +137,8 @@ function handleEdit(row: ProxyItem) {
   formPort.value = row.port
   formUsername.value = row.username
   formPassword.value = ''
+  formTestUrl.value = row.testUrl || 'https://api.github.com/rate_limit'
+  manualTestUrl.value = formTestUrl.value
   showModal.value = true
 }
 
@@ -130,7 +154,8 @@ async function handleSubmit() {
       host: formHost.value.trim(),
       port: formPort.value,
       username: formUsername.value.trim() || undefined,
-      password: formPassword.value || undefined
+      password: formPassword.value || undefined,
+      testUrl: formTestUrl.value.trim() || undefined
     }
     if (editingId.value) {
       await proxiesStore.update(editingId.value, payload)
@@ -154,9 +179,9 @@ async function handleDelete(id: number) {
   }
 }
 
-async function handleTest(id: number) {
+async function handleTest(id: number, testUrl?: string) {
   try {
-    const result = await proxiesStore.testConnection(id)
+    const result = await proxiesStore.testConnection(id, testUrl?.trim() || undefined)
     message.success(result.message || '代理连接成功')
   } catch (err) {
     message.error(err instanceof Error ? err.message : '代理测试失败')
@@ -191,6 +216,7 @@ async function handleTest(id: number) {
         :loading="proxiesStore.loading"
         :row-key="(row: ProxyItem) => row.id"
         :pagination="{ pageSize: 10 }"
+        :scroll-x="1280"
       />
     </NCard>
 
@@ -214,6 +240,22 @@ async function handleTest(id: number) {
         <NFormItem label="密码">
           <NInput v-model:value="formPassword" type="password" show-password-on="click" placeholder="可选" />
         </NFormItem>
+        <NFormItem label="默认测试地址">
+          <NInput v-model:value="formTestUrl" placeholder="https://api.github.com/rate_limit" />
+        </NFormItem>
+        <NFormItem label="本次测试地址">
+          <NSpace vertical class="proxy-test-input">
+            <NInput v-model:value="manualTestUrl" placeholder="留空则使用默认测试地址" />
+            <NButton
+              size="small"
+              secondary
+              :disabled="!editingId"
+              @click="editingId && handleTest(editingId, manualTestUrl)"
+            >
+              测试当前地址
+            </NButton>
+          </NSpace>
+        </NFormItem>
       </NForm>
     </NModal>
   </main>
@@ -224,8 +266,8 @@ async function handleTest(id: number) {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  max-width: 1180px;
-  margin: 0 auto;
+  width: 100%;
+  min-width: 0;
 }
 
 .proxies-heading {
@@ -244,5 +286,24 @@ async function handleTest(id: number) {
 .proxies-heading p {
   margin: 0;
   color: #667085;
+}
+
+:deep(.proxy-test-cell) {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+:deep(.proxy-test-cell span) {
+  overflow: hidden;
+  color: #667085;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proxy-test-input {
+  width: 100%;
 }
 </style>

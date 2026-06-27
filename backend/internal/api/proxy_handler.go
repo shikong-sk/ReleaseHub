@@ -27,17 +27,27 @@ type proxyInput struct {
 	Port     int    `json:"port" binding:"required,min=1,max=65535"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	TestURL  string `json:"testUrl"`
 }
 
 type proxyResponse struct {
-	ID        uint   `json:"id"`
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	Username  string `json:"username"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt"`
+	ID                uint   `json:"id"`
+	Name              string `json:"name"`
+	Type              string `json:"type"`
+	Host              string `json:"host"`
+	Port              int    `json:"port"`
+	Username          string `json:"username"`
+	TestURL           string `json:"testUrl"`
+	LastTestStatus    string `json:"lastTestStatus"`
+	LastTestMessage   string `json:"lastTestMessage"`
+	LastTestLatencyMs int64  `json:"lastTestLatencyMs"`
+	LastTestedAt      string `json:"lastTestedAt,omitempty"`
+	CreatedAt         string `json:"createdAt"`
+	UpdatedAt         string `json:"updatedAt"`
+}
+
+type proxyTestInput struct {
+	TestURL string `json:"testUrl"`
 }
 
 func registerProxyRoutes(router *gin.Engine, db *gorm.DB) {
@@ -77,6 +87,7 @@ func (h proxyHandler) create(c *gin.Context) {
 		Port:     input.Port,
 		Username: input.Username,
 		Password: input.Password,
+		TestURL:  strings.TrimSpace(input.TestURL),
 	}
 	if err := h.db.WithContext(c.Request.Context()).Create(&proxy).Error; err != nil {
 		writeError(c, http.StatusInternalServerError, "创建代理失败")
@@ -126,6 +137,7 @@ func (h proxyHandler) update(c *gin.Context) {
 	proxy.Host = input.Host
 	proxy.Port = input.Port
 	proxy.Username = input.Username
+	proxy.TestURL = strings.TrimSpace(input.TestURL)
 	if input.Password != "" {
 		proxy.Password = input.Password
 	}
@@ -178,6 +190,23 @@ func (h proxyHandler) testConnection(c *gin.Context) {
 		writeError(c, http.StatusInternalServerError, "查询代理失败")
 		return
 	}
+	var input proxyTestInput
+	if err := c.ShouldBindJSON(&input); err != nil && !errors.Is(err, http.ErrBodyNotAllowed) {
+		input.TestURL = ""
+	}
+
+	testURL := strings.TrimSpace(input.TestURL)
+	if testURL == "" {
+		testURL = strings.TrimSpace(proxy.TestURL)
+	}
+	if testURL == "" {
+		testURL = "https://api.github.com/rate_limit"
+	}
+	if parsed, err := url.Parse(testURL); err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		writeError(c, http.StatusBadRequest, "测试地址无效")
+		return
+	}
+
 	proxyURL, err := BuildProxyURL(proxy)
 	if err != nil {
 		writeError(c, http.StatusBadRequest, "代理配置无效: "+err.Error())
@@ -187,7 +216,7 @@ func (h proxyHandler) testConnection(c *gin.Context) {
 		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
 		Timeout:   15 * time.Second,
 	}
-	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, "https://api.github.com/rate_limit", nil)
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, testURL, nil)
 	if err != nil {
 		writeError(c, http.StatusInternalServerError, "创建测试请求失败")
 		return
@@ -196,18 +225,26 @@ func (h proxyHandler) testConnection(c *gin.Context) {
 	start := time.Now()
 	resp, err := client.Do(req)
 	elapsed := time.Since(start)
+	latencyMs := elapsed.Milliseconds()
 	if err != nil {
-		writeError(c, http.StatusBadGateway, fmt.Sprintf("代理连接失败: %s (耗时 %s)", err.Error(), elapsed.Round(time.Millisecond)))
+		message := fmt.Sprintf("代理连接失败: %s (耗时 %s)", err.Error(), elapsed.Round(time.Millisecond))
+		h.saveProxyTestResult(c.Request.Context(), &proxy, testURL, "failed", message, latencyMs)
+		writeError(c, http.StatusBadGateway, message)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		writeError(c, http.StatusBadGateway, fmt.Sprintf("代理连接异常: HTTP %d (耗时 %s)", resp.StatusCode, elapsed.Round(time.Millisecond)))
+		message := fmt.Sprintf("代理连接异常: HTTP %d (耗时 %s)", resp.StatusCode, elapsed.Round(time.Millisecond))
+		h.saveProxyTestResult(c.Request.Context(), &proxy, testURL, "failed", message, latencyMs)
+		writeError(c, http.StatusBadGateway, message)
 		return
 	}
+	message := fmt.Sprintf("代理连接成功 (耗时 %s)", elapsed.Round(time.Millisecond))
+	h.saveProxyTestResult(c.Request.Context(), &proxy, testURL, "ok", message, latencyMs)
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "ok",
-		"message": fmt.Sprintf("代理连接成功 (耗时 %s)", elapsed.Round(time.Millisecond)),
+		"message": message,
+		"proxy":   toProxyResponse(proxy),
 	})
 }
 
@@ -222,14 +259,39 @@ func GetProxyTransport(ctx context.Context, db *gorm.DB, proxyID *uint) (*http.T
 }
 
 func toProxyResponse(p models.Proxy) proxyResponse {
-	return proxyResponse{
-		ID:        p.ID,
-		Name:      p.Name,
-		Type:      p.Type,
-		Host:      p.Host,
-		Port:      p.Port,
-		Username:  p.Username,
-		CreatedAt: p.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		UpdatedAt: p.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+	lastTestedAt := ""
+	if p.LastTestedAt != nil {
+		lastTestedAt = p.LastTestedAt.UTC().Format("2006-01-02T15:04:05Z")
 	}
+	return proxyResponse{
+		ID:                p.ID,
+		Name:              p.Name,
+		Type:              p.Type,
+		Host:              p.Host,
+		Port:              p.Port,
+		Username:          p.Username,
+		TestURL:           p.TestURL,
+		LastTestStatus:    p.LastTestStatus,
+		LastTestMessage:   p.LastTestMessage,
+		LastTestLatencyMs: p.LastTestLatencyMs,
+		LastTestedAt:      lastTestedAt,
+		CreatedAt:         p.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:         p.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+	}
+}
+
+func (h proxyHandler) saveProxyTestResult(ctx context.Context, proxy *models.Proxy, testURL string, status string, message string, latencyMs int64) {
+	now := time.Now()
+	proxy.TestURL = testURL
+	proxy.LastTestStatus = status
+	proxy.LastTestMessage = message
+	proxy.LastTestLatencyMs = latencyMs
+	proxy.LastTestedAt = &now
+	_ = h.db.WithContext(ctx).Model(proxy).Updates(map[string]any{
+		"test_url":             testURL,
+		"last_test_status":     status,
+		"last_test_message":    message,
+		"last_test_latency_ms": latencyMs,
+		"last_tested_at":       now,
+	}).Error
 }

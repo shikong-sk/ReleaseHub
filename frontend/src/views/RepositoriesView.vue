@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, shallowRef } from 'vue'
+import { computed, onMounted, onUnmounted, shallowRef } from 'vue'
 import { NAlert, NCard, NGrid, NGi, NStatistic, useMessage } from 'naive-ui'
 
 import AssetPanel from '@/components/repository/AssetPanel.vue'
+import RepositoryFilesDrawer from '@/components/repository/RepositoryFilesDrawer.vue'
 import ReleaseHistoryDrawer from '@/components/repository/ReleaseHistoryDrawer.vue'
 import RepositoryFormDrawer from '@/components/repository/RepositoryFormDrawer.vue'
 import RepositoryTable from '@/components/repository/RepositoryTable.vue'
@@ -10,7 +11,7 @@ import RepositoryToolbar from '@/components/repository/RepositoryToolbar.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useRepositoriesStore } from '@/stores/repositories'
 import { useReleasesStore } from '@/stores/releases'
-import { deleteAsset } from '@/api/releases'
+import { deleteAsset, listReleaseAssets } from '@/api/releases'
 import type { Asset } from '@/types/release'
 import type { Repository, RepositoryFormMode, RepositoryPayload } from '@/types/repository'
 
@@ -25,6 +26,9 @@ const formMode = shallowRef<RepositoryFormMode>('create')
 const editingRepository = shallowRef<Repository | null>(null)
 const historyRepository = shallowRef<Repository | null>(null)
 const showHistory = shallowRef(false)
+const filesRepository = shallowRef<Repository | null>(null)
+const showFiles = shallowRef(false)
+let assetsRefreshTimer: number | undefined
 
 const filteredRepositories = computed(() => {
   const keyword = search.value.trim().toLowerCase()
@@ -39,11 +43,40 @@ const filteredRepositories = computed(() => {
 
 onMounted(() => {
   void repositoryStore.refresh()
+  assetsRefreshTimer = window.setInterval(() => {
+    void refreshLatestAssets()
+  }, 3000)
+})
+
+onUnmounted(() => {
+  if (assetsRefreshTimer) {
+    window.clearInterval(assetsRefreshTimer)
+  }
 })
 
 function openHistory(repository: Repository) {
   historyRepository.value = repository
   showHistory.value = true
+}
+
+function openFiles(repository: Repository) {
+  filesRepository.value = repository
+  showFiles.value = true
+}
+
+async function refreshLatestAssets() {
+  const latest = releaseStore.latestCheck
+  if (!latest) return
+
+  try {
+    const result = await listReleaseAssets(latest.release.id)
+    releaseStore.setLatestCheck({
+      ...latest,
+      assets: result.items
+    })
+  } catch {
+    // 轮询刷新失败不打断用户当前操作。
+  }
 }
 
 function openCreateDrawer() {
@@ -146,6 +179,7 @@ async function handleDeleteAsset(asset: Asset) {
   try {
     await deleteAsset(asset.id)
     message.success(`已删除 ${asset.name}`)
+    await refreshLatestAssets()
   } catch (err) {
     message.error(err instanceof Error ? err.message : '删除资产失败')
   }
@@ -209,6 +243,8 @@ async function retryAsset(asset: Asset) {
         @check="checkRepository"
         @check-all="checkAllRepository"
         @sync="syncRepository"
+        @history="openHistory"
+        @files="openFiles"
       />
     </NCard>
 
@@ -218,11 +254,17 @@ async function retryAsset(asset: Asset) {
       @download="downloadAsset"
       @retry="retryAsset"
       @delete="handleDeleteAsset"
+      @refresh="refreshLatestAssets"
     />
 
     <ReleaseHistoryDrawer
       v-model:show="showHistory"
       :repository="historyRepository"
+    />
+
+    <RepositoryFilesDrawer
+      v-model:show="showFiles"
+      :repository="filesRepository"
     />
 
     <RepositoryFormDrawer
@@ -240,8 +282,8 @@ async function retryAsset(asset: Asset) {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  max-width: 1180px;
-  margin: 0 auto;
+  width: 100%;
+  min-width: 0;
 }
 
 .repositories-heading {

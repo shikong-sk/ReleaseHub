@@ -72,8 +72,8 @@ type Repository struct {
 	Enabled              bool             `json:"enabled" gorm:"column:enabled;not null"`
 	GitHubTokenID        *uint            `json:"githubTokenId" gorm:"column:github_token_id"`
 	StorageID            *uint            `json:"storageId" gorm:"column:storage_id"`
-	ProxyID             *uint            `json:"proxyId" gorm:"column:proxy_id"`
-	ProviderApiBaseUrl  string           `json:"providerApiBaseUrl" gorm:"column:provider_api_base_url;size:1024"`
+	ProxyID              *uint            `json:"proxyId" gorm:"column:proxy_id"`
+	ProviderApiBaseUrl   string           `json:"providerApiBaseUrl" gorm:"column:provider_api_base_url;size:1024"`
 	IntervalSeconds      int              `json:"intervalSeconds" gorm:"column:interval_seconds;not null;default:1800"`
 	FilterMode           string           `json:"filterMode" gorm:"column:filter_mode;size:20;not null;default:glob"`
 	AssetIncludePatterns string           `json:"assetIncludePatterns" gorm:"column:asset_include_patterns;type:text"`
@@ -143,16 +143,21 @@ type Task struct {
 }
 
 type Proxy struct {
-	ID        uint           `json:"id" gorm:"primaryKey"`
-	Name      string         `json:"name" gorm:"column:name;size:120;not null"`
-	Type      string         `json:"type" gorm:"column:type;size:20;not null;default:http"`
-	Host      string         `json:"host" gorm:"column:host;size:512;not null"`
-	Port      int            `json:"port" gorm:"column:port;not null"`
-	Username  string         `json:"username" gorm:"column:username;size:255"`
-	Password  string         `json:"-" gorm:"column:password;size:512"`
-	CreatedAt time.Time      `json:"createdAt" gorm:"column:created_at"`
-	UpdatedAt time.Time      `json:"updatedAt" gorm:"column:updated_at"`
-	DeletedAt gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
+	ID                uint           `json:"id" gorm:"primaryKey"`
+	Name              string         `json:"name" gorm:"column:name;size:120;not null"`
+	Type              string         `json:"type" gorm:"column:type;size:20;not null;default:http"`
+	Host              string         `json:"host" gorm:"column:host;size:512;not null"`
+	Port              int            `json:"port" gorm:"column:port;not null"`
+	Username          string         `json:"username" gorm:"column:username;size:255"`
+	Password          string         `json:"-" gorm:"column:password;size:512"`
+	TestURL           string         `json:"testUrl" gorm:"column:test_url;size:1024"`
+	LastTestStatus    string         `json:"lastTestStatus" gorm:"column:last_test_status;size:40"`
+	LastTestMessage   string         `json:"lastTestMessage" gorm:"column:last_test_message;type:text"`
+	LastTestLatencyMs int64          `json:"lastTestLatencyMs" gorm:"column:last_test_latency_ms"`
+	LastTestedAt      *time.Time     `json:"lastTestedAt" gorm:"column:last_tested_at"`
+	CreatedAt         time.Time      `json:"createdAt" gorm:"column:created_at"`
+	UpdatedAt         time.Time      `json:"updatedAt" gorm:"column:updated_at"`
+	DeletedAt         gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
 }
 
 type Notification struct {
@@ -189,15 +194,15 @@ type User struct {
 }
 
 type APIKey struct {
-	ID        uint           `json:"id" gorm:"primaryKey"`
-	Name      string         `json:"name" gorm:"column:name;size:120;not null"`
-	Key       string         `json:"-" gorm:"column:key;size:128;not null;uniqueIndex"`
-	KeyHint   string         `json:"keyHint" gorm:"column:key_hint;size:32"`
-	Scope     string         `json:"scope" gorm:"column:scope;size:255;not null;default:*"`
-	UserID    *uint          `json:"userId" gorm:"column:user_id"`
-	Enabled   bool           `json:"enabled" gorm:"column:enabled;not null;default:true"`
-	LastUsedAt *time.Time    `json:"lastUsedAt" gorm:"column:last_used_at"`
-	CreatedAt time.Time      `json:"createdAt" gorm:"column:created_at"`
-	UpdatedAt time.Time      `json:"updatedAt" gorm:"column:updated_at"`
-	DeletedAt gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
+	ID         uint           `json:"id" gorm:"primaryKey"`
+	Name       string         `json:"name" gorm:"column:name;size:120;not null"`
+	Key        string         `json:"-" gorm:"column:key;size:128;not null;uniqueIndex"`
+	KeyHint    string         `json:"keyHint" gorm:"column:key_hint;size:32"`
+	Scope      string         `json:"scope" gorm:"column:scope;size:255;not null;default:*"`
+	UserID     *uint          `json:"userId" gorm:"column:user_id"`
+	Enabled    bool           `json:"enabled" gorm:"column:enabled;not null;default:true"`
+	LastUsedAt *time.Time     `json:"lastUsedAt" gorm:"column:last_used_at"`
+	CreatedAt  time.Time      `json:"createdAt" gorm:"column:created_at"`
+	UpdatedAt  time.Time      `json:"updatedAt" gorm:"column:updated_at"`
+	DeletedAt  gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
 }

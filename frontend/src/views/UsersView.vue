@@ -206,8 +206,8 @@ async function handleDelete(id: number) {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  max-width: 1180px;
-  margin: 0 auto;
+  width: 100%;
+  min-width: 0;
 }
 
 .users-heading {

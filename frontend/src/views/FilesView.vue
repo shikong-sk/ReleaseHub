@@ -186,8 +186,8 @@ async function handleGlobalSearch() {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  max-width: 1180px;
-  margin: 0 auto;
+  width: 100%;
+  min-width: 0;
 }
 
 .files-heading {

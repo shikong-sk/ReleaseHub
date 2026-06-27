@@ -58,8 +58,19 @@ export const useProxiesStore = defineStore('proxies', () => {
     }
   }
 
-  async function testConnection(id: number) {
-    return testProxyConnection(id)
+  async function testConnection(id: number, testUrl?: string) {
+    try {
+      const result = await testProxyConnection(id, testUrl)
+      if (result.proxy) {
+        items.value = items.value.map((p) => (p.id === id ? result.proxy as ProxyItem : p))
+      } else {
+        await refresh()
+      }
+      return result
+    } catch (err) {
+      await refresh()
+      throw err
+    }
   }
 
   return { items, loading, saving, error, refresh, create, update, remove, testConnection }

@@ -1,5 +1,5 @@
 import { getJson, requestJson } from './http'
-import type { ProxyItem, ProxyListResponse, ProxyPayload } from '@/types/proxy'
+import type { ProxyItem, ProxyListResponse, ProxyPayload, ProxyTestResponse } from '@/types/proxy'
 
 export function listProxies(): Promise<ProxyListResponse> {
   return getJson<ProxyListResponse>('/api/proxies')
@@ -29,8 +29,9 @@ export async function deleteProxy(id: number): Promise<void> {
   })
 }
 
-export function testProxyConnection(id: number): Promise<{ status: string; message: string }> {
-  return requestJson<{ status: string; message: string }>(`/api/proxies/${id}/test`, {
-    method: 'POST'
+export function testProxyConnection(id: number, testUrl?: string): Promise<ProxyTestResponse> {
+  return requestJson<ProxyTestResponse>(`/api/proxies/${id}/test`, {
+    method: 'POST',
+    body: testUrl ? { testUrl } : {}
   })
 }

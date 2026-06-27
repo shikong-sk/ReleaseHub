@@ -43,6 +43,7 @@ const showPreview = shallowRef(false)
 const previewLoading = shallowRef(false)
 const previewResults = shallowRef<FilterPreviewResult[]>([])
 const previewError = shallowRef<string | null>(null)
+const selectedFilterPresets = shallowRef<string[]>([])
 
 const tokensStore = useTokensStore()
 const storagesStore = useStoragesStore()
@@ -95,7 +96,7 @@ const providerOptions = computed<SelectOption[]>(() => [
     { label: 'Forgejo', value: 'forgejo' }
   ])
 
-  const tokenOptions = computed<SelectOption[]>(() => {
+const tokenOptions = computed<SelectOption[]>(() => {
   const options: SelectOption[] = [
     { label: '无 Token（使用匿名请求）', value: 0 }
   ]
@@ -107,6 +108,15 @@ const providerOptions = computed<SelectOption[]>(() => [
   }
   return options
 })
+
+const filterPresetOptions = computed<SelectOption[]>(() => [
+  { label: 'Linux AMD64 压缩包', value: 'linux-amd64-archive' },
+  { label: 'Linux ARM64 压缩包', value: 'linux-arm64-archive' },
+  { label: 'Windows AMD64', value: 'windows-amd64' },
+  { label: 'macOS ARM64', value: 'darwin-arm64' },
+  { label: '校验文件', value: 'checksums' },
+  { label: '排除调试/源码/签名', value: 'exclude-debug-source' }
+])
 
 const storageOptions = computed<SelectOption[]>(() => {
   const options: SelectOption[] = [
@@ -158,6 +168,7 @@ function resetForm() {
   form.assetIncludePatterns = props.repository?.assetIncludePatterns ?? ''
   form.assetExcludePatterns = props.repository?.assetExcludePatterns ?? ''
   form.retentionKeepLatest = props.repository?.retentionKeepLatest ?? 5
+  selectedFilterPresets.value = []
 }
 
 function submit() {
@@ -171,7 +182,7 @@ function submit() {
     githubTokenId: tokenId === 0 || tokenId === null ? null : tokenId,
     storageId: storageId === 0 || storageId === null ? null : storageId,
     proxyId: proxyId === 0 || proxyId === null ? null : proxyId,
-    providerApiBaseUrl: form.providerApiBaseUrl.trim() || undefined,
+    providerApiBaseUrl: (form.providerApiBaseUrl ?? '').trim() || undefined,
     enabled: form.enabled,
     intervalSeconds: form.intervalSeconds,
     filterMode: form.filterMode,
@@ -179,6 +190,62 @@ function submit() {
     assetExcludePatterns: form.assetExcludePatterns.trim(),
     retentionKeepLatest: form.retentionKeepLatest
   })
+}
+
+function applyFilterPresets(values: string[]) {
+  const presets: Record<string, { mode: RepositoryFilterMode; include?: string; exclude?: string }> = {
+    'linux-amd64-archive': {
+      mode: 'glob',
+      include: '*linux*amd64*.tar.gz\n*linux*amd64*.zip\n*linux*x86_64*.tar.gz\n*linux*x86_64*.zip'
+    },
+    'linux-arm64-archive': {
+      mode: 'glob',
+      include: '*linux*arm64*.tar.gz\n*linux*arm64*.zip\n*linux*aarch64*.tar.gz\n*linux*aarch64*.zip'
+    },
+    'windows-amd64': {
+      mode: 'glob',
+      include: '*windows*amd64*.zip\n*windows*x86_64*.zip\n*win*amd64*.zip'
+    },
+    'darwin-arm64': {
+      mode: 'glob',
+      include: '*darwin*arm64*.zip\n*macos*arm64*.zip'
+    },
+    checksums: {
+      mode: 'glob',
+      include: 'SHA256SUMS\nchecksums.txt\n*checksum*'
+    },
+    'exclude-debug-source': {
+      mode: 'glob',
+      exclude: '*debug*\n*source*\n*.sig\n*.asc'
+    }
+  }
+
+  const selectedPresets = values.map((value) => presets[value]).filter(Boolean)
+  if (selectedPresets.length === 0) return
+
+  form.filterMode = selectedPresets[0].mode
+  for (const preset of selectedPresets) {
+    if (preset.include !== undefined) {
+      form.assetIncludePatterns = mergePatternLines(form.assetIncludePatterns, preset.include)
+    }
+    if (preset.exclude !== undefined) {
+      form.assetExcludePatterns = mergePatternLines(form.assetExcludePatterns, preset.exclude)
+    }
+  }
+}
+
+function mergePatternLines(current: string, next: string) {
+  const seen = new Set<string>()
+  const lines: string[] = []
+  for (const line of `${current}\n${next}`.split('\n')) {
+    const normalized = line.trim()
+    if (!normalized || seen.has(normalized)) {
+      continue
+    }
+    seen.add(normalized)
+    lines.push(normalized)
+  }
+  return lines.join('\n')
 }
 
 async function handlePreview() {
@@ -286,24 +353,36 @@ function sampleAssetNames(): string[] {
           </NRadioGroup>
         </NFormItem>
 
+        <NFormItem label="常见规则预设">
+          <NSelect
+            v-model:value="selectedFilterPresets"
+            multiple
+            clearable
+            placeholder="可多选，自动合并并去重"
+            :options="filterPresetOptions"
+            @update:value="(value) => applyFilterPresets((value as string[]) ?? [])"
+          />
+        </NFormItem>
+
         <NFormItem label="Include 规则">
-          <div class="filter-row">
-            <NInput
-              v-model:value="form.assetIncludePatterns"
-              type="textarea"
-              placeholder="例如：*linux*amd64*"
-            />
-            <NButton size="small" secondary :loading="previewLoading" @click="handlePreview">预览</NButton>
-          </div>
+          <NInput
+            v-model:value="form.assetIncludePatterns"
+            type="textarea"
+            placeholder="每行一条，例如：*linux*amd64*"
+          />
         </NFormItem>
 
         <NFormItem label="Exclude 规则">
           <NInput
             v-model:value="form.assetExcludePatterns"
             type="textarea"
-            placeholder="例如：*debug*"
+            placeholder="每行一条，例如：*debug*"
           />
         </NFormItem>
+
+        <div class="filter-actions">
+          <NButton secondary :loading="previewLoading" @click="handlePreview">预览匹配结果</NButton>
+        </div>
 
         <NFormItem label="保留最近版本数">
           <NInputNumber v-model:value="form.retentionKeepLatest" :min="1" :step="1" />
@@ -335,10 +414,10 @@ function sampleAssetNames(): string[] {
   padding-right: 4px;
 }
 
-.filter-row {
+.filter-actions {
   display: flex;
-  gap: 8px;
-  align-items: flex-start;
+  justify-content: flex-end;
+  margin: -8px 0 16px;
 }
 
 .preview-list {

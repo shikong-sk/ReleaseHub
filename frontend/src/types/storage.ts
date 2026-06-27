@@ -12,6 +12,7 @@ export interface StorageItem {
   accessKeyHint: string
   username: string
   remoteUrl: string
+  builtin?: boolean
   createdAt: string
   updatedAt: string
 }

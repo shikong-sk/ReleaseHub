@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, onMounted, shallowRef } from 'vue'
+import { computed, h, onMounted, shallowRef } from 'vue'
 import {
   NAlert,
   NButton,
@@ -18,6 +18,7 @@ import {
 import { Plus, RefreshCw } from 'lucide-vue-next'
 import type { DataTableColumns } from 'naive-ui'
 
+import { getAppConfig } from '@/api/settings'
 import { useStoragesStore } from '@/stores/storages'
 import type { StorageItem, StorageType } from '@/types/storage'
 
@@ -38,12 +39,40 @@ const formSecretKey = shallowRef('')
 const formUsername = shallowRef('')
 const formPassword = shallowRef('')
 const formRemoteUrl = shallowRef('')
+const defaultDataDir = shallowRef('data/releases')
 
 const typeOptions = [
   { label: '本地存储', value: 'local' },
   { label: 'S3 兼容', value: 's3' },
   { label: 'WebDAV', value: 'webdav' }
 ]
+
+const tableData = computed<StorageItem[]>(() => {
+  const hasDefaultLocal = storagesStore.items.some((item) => item.type === 'local' && item.isDefault)
+  if (hasDefaultLocal) {
+    return storagesStore.items
+  }
+
+  return [
+    {
+      id: 0,
+      name: '默认本地存储',
+      type: 'local',
+      basePath: defaultDataDir.value,
+      isDefault: true,
+      endpoint: '',
+      bucket: '',
+      region: '',
+      accessKeyHint: '',
+      username: '',
+      remoteUrl: '',
+      builtin: true,
+      createdAt: '',
+      updatedAt: ''
+    },
+    ...storagesStore.items
+  ]
+})
 
 const storageColumns = computed<DataTableColumns<StorageItem>>(() => [
   { title: '名称', key: 'name', width: 180 },
@@ -55,6 +84,12 @@ const storageColumns = computed<DataTableColumns<StorageItem>>(() => [
       h(NTag, { type: row.type === 'local' ? 'success' : row.type === 's3' ? 'info' : 'warning' }, {
         default: () => row.type.toUpperCase()
       })
+  },
+  {
+    title: '来源',
+    key: 'source',
+    width: 100,
+    render: (row) => row.builtin ? h(NTag, { size: 'small' }, { default: () => '系统内置' }) : '自定义'
   },
   { title: '路径/Endpoint', key: 'basePath', ellipsis: { tooltip: true } },
   {
@@ -76,20 +111,21 @@ const storageColumns = computed<DataTableColumns<StorageItem>>(() => [
               size: 'small',
               type: 'info',
               secondary: true,
+              disabled: row.builtin,
               onClick: () => handleTest(row.id)
             },
-            { default: () => '测试连接' }
+            { default: () => row.builtin ? '无需测试' : '测试连接' }
           ),
           h(
             NButton,
-            { size: 'small', secondary: true, onClick: () => openEditModal(row) },
+            { size: 'small', secondary: true, disabled: row.builtin, onClick: () => openEditModal(row) },
             { default: () => '编辑' }
           ),
           h(
             NPopconfirm,
             { onPositiveClick: () => handleDelete(row.id) },
             {
-              trigger: () => h(NButton, { size: 'small', type: 'error', secondary: true, loading: storagesStore.saving }, { default: () => '删除' }),
+              trigger: () => h(NButton, { size: 'small', type: 'error', secondary: true, disabled: row.builtin, loading: storagesStore.saving }, { default: () => '删除' }),
               default: () => `删除存储 "${row.name}"？`
             }
           )
@@ -98,15 +134,23 @@ const storageColumns = computed<DataTableColumns<StorageItem>>(() => [
   }
 ])
 
-import { computed } from 'vue'
-
 const showS3Fields = computed(() => formType.value === 's3')
 const showWebdavFields = computed(() => formType.value === 'webdav')
 const showLocalFields = computed(() => formType.value === 'local')
 
 onMounted(() => {
   void storagesStore.refresh()
+  void loadConfig()
 })
+
+async function loadConfig() {
+  try {
+    const config = await getAppConfig()
+    defaultDataDir.value = config.storageDataDir || defaultDataDir.value
+  } catch {
+    defaultDataDir.value = 'data/releases'
+  }
+}
 
 function openCreateModal() {
   editingId.value = null
@@ -176,6 +220,7 @@ async function handleSubmit() {
 }
 
 async function handleDelete(id: number) {
+  if (id === 0) return
   try {
     await storagesStore.remove(id)
     message.success('存储已删除')
@@ -185,6 +230,10 @@ async function handleDelete(id: number) {
 }
 
 async function handleTest(id: number) {
+  if (id === 0) {
+    message.info('默认本地存储来自系统配置，无需测试连接')
+    return
+  }
   try {
     const result = await storagesStore.testConnection(id)
     message.success(result.message || '连接成功')
@@ -219,10 +268,11 @@ async function handleTest(id: number) {
 
       <NDataTable
         :columns="storageColumns"
-        :data="storagesStore.items"
+        :data="tableData"
         :loading="storagesStore.loading"
         :row-key="(row: StorageItem) => row.id"
         :pagination="{ pageSize: 10 }"
+        :scroll-x="980"
       />
     </NCard>
 
@@ -277,8 +327,8 @@ async function handleTest(id: number) {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  max-width: 1180px;
-  margin: 0 auto;
+  width: 100%;
+  min-width: 0;
 }
 
 .storages-heading {

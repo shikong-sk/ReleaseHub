@@ -24,7 +24,8 @@ const columns = computed<DataTableColumns<Task>>(() => [
   {
     title: '类型',
     key: 'type',
-    width: 160
+    width: 140,
+    render: (row) => taskTypeLabel(row.type)
   },
   {
     title: '状态',
@@ -40,16 +41,25 @@ const columns = computed<DataTableColumns<Task>>(() => [
       )
   },
   {
-    title: 'Repository',
-    key: 'repositoryId',
-    width: 120,
-    render: (row) => row.repositoryId ?? '-'
+    title: '仓库',
+    key: 'repositoryName',
+    width: 220,
+    ellipsis: { tooltip: true },
+    render: (row) => row.repositoryName || fallbackID(row.repositoryId)
   },
   {
-    title: 'Asset',
-    key: 'assetId',
-    width: 100,
-    render: (row) => row.assetId ?? '-'
+    title: '文件',
+    key: 'assetName',
+    width: 260,
+    ellipsis: { tooltip: true },
+    render: (row) => row.assetName || fallbackID(row.assetId)
+  },
+  {
+    title: '存储位置',
+    key: 'storagePath',
+    width: 320,
+    ellipsis: { tooltip: true },
+    render: (row) => row.storagePath || '-'
   },
   {
     title: '开始时间',
@@ -104,6 +114,22 @@ function statusTagType(status: string) {
   return 'default'
 }
 
+function taskTypeLabel(type: string) {
+  const labels: Record<string, string> = {
+    check_latest: '检查最新',
+    check_all: '全量检查',
+    sync_latest: '同步最新',
+    download_asset: '下载文件',
+    redownload_asset: '重新下载',
+    retention_cleanup: '保留清理'
+  }
+  return labels[type] ?? type
+}
+
+function fallbackID(id: number | null) {
+  return id ? `#${id}` : '-'
+}
+
 function formatTime(value: string | null) {
   if (!value) {
     return '-'
@@ -119,5 +145,12 @@ function formatTime(value: string | null) {
     :loading="loading"
     :row-key="(row) => row.id"
     :pagination="{ pageSize: 12 }"
+    :scroll-x="1560"
   />
 </template>
+
+<style scoped>
+:deep(.n-data-table-td) {
+  white-space: nowrap;
+}
+</style>
