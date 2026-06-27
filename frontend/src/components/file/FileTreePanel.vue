@@ -32,9 +32,24 @@ const message = useMessage()
 // 本地可变树：保留已懒加载的 children，避免 computed 重算时丢失
 const localTree = shallowRef<TreeOption[]>([])
 
+// 全量元数据索引：包含顶层 + 懒加载的所有节点，用于 findRaw 查找
+const rawMap = new Map<string, FileTreeNode>()
+
+// 将节点及其子节点全部注册到 rawMap
+function registerRawNodes(nodes: FileTreeNode[]) {
+  for (const node of nodes) {
+    rawMap.set(node.key, node)
+    if (node.children) registerRawNodes(node.children)
+  }
+}
+
 watch(
   () => [props.tree, props.storageId] as const,
   ([rawTree, storageId]) => {
+    // 顶层数据变化时重建 rawMap
+    rawMap.clear()
+    registerRawNodes(rawTree)
+
     const source = storageId == null
       ? rawTree
       : rawTree.filter((n) => n.key === `storage-${storageId}`)
@@ -73,24 +88,9 @@ function indexOptions(nodes: TreeOption[]): Map<string, TreeOption> {
   return map
 }
 
-// 在原始 props.tree 中查找节点（用于读取 fileCount/size/sha256 等元数据）
+// 从 rawMap 查找节点元数据
 function findRaw(key: string): FileTreeNode | null {
-  for (const node of props.tree) {
-    const found = searchRaw(node, key)
-    if (found) return found
-  }
-  return null
-}
-
-function searchRaw(node: FileTreeNode, key: string): FileTreeNode | null {
-  if (node.key === key) return node
-  if (node.children) {
-    for (const child of node.children) {
-      const found = searchRaw(child, key)
-      if (found) return found
-    }
-  }
-  return null
+  return rawMap.get(key) ?? null
 }
 
 // 节点前缀图标
@@ -177,6 +177,9 @@ async function onLoad(node: TreeOption) {
 
   try {
     const result = await getRepositoryFileTree(raw.repositoryId)
+    // 将懒加载返回的子树节点注册到 rawMap，使 findRaw 能查到
+    registerRawNodes(result.tree)
+
     if (result.tree.length > 0) {
       node.children = mergeIncoming(result.tree, [])
       // shallowRef 不会追踪深层属性变化，必须替换顶层引用才能触发 NTree 重新渲染
