@@ -360,6 +360,17 @@ func (s *CheckService) CheckAll(ctx context.Context, repositoryID uint) (*CheckA
 }
 
 // resolveProvider 根据仓库配置选择对应的 ReleaseProvider
+
+// TokenForRepository 返回仓库配置的 GitHub Token（公开方法，供 handler 调用）
+func (s *CheckService) TokenForRepository(ctx context.Context, repository *models.Repository) (string, error) {
+	return s.githubToken(ctx, repository.GitHubTokenID)
+}
+
+// ProviderForRepository 返回仓库对应的 ReleaseProvider（公开方法，供 handler 调用）
+func (s *CheckService) ProviderForRepository(ctx context.Context, repository *models.Repository) (provider.ReleaseProvider, error) {
+	return s.resolveProvider(ctx, *repository)
+}
+
 func (s *CheckService) resolveProvider(ctx context.Context, repository models.Repository) (provider.ReleaseProvider, error) {
 	if s.providers != nil {
 		// 使用 provider registry，GitHub provider 可根据 proxy 选择 transport

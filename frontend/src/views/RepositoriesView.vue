@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, shallowRef } from 'vue'
-import { NAlert, NCard, NGrid, NGi, NInput, NModal, NStatistic, useMessage } from 'naive-ui'
+import { NAlert, NCard, NGrid, NGi, NInput, NModal, NSelect, NStatistic, useMessage } from 'naive-ui'
 
 import AssetPanel from '@/components/repository/AssetPanel.vue'
 import RepositoryFilesDrawer from '@/components/repository/RepositoryFilesDrawer.vue'
@@ -12,7 +12,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useRepositoriesStore } from '@/stores/repositories'
 import { useReleasesStore } from '@/stores/releases'
 import { deleteAsset, listReleaseAssets } from '@/api/releases'
-import { syncRepositoryByTag } from '@/api/repositories'
+import { syncRepositoryByTag, listRemoteTags } from '@/api/repositories'
 import type { Asset } from '@/types/release'
 import type { Repository, RepositoryFormMode, RepositoryPayload } from '@/types/repository'
 
@@ -35,6 +35,8 @@ const showSyncTagModal = shallowRef(false)
 const syncTagRepository = shallowRef<Repository | null>(null)
 const syncTagInput = shallowRef('')
 const syncTagLoading = shallowRef(false)
+const remoteTags = shallowRef<string[]>([])
+const remoteTagsLoading = shallowRef(false)
 
 const filteredRepositories = computed(() => {
   const keyword = search.value.trim().toLowerCase()
@@ -178,10 +180,21 @@ async function syncRepository(repository: Repository) {
   }
 }
 
-function openSyncTagModal(repository: Repository) {
+async function openSyncTagModal(repository: Repository) {
   syncTagRepository.value = repository
   syncTagInput.value = ''
+  remoteTags.value = []
   showSyncTagModal.value = true
+  // 加载远程 tag 列表
+  remoteTagsLoading.value = true
+  try {
+    const tags = await listRemoteTags(repository.id)
+    remoteTags.value = tags
+  } catch {
+    // 加载失败不影响手动输入
+  } finally {
+    remoteTagsLoading.value = false
+  }
 }
 
 async function submitSyncTag() {
@@ -331,10 +344,25 @@ async function retryAsset(asset: Asset) {
       :loading="syncTagLoading"
       @positive-click="submitSyncTag"
     >
-      <p style="margin-bottom: 8px; color: #667085">
+      <p style="margin: 0 0 8px; color: #667085">
         仓库：{{ syncTagRepository ? `${syncTagRepository.owner}/${syncTagRepository.repo}` : '' }}
       </p>
-      <NInput v-model:value="syncTagInput" placeholder="输入版本号，例如 v1.0.0" @keyup.enter="submitSyncTag" />
+      <NSelect
+        v-if="remoteTags.length > 0"
+        v-model:value="syncTagInput"
+        :options="remoteTags.map(t => ({ label: t, value: t }))"
+        placeholder="选择版本号或手动输入"
+        filterable
+        tag
+        style="margin-bottom: 8px"
+      />
+      <NInput
+        v-else
+        v-model:value="syncTagInput"
+        :placeholder="remoteTagsLoading ? '正在加载版本列表...' : '输入版本号，例如 v1.0.0'"
+        :disabled="remoteTagsLoading"
+        @keyup.enter="submitSyncTag"
+      />
     </NModal>
   </main>
 </template>

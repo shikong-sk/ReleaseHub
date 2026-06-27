@@ -51,3 +51,9 @@ export function syncRepositoryByTag(id: number, tag: string): Promise<SyncReleas
     body: { tag }
   })
 }
+
+
+export async function listRemoteTags(id: number): Promise<string[]> {
+  const resp = await getJson<{ tags: string[] }>(`/api/repositories/${id}/remote-tags`)
+  return resp.tags
+}

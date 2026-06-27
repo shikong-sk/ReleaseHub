@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"fmt"
 	"strconv"
 
 	"releasehub/backend/internal/config"
@@ -55,6 +56,7 @@ func registerRepositoryRoutes(router *gin.Engine, db *gorm.DB, storageConfig con
 	group.POST("/:id/sync", handler.syncLatest)
 	group.POST("/:id/sync-tag", handler.syncByTag)
 	group.GET("/:id/releases", handler.listReleases)
+	group.GET("/:id/remote-tags", handler.remoteTags)
 }
 
 func (h *repositoryHandler) list(c *gin.Context) {
@@ -286,4 +288,52 @@ func writeError(c *gin.Context, status int, message string) {
 	c.JSON(status, gin.H{
 		"error": message,
 	})
+}
+
+// remoteTags 返回远程仓库的 Release tag 列表（不持久化，仅查询）
+func (h *repositoryHandler) remoteTags(c *gin.Context) {
+	if h.githubClientErr != nil {
+		writeError(c, http.StatusInternalServerError, h.githubClientErr.Error())
+		return
+	}
+
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+
+	var repository models.Repository
+	if err := h.service.DB().WithContext(c.Request.Context()).First(&repository, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			writeError(c, http.StatusNotFound, "仓库不存在")
+			return
+		}
+		writeError(c, http.StatusInternalServerError, "查询仓库失败")
+		return
+	}
+
+	token, err := h.checkService.TokenForRepository(c.Request.Context(), &repository)
+	if err != nil {
+		writeError(c, http.StatusBadGateway, "获取 Token 失败")
+		return
+	}
+
+	releaseProvider, err := h.checkService.ProviderForRepository(c.Request.Context(), &repository)
+	if err != nil {
+		writeError(c, http.StatusBadGateway, "创建 Provider 失败")
+		return
+	}
+
+	providerReleases, err := releaseProvider.ListAllReleases(c.Request.Context(), repository.Owner, repository.Repo, token, 5)
+	if err != nil {
+		writeError(c, http.StatusBadGateway, fmt.Sprintf("查询远程 Release 失败: %s", err.Error()))
+		return
+	}
+
+	tags := make([]string, 0, len(providerReleases))
+	for _, r := range providerReleases {
+		tags = append(tags, r.TagName)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"tags": tags})
 }
