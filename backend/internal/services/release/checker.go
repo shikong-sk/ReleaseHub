@@ -449,13 +449,14 @@ func (s *CheckService) persistProviderReleaseWithIsLatest(ctx context.Context, r
 				"api_url",
 				"is_latest",
 				"sync_status",
+				"deleted_at",
 				"updated_at",
 			}),
 		}).Create(&release).Error; err != nil {
 			return err
 		}
 
-		if err := tx.Where("repository_id = ? AND tag = ?", repository.ID, pRelease.TagName).First(&release).Error; err != nil {
+		if err := tx.Unscoped().Where("repository_id = ? AND tag = ?", repository.ID, pRelease.TagName).First(&release).Error; err != nil {
 			return err
 		}
 
@@ -503,6 +504,7 @@ func (s *CheckService) persistProviderReleaseWithIsLatest(ctx context.Context, r
 					"content_type",
 					"download_url",
 					"browser_download_url",
+					"deleted_at",
 					"updated_at",
 				}),
 			}).Create(&asset).Error; err != nil {
@@ -579,6 +581,7 @@ func (s *CheckService) persistProviderReleaseWithLatest(ctx context.Context, rep
 				"body",
 				"html_url",
 				"api_url",
+				"deleted_at",
 				"is_latest",
 				"sync_status",
 				"updated_at",
@@ -587,7 +590,7 @@ func (s *CheckService) persistProviderReleaseWithLatest(ctx context.Context, rep
 			return err
 		}
 
-		if err := tx.Where("repository_id = ? AND tag = ?", repository.ID, pRelease.TagName).First(&release).Error; err != nil {
+		if err := tx.Unscoped().Where("repository_id = ? AND tag = ?", repository.ID, pRelease.TagName).First(&release).Error; err != nil {
 			return err
 		}
 
@@ -625,6 +628,7 @@ func (s *CheckService) persistProviderReleaseWithLatest(ctx context.Context, rep
 					"content_type",
 					"download_url",
 					"browser_download_url",
+					"deleted_at",
 					"updated_at",
 				}),
 			}).Create(&asset).Error; err != nil {
