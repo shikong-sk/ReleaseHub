@@ -93,41 +93,43 @@ function searchRaw(node: FileTreeNode, key: string): FileTreeNode | null {
   return null
 }
 
-// 节点前缀
+// 节点前缀图标
 function renderPrefix({ option }: { option: TreeOption }): string {
   const key = String(option.key)
-  if (key.startsWith('storage-')) return '\uD83D\uDCBE'
-  if (key.startsWith('repo-')) return '\uD83D\uDCC1'
-  if (key.startsWith('release-')) return '\uD83C\uDFF7\uFE0F'
-  if (key.startsWith('asset-')) return '\uD83D\uDCC4'
+  if (key.startsWith('storage-')) return '💾'
+  if (key.startsWith('repo-')) return '📁'
+  if (key.startsWith('release-')) return '🏷️'
+  if (key.startsWith('asset-')) return '📄'
   return ''
 }
 
-// 节点标签
+// 节点标签：文件名左对齐，元信息跟随
 function renderLabel({ option }: { option: TreeOption }) {
   const key = String(option.key)
 
+  // 仓库节点：名称 + 文件数标签
   if (key.startsWith('repo-')) {
     const raw = findRaw(key)
     if (raw?.fileCount) {
-      return h('span', [
+      return h('span', { style: 'display: inline-flex; align-items: center; gap: 8px' }, [
         h('span', raw.label),
-        h(NTag, { size: 'small', type: 'info', style: 'margin-left: 8px' }, {
-          default: () => `${raw.fileCount} \u6587\u4EF6`
+        h(NTag, { size: 'small', type: 'info' }, {
+          default: () => `${raw.fileCount} 文件`
         })
       ])
     }
   }
 
+  // 文件节点：文件名 + 大小 + SHA256 摘要
   if (key.startsWith('asset-')) {
     const raw = findRaw(key)
     if (raw?.size != null) {
-      return h('span', { style: 'display: flex; align-items: center; gap: 8px' }, [
-        h('span', raw.label),
-        h(NTag, { size: 'small' }, { default: () => formatBytes(raw.size!) }),
+      return h('span', { style: 'display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex: 1' }, [
+        h('span', { style: 'overflow: hidden; text-overflow: ellipsis; white-space: nowrap' }, raw.label),
+        h(NTag, { size: 'small', flexShrink: 0 }, { default: () => formatBytes(raw.size!) }),
         raw.sha256
           ? h('span', {
-              style: 'font-size: 11px; color: #667085; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap',
+              style: 'font-size: 11px; color: #667085; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0',
               title: raw.sha256
             }, raw.sha256.slice(0, 12) + '...')
           : null
@@ -138,7 +140,7 @@ function renderLabel({ option }: { option: TreeOption }) {
   return option.label as string
 }
 
-// 节点尾部：文件叶节点显示操作按钮
+// 节点尾部：文件叶节点显示操作按钮，右对齐
 function renderSuffix({ option }: { option: TreeOption }) {
   const key = String(option.key)
   if (!key.startsWith('asset-')) return null
@@ -149,7 +151,7 @@ function renderSuffix({ option }: { option: TreeOption }) {
     h(NButton, {
       size: 'tiny', type: 'primary', secondary: true, tag: 'a',
       href: assetFileURL(raw.assetId)
-    }, { default: () => '\u4E0B\u8F7D' })
+    }, { default: () => '下载' })
   ]
 
   if (props.canWrite) {
@@ -160,12 +162,12 @@ function renderSuffix({ option }: { option: TreeOption }) {
         trigger: () => h(NButton, {
           size: 'tiny', type: 'error', secondary: true
         }, { icon: () => h(Trash2, { size: 12 }) }),
-        default: () => `\u5220\u9664 ${raw.label}\uFF1F`
+        default: () => `删除 ${raw.label}？`
       })
     )
   }
 
-  return h('div', { style: 'display: flex; gap: 6px' }, buttons)
+  return h('div', { style: 'display: flex; gap: 6px; margin-left: auto; flex-shrink: 0' }, buttons)
 }
 
 // 懒加载：展开仓库节点时请求 版本→文件 子树
@@ -183,17 +185,17 @@ async function onLoad(node: TreeOption) {
       node.isLeaf = true
     }
   } catch {
-    message.error('\u52A0\u8F7D\u4ED3\u5E93\u6587\u4EF6\u5931\u8D25')
+    message.error('加载仓库文件失败')
   }
 }
 
 async function handleDelete(assetId: number, name: string) {
   try {
     await deleteAsset(assetId)
-    message.success(`${name} \u5DF2\u5220\u9664`)
+    message.success(`${name} 已删除`)
     emit('refresh')
   } catch (err) {
-    message.error(err instanceof Error ? err.message : '\u5220\u9664\u5931\u8D25')
+    message.error(err instanceof Error ? err.message : '删除失败')
   }
 }
 
@@ -216,8 +218,22 @@ function formatBytes(size: number) {
       :virtual-scroll="true"
       expand-on-click
       :default-expand-all="false"
+      block-node
       style="min-height: 200px; max-height: 70vh"
     />
-    <NEmpty v-else-if="!loading" description="\u6682\u65E0\u5DF2\u540C\u6B65\u6587\u4EF6" />
+    <NEmpty v-else-if="!loading" description="暂无已同步文件" />
   </NSpin>
 </template>
+
+<style scoped>
+/* block-node 使 content 占满整行，suffix 用 margin-left: auto 右对齐 */
+:deep(.n-tree-node-content) {
+  display: flex !important;
+  align-items: center !important;
+}
+
+:deep(.n-tree-node-content__suffix) {
+  margin-left: auto !important;
+  flex-shrink: 0 !important;
+}
+</style>
