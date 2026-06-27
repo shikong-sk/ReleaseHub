@@ -143,6 +143,9 @@ func (s *WebDAVStorage) Delete(ctx context.Context, objectPath string) error {
 		return fmt.Errorf("从 WebDAV 删除失败: %w", err)
 	}
 
+	// 删除文件后，尝试向上清理空目录（版本目录、仓库目录等）
+	s.removeEmptyDirs(objectPath)
+
 	return nil
 }
 
@@ -238,4 +241,43 @@ func (s *WebDAVStorage) walkWebDAV(ctx context.Context, dirPath string, results 
 		})
 	}
 	return nil
+}
+
+// removeEmptyDirs 删除文件后向上清理空目录
+// 路径格式: github/owner/repo/tag/filename → 依次检查 tag/、repo/、owner/ 目录是否为空
+func (s *WebDAVStorage) removeEmptyDirs(objectPath string) {
+	// objectPath 示例: github/owner/repo/tag/filename.zip
+	parts := strings.Split(filepath.ToSlash(filepath.Clean(objectPath)), "/")
+	// 需要检查的目录层级: .../tag/、.../repo/、.../owner/
+	// 从倒数第2层（tag目录）开始，到第2层（owner目录）
+	for depth := len(parts) - 1; depth >= 2; depth-- {
+		dirPath := filepath.ToSlash(filepath.Join(s.basePath, filepath.Join(parts[:depth]...)))
+		if s.isRemoteDirEmpty(dirPath) {
+			// WebDAV 规范中目录资源以 / 结尾，某些服务器要求路径带尾部斜杠才能正确删除目录
+			dirPathSlash := dirPath + "/"
+			if err := s.client.Remove(dirPathSlash); err != nil {
+				// 目录非空或无权限，停止向上清理
+				return
+			}
+		} else {
+			// 目录非空，停止向上清理
+			return
+		}
+	}
+}
+
+// isRemoteDirEmpty 检查 WebDAV 远程目录是否为空（只看直接子项，不递归）
+func (s *WebDAVStorage) isRemoteDirEmpty(dirPath string) bool {
+	files, err := s.client.ReadDir(dirPath)
+	if err != nil {
+		// 目录不存在或无法读取，视为非空（安全起见不删除）
+		return false
+	}
+	// 过滤掉 latest.json 元数据文件
+	for _, f := range files {
+		if f.Name() != "latest.json" {
+			return false
+		}
+	}
+	return true
 }

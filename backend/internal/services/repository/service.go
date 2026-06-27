@@ -221,6 +221,9 @@ func (s *Service) Update(ctx context.Context, id uint, input UpdateInput) (*mode
 		return nil, err
 	}
 
+	// 重新加载存储关联（syncRepositoryStorages 可能已更新关联表）
+	s.loadStorageIDs(ctx, repository)
+
 	return repository, nil
 }
 

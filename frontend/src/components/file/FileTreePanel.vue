@@ -67,10 +67,12 @@ function mergeIncoming(incoming: FileTreeNode[], existing: TreeOption[]): TreeOp
   return incoming.map((node) => {
     const opt: TreeOption = { key: node.key, label: node.label, isLeaf: node.isLeaf }
     const prev = existingMap.get(String(node.key))
-    if (prev?.children && prev.children.length > 0) {
-      opt.children = prev.children
-    } else if (node.children && node.children.length > 0) {
+    // 如果新数据自带 children（如版本节点下的文件列表），总是用新数据替换
+    // 只有没有 children 的非叶节点（如仓库节点待懒加载），才保留旧的已加载 children
+    if (node.children && node.children.length > 0) {
       opt.children = mergeIncoming(node.children, prev?.children ?? [])
+    } else if (prev?.children && prev.children.length > 0) {
+      opt.children = prev.children
     } else if (!node.isLeaf && node.key.startsWith('repo-')) {
       // 仓库尚未加载子节点，标记为异步加载
       opt.children = undefined
