@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"context"
 	"fmt"
 	"io"
@@ -36,9 +37,12 @@ func NewWebDAVStorage(cfg WebDAVConfig) (*WebDAVStorage, error) {
 		basePath = "/releasehub"
 	}
 
-	// 确保基础目录存在
+	// 尝试确保基础目录存在，忽略已存在或被锁定的错误
+	// 某些 WebDAV 服务（如 OpenList/AList）对已存在目录的 MKCOL 会返回 423 Locked
 	if err := client.MkdirAll(basePath, 0o755); err != nil {
-		return nil, fmt.Errorf("创建 WebDAV 基础目录失败: %w", err)
+		if !isMkdirAcceptable(err) {
+			return nil, fmt.Errorf("创建 WebDAV 基础目录失败: %w", err)
+		}
 	}
 
 	return &WebDAVStorage{
@@ -47,13 +51,54 @@ func NewWebDAVStorage(cfg WebDAVConfig) (*WebDAVStorage, error) {
 	}, nil
 }
 
+// isMkdirAcceptable 判断 MkdirAll 返回的错误是否可以接受（目录可能已存在或被临时锁定）
+// 支持多层嵌套的 os.PathError → StatusError 结构，以及字符串回退匹配
+func isMkdirAcceptable(err error) bool {
+	if err == nil {
+		return true
+	}
+	// 405 Method Not Allowed: 目录已存在
+	// 423 Locked: 资源被锁定（常见于 OpenList/AList）
+	if gowebdav.IsErrCode(err, 405) || gowebdav.IsErrCode(err, 423) {
+		return true
+	}
+	// 递归 unwrap：检查嵌套的 PathError 和 StatusError
+	inner := errors.Unwrap(err)
+	if inner != nil {
+		if gowebdav.IsErrCode(inner, 405) || gowebdav.IsErrCode(inner, 423) {
+			return true
+		}
+		// 再 unwrap 一层
+		inner2 := errors.Unwrap(inner)
+		if inner2 != nil {
+			if gowebdav.IsErrCode(inner2, 405) || gowebdav.IsErrCode(inner2, 423) {
+				return true
+			}
+		}
+	}
+	// 回退：某些 WebDAV 服务可能返回非标准错误包装
+	errStr := err.Error()
+	return strings.Contains(errStr, "405") || strings.Contains(errStr, "423")
+}
+
+// mkdirAllSafe 安全地创建目录，对已存在或被锁定的目录做容错
+func (s *WebDAVStorage) mkdirAllSafe(dir string) error {
+	if err := s.client.MkdirAll(dir, 0o755); err != nil {
+		if isMkdirAcceptable(err) {
+			return nil
+		}
+		return fmt.Errorf("创建 WebDAV 目录失败: %w", err)
+	}
+	return nil
+}
+
 func (s *WebDAVStorage) Put(ctx context.Context, objectPath string, reader io.Reader) (*StoredObject, error) {
 	remotePath := s.remotePath(objectPath)
 	dir := filepath.Dir(remotePath)
 
-	// 确保目录存在
-	if err := s.client.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("创建 WebDAV 目录失败: %w", err)
+	// 确保目录存在（容错处理）
+	if err := s.mkdirAllSafe(dir); err != nil {
+		return nil, err
 	}
 
 	// 读取全部内容（WebDAV 客户端不支持流式写入）
@@ -118,8 +163,8 @@ func (s *WebDAVStorage) SetLatestTag(ctx context.Context, provider string, owner
 	data := []byte(fmt.Sprintf(`{"tag":"%s","updatedAt":"%s"}`, manifest.Tag, manifest.UpdatedAt))
 
 	dir := filepath.Dir(manifestPath)
-	if err := s.client.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("创建 WebDAV 目录失败: %w", err)
+	if err := s.mkdirAllSafe(dir); err != nil {
+		return err
 	}
 
 	if err := s.client.Write(manifestPath, data, 0o644); err != nil {
@@ -138,7 +183,6 @@ func (s *WebDAVStorage) remotePath(objectPath string) string {
 	cleanPath := filepath.ToSlash(filepath.Clean(objectPath))
 	return filepath.ToSlash(filepath.Join(s.basePath, cleanPath))
 }
-
 
 // List 列举指定前缀下的所有文件（递归遍历 WebDAV 目录）
 func (s *WebDAVStorage) List(ctx context.Context, prefix string) ([]ListResult, error) {

@@ -570,6 +570,11 @@ func newTestRouterWithGitHubBaseURLAndStorageDir(t *testing.T, githubBaseURL str
 	if err := database.Migrate(db); err != nil {
 		t.Fatalf("迁移测试数据库失败: %v", err)
 	}
+	// 创建默认本地存储记录，确保 GetRepositoryStorages 能找到存储目标
+	if err := database.SeedDefaultStorage(db, storageDir); err != nil {
+		t.Fatalf("初始化默认存储失败: %v", err)
+	}
+	_ = database.BackfillAssetStorageID(db)
 
 	return NewRouter(Dependencies{
 		Config: &config.Config{

@@ -38,7 +38,8 @@ type CreateInput struct {
 	Repo                 string `json:"repo"`
 	Enabled              *bool  `json:"enabled"`
 	GitHubTokenID        *uint  `json:"githubTokenId"`
-	StorageID            *uint  `json:"storageId"`
+	StorageID            *uint  `json:"storageId"`     // 兼容旧 API，单存储
+	StorageIDs           []uint `json:"storageIds"`    // 多存储（优先）
 	ProxyID              *uint  `json:"proxyId"`
 	ProviderApiBaseUrl    string `json:"providerApiBaseUrl"`
 	IntervalSeconds      int    `json:"intervalSeconds"`
@@ -52,6 +53,7 @@ type UpdateInput struct {
 	Enabled              *bool   `json:"enabled"`
 	GitHubTokenID        *uint   `json:"githubTokenId"`
 	StorageID            *uint  `json:"storageId"`
+	StorageIDs           []uint  `json:"storageIds"`    // 多存储（优先）
 	ProxyID              *uint  `json:"proxyId"`
 	ProviderApiBaseUrl    *string `json:"providerApiBaseUrl"`
 	IntervalSeconds      *int    `json:"intervalSeconds"`
@@ -82,7 +84,30 @@ func (s *Service) List(ctx context.Context) ([]models.Repository, error) {
 	err := s.db.WithContext(ctx).
 		Order("updated_at DESC").
 		Find(&repositories).Error
-	return repositories, err
+	if err != nil {
+		return nil, err
+	}
+
+	// 批量加载存储关联
+	repoIDs := make([]uint, 0, len(repositories))
+	for _, r := range repositories {
+		repoIDs = append(repoIDs, r.ID)
+	}
+	var allRS []models.RepositoryStorage
+	if len(repoIDs) > 0 {
+		s.db.WithContext(ctx).Where("repository_id IN ?", repoIDs).Find(&allRS)
+	}
+	rsMap := make(map[uint][]uint)
+	for _, rs := range allRS {
+		rsMap[rs.RepositoryID] = append(rsMap[rs.RepositoryID], rs.StorageID)
+	}
+	for i := range repositories {
+		if ids, ok := rsMap[repositories[i].ID]; ok {
+			repositories[i].StorageIDs = ids
+		}
+	}
+
+	return repositories, nil
 }
 
 func (s *Service) Get(ctx context.Context, id uint) (*models.Repository, error) {
@@ -94,6 +119,9 @@ func (s *Service) Get(ctx context.Context, id uint) (*models.Repository, error) 
 	if err != nil {
 		return nil, err
 	}
+
+	// 加载存储关联
+	s.loadStorageIDs(ctx, &repository)
 
 	return &repository, nil
 }
@@ -107,6 +135,14 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (*models.Reposi
 	if err := s.db.WithContext(ctx).Create(repository).Error; err != nil {
 		return nil, err
 	}
+
+	// 同步存储关联表
+	if err := s.syncRepositoryStorages(ctx, repository.ID, input.StorageIDs, input.StorageID); err != nil {
+		return nil, fmt.Errorf("同步存储关联失败: %w", err)
+	}
+
+	// 加载存储关联到响应
+	s.loadStorageIDs(ctx, repository)
 
 	return repository, nil
 }
@@ -123,8 +159,31 @@ func (s *Service) Update(ctx context.Context, id uint, input UpdateInput) (*mode
 	if input.GitHubTokenID != nil {
 		repository.GitHubTokenID = input.GitHubTokenID
 	}
-	if input.StorageID != nil {
-		repository.StorageID = input.StorageID
+	// 处理存储配置变更
+	storageChanged := false
+	if input.StorageIDs != nil {
+		// 多存储模式：更新关联表
+		if err := s.syncRepositoryStorages(ctx, repository.ID, input.StorageIDs, nil); err != nil {
+			return nil, fmt.Errorf("同步存储关联失败: %w", err)
+		}
+		storageChanged = true
+	} else if input.StorageID != nil {
+		// 兼容旧 API：单存储模式
+		oldStorageID := repository.StorageID
+		newStorageID := input.StorageID
+		repository.StorageID = newStorageID
+		if !storageIDEqual(oldStorageID, newStorageID) {
+			if err := s.syncRepositoryStorages(ctx, repository.ID, nil, input.StorageID); err != nil {
+				return nil, fmt.Errorf("同步存储关联失败: %w", err)
+			}
+			storageChanged = true
+		}
+	}
+	if storageChanged {
+		// 存储变更后，将不在新存储列表中的资产重置为 pending
+		if err := s.resetOrphanedAssets(ctx, repository.ID); err != nil {
+			return nil, fmt.Errorf("重置孤立资产失败: %w", err)
+		}
 	}
 	if input.ProxyID != nil {
 		repository.ProxyID = input.ProxyID
@@ -273,4 +332,185 @@ func validateRetention(retention int) error {
 
 func normalizeFilterMode(filterMode string) string {
 	return strings.ToLower(strings.TrimSpace(filterMode))
+}
+
+// storageIDEqual 比较两个 *uint 是否相等（nil 视为 0）
+func storageIDEqual(a, b *uint) bool {
+	va := uint(0)
+	if a != nil {
+		va = *a
+	}
+	vb := uint(0)
+	if b != nil {
+		vb = *b
+	}
+	return va == vb
+}
+
+// resetAssetsToPending 将指定仓库下所有 verified/downloaded 资产重置为 pending
+// 用于仓库存储目标变更后，确保资产被重新下载到新存储
+func (s *Service) resetAssetsToPending(ctx context.Context, repositoryID uint) error {
+	// 查找该仓库的所有 Release
+	var releaseIDs []uint
+	if err := s.db.WithContext(ctx).
+		Model(&models.Release{}).
+		Where("repository_id = ?", repositoryID).
+		Pluck("id", &releaseIDs).Error; err != nil {
+		return err
+	}
+	if len(releaseIDs) == 0 {
+		return nil
+	}
+
+	// 将这些 Release 下 verified/downloaded 资产重置为 pending，并清除 storage_path
+	result := s.db.WithContext(ctx).
+		Model(&models.Asset{}).
+		Where("release_id IN ? AND status IN ?", releaseIDs,
+			[]models.AssetStatus{models.AssetStatusVerified, models.AssetStatusDownloaded}).
+		Updates(map[string]any{
+			"status":       models.AssetStatusPending,
+			"storage_path": "",
+			"sha256":       "",
+			"storage_id":   nil,
+			"downloaded_at": nil,
+		})
+	return result.Error
+}
+
+// loadStorageIDs 加载仓库的存储关联 ID 到 StorageIDs 字段（非数据库字段，用于 API 响应）
+func (s *Service) loadStorageIDs(ctx context.Context, repository *models.Repository) {
+	var rss []models.RepositoryStorage
+	if err := s.db.WithContext(ctx).Where("repository_id = ?", repository.ID).Find(&rss).Error; err == nil {
+		ids := make([]uint, 0, len(rss))
+		for _, rs := range rss {
+			ids = append(ids, rs.StorageID)
+		}
+		repository.StorageIDs = ids
+	}
+}
+
+// syncRepositoryStorages 同步仓库的存储关联表
+// storageIDs 优先使用（多存储模式），若为空则从 singleStorageID 构建（单存储兼容）
+func (s *Service) syncRepositoryStorages(ctx context.Context, repositoryID uint, storageIDs []uint, singleStorageID *uint) error {
+	// 确定最终的存储 ID 列表
+	var targetIDs []uint
+	if len(storageIDs) > 0 {
+		targetIDs = storageIDs
+	} else if singleStorageID != nil {
+		targetIDs = []uint{*singleStorageID}
+	} else {
+		// 没有指定存储，使用默认存储
+		var defaultStorage models.Storage
+		if err := s.db.WithContext(ctx).
+			Where("is_default = ?", true).
+			Order("updated_at DESC, created_at DESC").
+			First(&defaultStorage).Error; err == nil {
+			targetIDs = []uint{defaultStorage.ID}
+		}
+	}
+
+	// 删除旧关联
+	if err := s.db.WithContext(ctx).
+		Where("repository_id = ?", repositoryID).
+		Delete(&models.RepositoryStorage{}).Error; err != nil {
+		return err
+	}
+
+	// 创建新关联
+	for _, storageID := range targetIDs {
+		rs := models.RepositoryStorage{
+			RepositoryID: repositoryID,
+			StorageID:    storageID,
+		}
+		if err := s.db.WithContext(ctx).Create(&rs).Error; err != nil {
+			return err
+		}
+	}
+
+	// 同步更新 Repository.StorageID 为第一个存储（兼容旧代码）
+	if len(targetIDs) > 0 {
+		s.db.WithContext(ctx).
+			Model(&models.Repository{}).
+			Where("id = ?", repositoryID).
+			Update("storage_id", targetIDs[0])
+	}
+
+	return nil
+}
+
+// GetRepositoryStorages 获取仓库配置的所有存储 ID
+func (s *Service) GetRepositoryStorages(ctx context.Context, repositoryID uint) ([]uint, error) {
+	var rss []models.RepositoryStorage
+	if err := s.db.WithContext(ctx).
+		Where("repository_id = ?", repositoryID).
+		Find(&rss).Error; err != nil {
+		return nil, err
+	}
+
+	// 如果关联表为空，回退到 Repository.StorageID
+	if len(rss) == 0 {
+		var repo models.Repository
+		if err := s.db.WithContext(ctx).First(&repo, repositoryID).Error; err != nil {
+			return nil, err
+		}
+		if repo.StorageID != nil {
+			return []uint{*repo.StorageID}, nil
+		}
+		// 使用默认存储
+		var defaultStorage models.Storage
+		if err := s.db.WithContext(ctx).
+			Where("is_default = ?", true).
+			Order("updated_at DESC, created_at DESC").
+			First(&defaultStorage).Error; err == nil {
+			return []uint{defaultStorage.ID}, nil
+		}
+		return nil, nil
+	}
+
+	ids := make([]uint, 0, len(rss))
+	for _, rs := range rss {
+		ids = append(ids, rs.StorageID)
+	}
+	return ids, nil
+}
+
+// resetOrphanedAssets 将不在仓库当前存储列表中的资产重置为 pending
+// 比如仓库从 [本地, webdav] 改为 [webdav]，则本地存储上的资产变为孤立
+func (s *Service) resetOrphanedAssets(ctx context.Context, repositoryID uint) error {
+	storageIDs, err := s.GetRepositoryStorages(ctx, repositoryID)
+	if err != nil {
+		return err
+	}
+
+	if len(storageIDs) == 0 {
+		return nil
+	}
+
+	// 查找该仓库的所有 Release
+	var releaseIDs []uint
+	if err := s.db.WithContext(ctx).
+		Model(&models.Release{}).
+		Where("repository_id = ?", repositoryID).
+		Pluck("id", &releaseIDs).Error; err != nil {
+		return err
+	}
+	if len(releaseIDs) == 0 {
+		return nil
+	}
+
+	// 将 storage_id 不在 storageIDs 中的 verified/downloaded 资产重置为 pending
+	result := s.db.WithContext(ctx).
+		Model(&models.Asset{}).
+		Where("release_id IN ? AND status IN ? AND (storage_id IS NULL OR storage_id NOT IN ?)",
+			releaseIDs,
+			[]models.AssetStatus{models.AssetStatusVerified, models.AssetStatusDownloaded},
+			storageIDs).
+		Updates(map[string]any{
+			"status":        models.AssetStatusPending,
+			"storage_path":  "",
+			"sha256":        "",
+			"storage_id":    nil,
+			"downloaded_at": nil,
+		})
+	return result.Error
 }

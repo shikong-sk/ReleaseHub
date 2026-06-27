@@ -24,6 +24,24 @@ func NewDriverFactory(db *gorm.DB, storageConfig config.StorageConfig) *DriverFa
 	}
 }
 
+// DB 返回底层数据库连接（供外部查询存储配置）
+func (f *DriverFactory) DB() *gorm.DB {
+	return f.db
+}
+
+func (f *DriverFactory) DriverAndStorageID(ctx context.Context, repository models.Repository) (Driver, uint, error) {
+	storageModel, ok, err := f.resolveStorage(ctx, repository)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !ok {
+		driver, err := NewLocalStorage(f.defaultDataDir)
+		return driver, 0, err
+	}
+	driver, err := NewDriverFromModel(storageModel)
+	return driver, storageModel.ID, err
+}
+
 func (f *DriverFactory) DriverForRepository(ctx context.Context, repository models.Repository) (Driver, error) {
 	storageModel, ok, err := f.resolveStorage(ctx, repository)
 	if err != nil {

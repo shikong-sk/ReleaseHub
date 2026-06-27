@@ -84,16 +84,58 @@ func NewServiceWithFactory(db *gorm.DB, storageConfig config.StorageConfig) *Ser
 }
 
 func (s *Service) Download(ctx context.Context, assetID uint) (*DownloadResult, error) {
-	return s.downloadWithAttempt(ctx, assetID, 1, 3)
+	return s.downloadWithAttempt(ctx, assetID, 1, 3, nil)
 }
 
-func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt int, maxAttempts int) (*DownloadResult, error) {
+// DownloadToStorage 下载资产到指定存储
+func (s *Service) DownloadToStorage(ctx context.Context, assetID uint, targetStorageID uint) (*DownloadResult, error) {
+	return s.downloadWithAttempt(ctx, assetID, 1, 3, &targetStorageID)
+}
+
+func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt int, maxAttempts int, targetStorageID *uint) (*DownloadResult, error) {
 	asset, release, repository, err := s.loadAssetContext(ctx, assetID)
 	if err != nil {
 		return nil, err
 	}
 	if asset.Status == models.AssetStatusSkipped {
 		return nil, fmt.Errorf("资产已被过滤跳过，不能下载")
+	}
+
+	// 多存储下载：如果指定了目标存储，查找或创建该存储上的 asset 记录
+	if targetStorageID != nil {
+		// 查找该 release+name+storage 的记录
+		var storageAsset models.Asset
+		err := s.db.WithContext(ctx).
+			Where("release_id = ? AND name = ? AND storage_id = ?", asset.ReleaseID, asset.Name, *targetStorageID).
+			First(&storageAsset).Error
+
+		if err == nil {
+			// 该存储上已有记录
+			if storageAsset.Status == models.AssetStatusVerified || storageAsset.Status == models.AssetStatusDownloaded {
+				// 已完成下载，直接返回
+				return &DownloadResult{Asset: storageAsset}, nil
+			}
+			// 需要继续下载，使用这条记录
+			asset = storageAsset
+		} else if errors.Is(err, gorm.ErrRecordNotFound) {
+			// 该存储上没有记录，创建新的 asset 记录（复制模板数据）
+			newAsset := models.Asset{
+				ReleaseID:          asset.ReleaseID,
+				ProviderAssetID:    asset.ProviderAssetID,
+				Name:               asset.Name,
+				Size:               asset.Size,
+				ContentType:        asset.ContentType,
+				DownloadURL:        asset.DownloadURL,
+				BrowserDownloadURL: asset.BrowserDownloadURL,
+				StorageID:          targetStorageID,
+				Status:             models.AssetStatusPending,
+			}
+			if err := s.db.WithContext(ctx).Create(&newAsset).Error; err != nil {
+				return nil, fmt.Errorf("创建存储资产记录失败: %w", err)
+			}
+			asset = newAsset
+		}
+		// asset 可能被替换，但 release/repository 不变
 	}
 
 	task := models.Task{
@@ -134,10 +176,38 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 	objectPath := buildObjectPath(repository, release, asset)
 
 	// 使用 pipe 连接下载器和存储
-	storageDriver, err := s.storageDriver(ctx, repository)
-	if err != nil {
-		s.failTask(ctx, &task, err)
-		return nil, err
+	var storageDriver storage.Driver
+	var storageID uint
+	if targetStorageID != nil {
+		// 指定存储：直接通过 storage ID 创建驱动
+		if s.storages != nil {
+			var storageModel models.Storage
+			if err := s.storages.DB().WithContext(ctx).First(&storageModel, *targetStorageID).Error; err != nil {
+				s.failTask(ctx, &task, err)
+				return nil, err
+			}
+			storageDriver, err = storage.NewDriverFromModel(storageModel)
+			if err != nil {
+				s.failTask(ctx, &task, err)
+				return nil, err
+			}
+			storageID = *targetStorageID
+		} else {
+			d, id, e := s.storageDriverAndID(ctx, repository)
+			if e != nil {
+				s.failTask(ctx, &task, e)
+				return nil, e
+			}
+			storageDriver, storageID = d, id
+		}
+	} else {
+		// 未指定存储：使用仓库配置的默认存储
+		var e error
+		storageDriver, storageID, e = s.storageDriverAndID(ctx, repository)
+		if e != nil {
+			s.failTask(ctx, &task, e)
+			return nil, e
+		}
 	}
 	downloadClient, err := s.downloaderForRepository(ctx, repository)
 	if err != nil {
@@ -208,6 +278,7 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 	asset.Size = downloadResult.Size
 	asset.SHA256 = downloadResult.SHA256
 	asset.Status = models.AssetStatusVerified
+	asset.StorageID = &storageID
 	asset.ErrorMessage = ""
 	asset.DownloadedAt = &now
 
@@ -270,7 +341,7 @@ func (s *Service) RetryDownload(ctx context.Context, assetID uint) (*DownloadRes
 	if existingTask.MaxAttempts <= 0 {
 		existingTask.MaxAttempts = 3
 	}
-	return s.downloadWithAttempt(ctx, assetID, attempt, existingTask.MaxAttempts)
+	return s.downloadWithAttempt(ctx, assetID, attempt, existingTask.MaxAttempts, nil)
 }
 
 // OpenReader 返回资产的读取流（兼容所有存储驱动）
@@ -283,7 +354,8 @@ func (s *Service) OpenReader(ctx context.Context, assetID uint) (*models.Asset, 
 		return nil, nil, nil, fmt.Errorf("资产尚未下载")
 	}
 
-	storageDriver, err := s.storageDriver(ctx, repository)
+	// 优先用 Asset 自身的 StorageID 确定存储驱动
+	storageDriver, err := s.driverForAsset(ctx, &asset, repository)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -308,7 +380,8 @@ func (s *Service) Delete(ctx context.Context, assetID uint) error {
 	}
 
 	if strings.TrimSpace(asset.StoragePath) != "" {
-		storageDriver, err := s.storageDriver(ctx, repository)
+		// 优先用 Asset 自身的 StorageID 确定存储驱动
+		storageDriver, err := s.driverForAsset(ctx, &asset, repository)
 		if err != nil {
 			return err
 		}
@@ -339,17 +412,39 @@ func (s *Service) loadAssetContext(ctx context.Context, assetID uint) (models.As
 		return asset, models.Release{}, models.Repository{}, err
 	}
 
-	var release models.Release
-	if err := s.db.WithContext(ctx).First(&release, asset.ReleaseID).Error; err != nil {
+	release, err := s.loadRelease(ctx, asset.ReleaseID)
+	if err != nil {
+		return asset, models.Release{}, models.Repository{}, err
+	}
+
+	repository, err := s.loadRepository(ctx, release.RepositoryID)
+	if err != nil {
 		return asset, release, models.Repository{}, err
 	}
 
-	var repository models.Repository
-	if err := s.db.WithContext(ctx).First(&repository, release.RepositoryID).Error; err != nil {
-		return asset, release, repository, err
-	}
-
 	return asset, release, repository, nil
+}
+
+func (s *Service) loadRelease(ctx context.Context, releaseID uint) (models.Release, error) {
+	var release models.Release
+	if err := s.db.WithContext(ctx).First(&release, releaseID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return release, fmt.Errorf("Release 不存在")
+		}
+		return release, err
+	}
+	return release, nil
+}
+
+func (s *Service) loadRepository(ctx context.Context, repositoryID uint) (models.Repository, error) {
+	var repository models.Repository
+	if err := s.db.WithContext(ctx).First(&repository, repositoryID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return repository, fmt.Errorf("仓库不存在")
+		}
+		return repository, err
+	}
+	return repository, nil
 }
 
 func (s *Service) githubToken(ctx context.Context, tokenID *uint) (string, error) {
@@ -374,12 +469,33 @@ func (s *Service) markAssetFailed(ctx context.Context, asset *models.Asset, err 
 	_ = s.db.WithContext(ctx).Save(asset).Error
 }
 
-func (s *Service) storageDriver(ctx context.Context, repository models.Repository) (storage.Driver, error) {
+// storageDriverAndID 返回仓库对应的存储驱动和存储 ID
+func (s *Service) storageDriverAndID(ctx context.Context, repository models.Repository) (storage.Driver, uint, error) {
 	if s.storages != nil {
-		return s.storages.DriverForRepository(ctx, repository)
+		return s.storages.DriverAndStorageID(ctx, repository)
 	}
-	return s.storage, nil
+	return s.storage, 0, nil
 }
+
+// storageDriver 仅返回驱动（兼容旧调用）
+func (s *Service) storageDriver(ctx context.Context, repository models.Repository) (storage.Driver, error) {
+	d, _, err := s.storageDriverAndID(ctx, repository)
+	return d, err
+}
+// driverForAsset 根据资产的 StorageID 确定存储驱动
+// 优先使用 Asset 自身的 StorageID（文件实际所在存储），回退到仓库配置
+func (s *Service) driverForAsset(ctx context.Context, asset *models.Asset, repository models.Repository) (storage.Driver, error) {
+	if asset.StorageID != nil && *asset.StorageID > 0 {
+		if s.storages != nil {
+			var storageModel models.Storage
+			if err := s.storages.DB().WithContext(ctx).First(&storageModel, *asset.StorageID).Error; err == nil {
+				return storage.NewDriverFromModel(storageModel)
+			}
+		}
+	}
+	return s.storageDriver(ctx, repository)
+}
+
 
 func (s *Service) downloaderForRepository(ctx context.Context, repository models.Repository) (*downloader.HTTPDownloader, error) {
 	if repository.ProxyID == nil {

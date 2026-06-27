@@ -57,6 +57,16 @@ func main() {
 		logger.Warn("创建默认本地存储失败", zap.Error(err))
 	}
 
+	// 回填已有资产的 StorageID（存量数据迁移，幂等操作）
+	if err := database.BackfillAssetStorageID(db); err != nil {
+		logger.Warn("回填资产 StorageID 失败", zap.Error(err))
+	}
+
+	// 迁移 Asset 唯一索引（支持多存储）
+	if err := database.MigrateAssetUniqueIndex(db); err != nil {
+		logger.Warn("迁移 Asset 唯一索引失败", zap.Error(err))
+	}
+
 	appCtx, stopApp := context.WithCancel(context.Background())
 	defer stopApp()
 

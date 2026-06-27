@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, shallowRef, watch } from 'vue'
+import { h, ref, triggerRef, watch } from 'vue'
 import {
   NButton,
   NPopconfirm,
@@ -30,7 +30,7 @@ const emit = defineEmits<{
 const message = useMessage()
 
 // 本地可变树：保留已懒加载的 children，避免 computed 重算时丢失
-const localTree = shallowRef<TreeOption[]>([])
+const localTree = ref<TreeOption[]>([])
 
 // 全量元数据索引：包含顶层 + 懒加载的所有节点，用于 findRaw 查找
 const rawMap = new Map<string, FileTreeNode>()
@@ -51,9 +51,11 @@ watch(
     rawMap.clear()
     registerRawNodes(rawTree)
 
+    // 确保 source 始终是数组，避免 null/undefined 导致 mergeIncoming 报错
+    const treeArr = rawTree ?? []
     const source = storageId == null
-      ? rawTree
-      : (rawTree ?? []).filter((n) => n.storageId === storageId)
+      ? treeArr
+      : treeArr.filter((n) => n.storageId === storageId)
     localTree.value = mergeIncoming(source, localTree.value)
   },
   { immediate: true }
@@ -72,6 +74,9 @@ function mergeIncoming(incoming: FileTreeNode[], existing: TreeOption[]): TreeOp
     } else if (!node.isLeaf && node.key.startsWith('repo-')) {
       // 仓库尚未加载子节点，标记为异步加载
       opt.children = undefined
+    } else if (!node.isLeaf) {
+      // 非叶节点（如存储节点）但没有 children，设为空数组避免 NTree 无限触发 onLoad
+      opt.children = []
     }
     return opt
   })
@@ -235,24 +240,51 @@ function statusText(status: string): string {
 }
 
 // 懒加载：展开仓库节点时请求 版本→文件 子树
+// NTree 的 on-load 回调会在 Promise resolve 后自动渲染 option.children
+// 因此只需直接设置 option.children，不需要手动触发响应式刷新
 async function onLoad(node: TreeOption) {
-  const raw = findRaw(String(node.key))
-  if (!raw?.repositoryId) return
+  const key = String(node.key)
+  // 只处理仓库节点的懒加载，其他节点（存储节点等）直接标记为叶节点
+  if (!key.startsWith('repo-')) {
+    node.isLeaf = true
+    return
+  }
+  const raw = findRaw(key)
+  if (!raw?.repositoryId) {
+    node.isLeaf = true
+    return
+  }
+
+  // 确定该仓库节点所在存储的 storageId，用于按存储过滤文件
+  let nodeStorageId: number | null = null
+
+  // 优先级1：从仓库节点 key 中提取（"repo-2-s1" 中的 1 表示 storage_id=1）
+  const sMatch = key.match(/^repo-\d+-s(\d+)$/)
+  if (sMatch) {
+    nodeStorageId = parseInt(sMatch[1], 10)
+  }
+
+  // 优先级2：从 props.storageId 获取（存储过滤模式下，如存储页面指定了存储）
+  if (nodeStorageId == null && props.storageId != null && props.storageId > 0) {
+    nodeStorageId = props.storageId
+  }
 
   try {
-    const result = await getRepositoryFileTree(raw.repositoryId)
+    const result = await getRepositoryFileTree(raw.repositoryId, nodeStorageId)
     // 将懒加载返回的子树节点注册到 rawMap，使 findRaw 能查到
     registerRawNodes(result.tree)
 
     if (result.tree.length > 0) {
+      // 直接设置 option.children，NTree 会在 Promise resolve 后自动渲染
       node.children = mergeIncoming(result.tree, [])
-      // shallowRef 不会追踪深层属性变化，必须替换顶层引用才能触发 NTree 重新渲染
-      localTree.value = [...localTree.value]
     } else {
       node.isLeaf = true
+      node.children = []
     }
-  } catch {
+  } catch (e) {
     message.error('加载仓库文件失败')
+    // 加载失败时设为空数组，避免 NTree 无限重试 on-load
+    node.children = []
   }
 }
 

@@ -6,6 +6,7 @@ import {
   NModal,
   NRadioButton,
   NRadioGroup,
+  NSelect,
   NSpace,
   useMessage
 } from 'naive-ui'
@@ -17,6 +18,7 @@ import { getFileTree } from '@/api/files'
 import type { FileTreeNode } from '@/types/file'
 import { useFilesStore } from '@/stores/files'
 import { useAuthStore } from '@/stores/auth'
+import { useStoragesStore } from '@/stores/storages'
 import { deleteAsset } from '@/api/releases'
 import type { FileItem } from '@/types/file'
 
@@ -38,8 +40,32 @@ const viewMode = shallowRef<'tree' | 'table'>('tree')
 const fileTree = shallowRef<FileTreeNode[]>([])
 const fileTreeLoading = shallowRef(false)
 const localSearch = shallowRef('')
+// 存储过滤：null 表示全部
+const activeStorageId = shallowRef<number | null>(null)
 
 const modalTitle = computed(() => props.title ?? '文件浏览')
+
+// 存储选项：从存储 store 获取（更完整，不依赖树数据）
+const storagesStore = useStoragesStore()
+
+const storageOptions = computed(() => {
+  const options: { label: string; value: number | null }[] = [
+    { label: '全部存储', value: null }
+  ]
+  for (const s of storagesStore.items) {
+    options.push({ label: `${s.name} (${s.type.toUpperCase()})`, value: s.id })
+  }
+  return options
+})
+
+// 实际传给 FileTreePanel 的 storageId
+// 如果外部指定了 storageId（如存储页面），优先使用外部的
+const effectiveStorageId = computed(() => {
+  // 外部指定了 storageId 时优先使用
+  if (props.storageId != null && props.storageId !== undefined && props.storageId > 0) return props.storageId
+  // activeStorageId: null=全部, 0=默认本地存储, >0=具体存储
+  return activeStorageId.value
+})
 
 const filteredFiles = computed(() => {
   const keyword = localSearch.value.trim().toLowerCase()
@@ -53,8 +79,13 @@ watch(
   () => props.show,
   (visible) => {
     if (visible) {
+      // 外部指定了 storageId 时，同步到本地状态
+      if (props.storageId != null) {
+        activeStorageId.value = props.storageId
+      }
       void loadFileTree()
       void filesStore.refresh()
+      void storagesStore.refresh()
     }
   },
   { immediate: true }
@@ -64,9 +95,9 @@ async function loadFileTree() {
   fileTreeLoading.value = true
   try {
     const result = await getFileTree()
-    fileTree.value = result.tree ?? []
+    fileTree.value = result?.tree ?? []
   } catch {
-    // 加载失败不阻塞
+    // 加载失败不阻塞，保留现有数据
   } finally {
     fileTreeLoading.value = false
   }
@@ -122,12 +153,24 @@ async function handleDeleteFile(file: FileItem) {
     </template>
 
     <div class="modal-body" style="height: 100%">
+      <!-- 存储切换 + 视图控制 -->
+      <NSpace v-if="viewMode === 'tree'" align="center" :size="12" style="margin-bottom: 12px">
+        <span class="filter-label">存储</span>
+        <NSelect
+          v-model:value="activeStorageId"
+          :options="storageOptions"
+          size="small"
+          style="min-width: 200px; max-width: 360px"
+          :disabled="props.storageId != null"
+        />
+      </NSpace>
+
       <template v-if="viewMode === 'tree'">
         <FileTreePanel
           :tree="fileTree"
           :loading="fileTreeLoading"
           :can-write="authStore.canWrite"
-          :storage-id="storageId"
+          :storage-id="effectiveStorageId"
           @refresh="loadFileTree"
         />
       </template>
@@ -148,6 +191,12 @@ async function handleDeleteFile(file: FileItem) {
 <style scoped>
 .modal-body {
   height: 100%;
+}
+
+.filter-label {
+  font-size: 13px;
+  color: #667085;
+  white-space: nowrap;
 }
 
 .file-search {

@@ -44,9 +44,17 @@ func registerFileRoutes(router *gin.Engine, db *gorm.DB) {
 }
 
 func (h *fileHandler) list(c *gin.Context) {
+	// 支持按状态过滤，默认排除 deleted/skipped
+	statusFilter := c.Query("status")
+	
 	var assets []models.Asset
-	err := h.db.WithContext(c.Request.Context()).
-		Where("assets.status = ? AND assets.storage_path <> ''", models.AssetStatusVerified).
+	query := h.db.WithContext(c.Request.Context())
+	if statusFilter != "" {
+		query = query.Where("assets.status = ?", statusFilter)
+	} else {
+		query = query.Where("assets.status NOT IN ?", []models.AssetStatus{models.AssetStatusDeleted, models.AssetStatusSkipped})
+	}
+	err := query.
 		Order("assets.downloaded_at DESC, assets.updated_at DESC").
 		Limit(500).
 		Find(&assets).Error
@@ -103,10 +111,15 @@ func (h *fileHandler) list(c *gin.Context) {
 		release := releasesByID[asset.ReleaseID]
 		repository := repositoriesByID[release.RepositoryID]
 
+		// 优先使用 Asset 自身的 StorageID（文件实际所在存储），回退到仓库配置
+		assetStorageID := asset.StorageID
+		if assetStorageID == nil {
+			assetStorageID = repository.StorageID
+		}
 		storageName := "默认本地存储"
 		storageType := "local"
-		if repository.StorageID != nil {
-			if storage, ok := storagesByID[*repository.StorageID]; ok {
+		if assetStorageID != nil {
+			if storage, ok := storagesByID[*assetStorageID]; ok {
 				storageName = storage.Name
 				storageType = storage.Type
 			}
@@ -124,7 +137,7 @@ func (h *fileHandler) list(c *gin.Context) {
 			SHA256:       asset.SHA256,
 			StoragePath:  asset.StoragePath,
 			DownloadedAt: formatTime(asset.DownloadedAt),
-			StorageID:    repository.StorageID,
+			StorageID:    assetStorageID,
 			StorageName:  storageName,
 			StorageType:  storageType,
 		})
@@ -140,9 +153,26 @@ func (h *fileHandler) list(c *gin.Context) {
 func (h *fileHandler) tree(c *gin.Context) {
 	repoQuery := c.Query("repositoryId")
 	if repoQuery != "" {
-		h.treeForRepository(c, repoQuery)
+		storageQuery := c.Query("storageId")
+		h.treeForRepository(c, repoQuery, storageQuery)
 		return
 	}
+	h.treeTopLevel(c)
+}
+
+// treeForStorage 返回指定存储下的仓库列表（用于存储页面的懒加载）
+func (h *fileHandler) treeForStorage(c *gin.Context) {
+	storageQuery := c.Query("storageId")
+	if storageQuery == "" {
+		h.treeTopLevel(c)
+		return
+	}
+	storageID, err := strconv.ParseUint(storageQuery, 10, 64)
+	if err != nil || storageID == 0 {
+		writeError(c, http.StatusBadRequest, "storageId 必须是正整数")
+		return
+	}
+	// 复用 treeTopLevel 的逻辑，但只返回指定存储下的仓库
 	h.treeTopLevel(c)
 }
 
@@ -153,8 +183,8 @@ type treeNode struct {
 	Children []treeNode `json:"children,omitempty"`
 	Prefix   string     `json:"prefix,omitempty"`
 
-	// 存储层附加字段
-	StorageID    uint   `json:"storageId,omitempty"`
+	// 存储层附加字段（存储节点和文件节点均使用）
+	StorageID    uint   `json:"storageId"`
 
 	// 仓库层附加字段
 	RepositoryID uint `json:"repositoryId,omitempty"`
@@ -174,9 +204,11 @@ type treeNode struct {
 
 // treeTopLevel 返回 存储→仓库 两层，仓库节点标记为非叶节点并携带文件计数
 func (h *fileHandler) treeTopLevel(c *gin.Context) {
-	// 查询所有 enabled 的仓库，无论是否有 verified 资产
+	ctx := c.Request.Context()
+
+	// 查询所有 enabled 的仓库
 	var repos []models.Repository
-	if err := h.db.WithContext(c.Request.Context()).
+	if err := h.db.WithContext(ctx).
 		Where("enabled = ?", true).
 		Order("owner, repo").
 		Find(&repos).Error; err != nil {
@@ -184,33 +216,12 @@ func (h *fileHandler) treeTopLevel(c *gin.Context) {
 		return
 	}
 
-	// 查询 verified 资产计数，按 repository 分组
-	type repoCount struct {
-		RepositoryID uint
-		FileCount    int
-	}
-	var counts []repoCount
-	_ = h.db.WithContext(c.Request.Context()).
-		Model(&models.Asset{}).
-		Select("repositories.id as repository_id, COUNT(*) as file_count").
-		Joins("JOIN releases ON releases.id = assets.release_id").
-		Joins("JOIN repositories ON repositories.id = releases.repository_id").
-		Where("assets.status = ? AND assets.storage_path <> ''", models.AssetStatusVerified).
-		Group("repositories.id").
-		Find(&counts).Error
-
-	// 构建 repository_id → file_count 映射
-	countMap := make(map[uint]int, len(counts))
-	for _, rc := range counts {
-		countMap[rc.RepositoryID] = rc.FileCount
-	}
-
-	// 预加载存储名称，同时查找默认存储 ID
+	// 预加载存储配置
 	storagesByID := map[uint]models.Storage{}
 	var defaultStorageID uint
 	{
 		var storages []models.Storage
-		if err := h.db.WithContext(c.Request.Context()).Find(&storages).Error; err != nil {
+		if err := h.db.WithContext(ctx).Find(&storages).Error; err != nil {
 			writeError(c, http.StatusInternalServerError, "查询存储配置失败")
 			return
 		}
@@ -222,18 +233,41 @@ func (h *fileHandler) treeTopLevel(c *gin.Context) {
 		}
 	}
 
-	// resolveStorageID 将仓库的 StorageID 解析为实际存储 ID
-	// StorageID 为 nil 时使用默认存储 ID；找不到存储记录时返回 0（默认本地存储）
-	resolveStorageID := func(repo *models.Repository) uint {
+	// 构建 repository_id → storage_id 映射（仓库当前配置）
+	repoStorageMap := make(map[uint]uint, len(repos))
+	for _, repo := range repos {
 		if repo.StorageID != nil {
-			if _, ok := storagesByID[*repo.StorageID]; ok {
-				return *repo.StorageID
-			}
+			repoStorageMap[repo.ID] = *repo.StorageID
+		} else {
+			repoStorageMap[repo.ID] = defaultStorageID
 		}
-		if defaultStorageID != 0 {
-			return defaultStorageID
-		}
-		return 0
+	}
+
+	// 查询所有非 deleted/skipped 的资产，按 release_id 找到 repository_id，
+	// 再按 asset.storage_id 或 repository.storage_id 确定实际存储归属
+	// 使用 COALESCE 在 SQL 层完成回填
+	type assetCountByStorageRepo struct {
+		EffectiveStorageID uint
+		RepositoryID       uint
+		FileCount          int
+	}
+	var counts []assetCountByStorageRepo
+	// 用 Sprintf 预构建 COALESCE 表达式，因为 GORM 的 Select/Group 不支持多参数占位
+	coalesceExpr := fmt.Sprintf("COALESCE(assets.storage_id, repositories.storage_id, %d)", defaultStorageID)
+	_ = h.db.WithContext(ctx).
+		Model(&models.Asset{}).
+		Select(fmt.Sprintf("%s as effective_storage_id, repositories.id as repository_id, COUNT(*) as file_count", coalesceExpr)).
+		Joins("JOIN releases ON releases.id = assets.release_id").
+		Joins("JOIN repositories ON repositories.id = releases.repository_id").
+		Where("assets.status NOT IN ?", []models.AssetStatus{models.AssetStatusDeleted, models.AssetStatusSkipped}).
+		Where("repositories.enabled = ?", true).
+		Group(fmt.Sprintf("%s, repositories.id", coalesceExpr)).
+		Find(&counts).Error
+
+	// 构建 (storageID, repoID) → fileCount 映射
+	countMap := make(map[[2]uint]int, len(counts))
+	for _, rc := range counts {
+		countMap[[2]uint{rc.EffectiveStorageID, rc.RepositoryID}] = rc.FileCount
 	}
 
 	// 按 storage 分组构建树
@@ -246,30 +280,27 @@ func (h *fileHandler) treeTopLevel(c *gin.Context) {
 	storageMap := map[uint]*storageGroup{}
 	var storageOrder []uint
 
-	// 默认本地存储用 0 作为 key
-	defaultStorage := &storageGroup{ID: 0, Name: "默认本地存储", Type: "local"}
-	storageMap[0] = defaultStorage
-	storageOrder = append(storageOrder, 0)
+	// 初始化所有存储组
+	for _, s := range storagesByID {
+		storageMap[s.ID] = &storageGroup{ID: s.ID, Name: s.Name, Type: s.Type, Children: make([]treeNode, 0)}
+		storageOrder = append(storageOrder, s.ID)
+	}
 
 	for _, repo := range repos {
-		groupID := resolveStorageID(&repo)
-		var groupName string
-		var groupType string
+		// 该仓库的文件可能分布在多个存储上（历史原因）
+		// 首先看仓库当前配置的存储
+		primaryStorageID := repoStorageMap[repo.ID]
 
-		if s, ok := storagesByID[groupID]; ok {
-			groupName = s.Name
-			groupType = s.Type
-		} else {
-			groupName = "默认本地存储"
-			groupType = "local"
+		// 检查该仓库在其他存储上是否也有文件（asset.storage_id 与 repo.storage_id 不同时）
+		var otherStorageIDs []uint
+		for _, rc := range counts {
+			if rc.RepositoryID == repo.ID && rc.EffectiveStorageID != primaryStorageID {
+				otherStorageIDs = append(otherStorageIDs, rc.EffectiveStorageID)
+			}
 		}
 
-		if _, exists := storageMap[groupID]; !exists {
-			storageMap[groupID] = &storageGroup{ID: groupID, Name: groupName, Type: groupType}
-			storageOrder = append(storageOrder, groupID)
-		}
-
-		fc := countMap[repo.ID]
+		// 在仓库当前配置的存储下显示该仓库节点
+		fc := countMap[[2]uint{primaryStorageID, repo.ID}]
 		repoNode := treeNode{
 			Key:          fmt.Sprintf("repo-%d", repo.ID),
 			Label:        fmt.Sprintf("%s/%s", repo.Owner, repo.Repo),
@@ -278,27 +309,52 @@ func (h *fileHandler) treeTopLevel(c *gin.Context) {
 			RepositoryID: repo.ID,
 			FileCount:    fc,
 		}
-		storageMap[groupID].Children = append(storageMap[groupID].Children, repoNode)
+		if _, ok := storageMap[primaryStorageID]; ok {
+			storageMap[primaryStorageID].Children = append(storageMap[primaryStorageID].Children, repoNode)
+		}
+
+		// 如果仓库在其他存储上也有文件，也在对应存储下显示
+		for _, otherID := range otherStorageIDs {
+			otherFC := countMap[[2]uint{otherID, repo.ID}]
+			otherNode := treeNode{
+				Key:          fmt.Sprintf("repo-%d-s%d", repo.ID, otherID),
+				Label:        fmt.Sprintf("%s/%s", repo.Owner, repo.Repo),
+				IsLeaf:       false,
+				Prefix:       "📁",
+				RepositoryID: repo.ID,
+				FileCount:    otherFC,
+			}
+			if _, ok := storageMap[otherID]; ok {
+				storageMap[otherID].Children = append(storageMap[otherID].Children, otherNode)
+			}
+		}
 	}
 
 	// 组装顶层节点
 	nodes := make([]treeNode, 0)
 	for _, id := range storageOrder {
 		group := storageMap[id]
-		if len(group.Children) == 0 {
-			continue
-		}
 		totalFiles := 0
 		for _, child := range group.Children {
 			totalFiles += child.FileCount
 		}
+		label := fmt.Sprintf("%s (%s)", group.Name, strings.ToUpper(group.Type))
+		if totalFiles > 0 {
+			label += fmt.Sprintf(" — %d 文件", totalFiles)
+		} else {
+			label += " — 暂无文件"
+		}
+		children := group.Children
+		if children == nil {
+			children = make([]treeNode, 0)
+		}
 		nodes = append(nodes, treeNode{
 			Key:       fmt.Sprintf("storage-%d", id),
-			Label:     fmt.Sprintf("%s (%s) — %d 文件", group.Name, strings.ToUpper(group.Type), totalFiles),
+			Label:     label,
 			IsLeaf:    false,
 			Prefix:    "💾",
 			StorageID: id,
-			Children:  group.Children,
+			Children:  children,
 		})
 	}
 
@@ -306,8 +362,8 @@ func (h *fileHandler) treeTopLevel(c *gin.Context) {
 }
 
 // treeForRepository 返回指定仓库的 版本→文件 子树
-// 显示所有 Release（包括正在同步的），资产状态为 pending/downloading/failed 的也展示
-func (h *fileHandler) treeForRepository(c *gin.Context, repoQuery string) {
+// storageFilter 参数可选，指定后只返回该存储上的文件
+func (h *fileHandler) treeForRepository(c *gin.Context, repoQuery string, storageFilter string) {
 	repoID, err := strconv.ParseUint(repoQuery, 10, 64)
 	if err != nil || repoID == 0 {
 		writeError(c, http.StatusBadRequest, "repositoryId 必须是正整数")
@@ -336,11 +392,37 @@ func (h *fileHandler) treeForRepository(c *gin.Context, repoQuery string) {
 		releaseIDs = append(releaseIDs, r.ID)
 	}
 
+	// 解析可选的 storageId 过滤参数
+	var filterStorageID *uint
+	if storageFilter != "" {
+		if sid, err := strconv.ParseUint(storageFilter, 10, 64); err == nil && sid > 0 {
+			uid := uint(sid)
+			filterStorageID = &uid
+		}
+	}
+
 	// 查询这些 Release 下的所有资产（不限状态，排除 deleted 和 skipped）
-	var assets []models.Asset
-	if err := h.db.WithContext(ctx).
+	assetQuery := h.db.WithContext(ctx).
 		Where("release_id IN ? AND status NOT IN ?", releaseIDs,
-			[]models.AssetStatus{models.AssetStatusDeleted, models.AssetStatusSkipped}).
+			[]models.AssetStatus{models.AssetStatusDeleted, models.AssetStatusSkipped})
+	if filterStorageID != nil {
+		// 查找默认存储 ID，用于处理 storage_id IS NULL 的资产
+		var defaultSID uint
+		_ = h.db.WithContext(ctx).
+			Model(&models.Storage{}).
+			Where("is_default = ?", true).
+			Order("updated_at DESC, created_at DESC").
+			Limit(1).
+			Pluck("id", &defaultSID).Error
+		if *filterStorageID == defaultSID {
+			// 请求的是默认存储：包含 storage_id = defaultSID 或 storage_id IS NULL 的资产
+			assetQuery = assetQuery.Where("storage_id = ? OR storage_id IS NULL", *filterStorageID)
+		} else {
+			assetQuery = assetQuery.Where("storage_id = ?", *filterStorageID)
+		}
+	}
+	var assets []models.Asset
+	if err := assetQuery.
 		Order("release_id, name").
 		Find(&assets).Error; err != nil {
 		writeError(c, http.StatusInternalServerError, "查询仓库文件失败")
@@ -356,6 +438,11 @@ func (h *fileHandler) treeForRepository(c *gin.Context, repoQuery string) {
 	nodes := make([]treeNode, 0, len(releases))
 	for _, release := range releases {
 		releaseAssets := assetsByRelease[release.ID]
+
+		// 按 storageId 过滤后，某些版本可能没有资产，跳过这些空版本
+		if len(releaseAssets) == 0 && filterStorageID != nil {
+			continue
+		}
 
 		// 检查该版本是否有正在进行的任务
 		var syncing bool
@@ -393,6 +480,7 @@ func (h *fileHandler) treeForRepository(c *gin.Context, repoQuery string) {
 				SHA256:       a.SHA256,
 				StoragePath:  a.StoragePath,
 				DownloadedAt: formatTime(a.DownloadedAt),
+				StorageID:    uintPtrToUint(a.StorageID),
 			})
 		}
 
@@ -434,6 +522,14 @@ func (h *fileHandler) download(c *gin.Context) {
 	}
 
 	c.Redirect(http.StatusFound, "/api/assets/"+strconv.FormatUint(assetID, 10)+"/file")
+}
+
+// uintPtrToUint 将 *uint 转为 uint，nil 返回 0
+func uintPtrToUint(v *uint) uint {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
 
 func formatTime(value *time.Time) string {

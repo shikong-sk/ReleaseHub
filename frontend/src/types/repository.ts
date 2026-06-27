@@ -9,6 +9,7 @@ export interface Repository {
   enabled: boolean
   githubTokenId: number | null
   storageId: number | null
+  storageIds: number[]
   proxyId: number | null
   providerApiBaseUrl: string
   intervalSeconds: number
@@ -32,6 +33,7 @@ export interface RepositoryPayload {
   repo: string
   githubTokenId?: number | null
   storageId?: number | null
+  storageIds?: number[]
   proxyId?: number | null
   providerApiBaseUrl?: string
   enabled?: boolean

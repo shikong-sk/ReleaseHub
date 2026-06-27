@@ -56,10 +56,16 @@ const selectedTokenId = computed<number>({
   }
 })
 
-const selectedStorageId = computed<number>({
-  get: () => form.storageId ?? 0,
-  set: (val: number) => {
-    form.storageId = val === 0 ? null : val
+const selectedStorageIds = computed<number[]>({
+  get: () => {
+    // 优先使用 storageIds，回退到 storageId
+    if (form.storageIds.length > 0) return form.storageIds
+    if (form.storageId != null) return [form.storageId]
+    return []
+  },
+  set: (val: number[]) => {
+    form.storageIds = val
+    form.storageId = val.length > 0 ? val[0] : null
   }
 })
 
@@ -76,6 +82,7 @@ const form = reactive<RepositoryPayload>({
   repo: '',
   githubTokenId: null,
   storageId: null,
+  storageIds: [] as number[],
   proxyId: null,
   providerApiBaseUrl: '',
   enabled: true,
@@ -119,9 +126,7 @@ const filterPresetOptions = computed<SelectOption[]>(() => [
 ])
 
 const storageOptions = computed<SelectOption[]>(() => {
-  const options: SelectOption[] = [
-    { label: '默认存储', value: 0 }
-  ]
+  const options: SelectOption[] = []
   for (const storage of storagesStore.items) {
     options.push({
       label: `${storage.name} (${storage.type.toUpperCase()})`,
@@ -160,6 +165,7 @@ function resetForm() {
   form.repo = props.repository?.repo ?? ''
   form.githubTokenId = props.repository?.githubTokenId ?? null
   form.storageId = props.repository?.storageId ?? null
+  form.storageIds = props.repository?.storageIds ?? []
   form.proxyId = props.repository?.proxyId ?? null
   form.providerApiBaseUrl = props.repository?.providerApiBaseUrl ?? ''
   form.enabled = props.repository?.enabled ?? true
@@ -181,6 +187,7 @@ function submit() {
     repo: form.repo.trim(),
     githubTokenId: tokenId === 0 || tokenId === null ? null : tokenId,
     storageId: storageId === 0 || storageId === null ? null : storageId,
+    storageIds: form.storageIds.length > 0 ? form.storageIds : undefined,
     proxyId: proxyId === 0 || proxyId === null ? null : proxyId,
     providerApiBaseUrl: (form.providerApiBaseUrl ?? '').trim() || undefined,
     enabled: form.enabled,
@@ -324,9 +331,10 @@ function sampleAssetNames(): string[] {
 
         <NFormItem label="存储目标">
           <NSelect
-            v-model:value="selectedStorageId"
+            v-model:value="selectedStorageIds"
             :options="storageOptions"
-            placeholder="选择存储目标"
+            multiple
+            placeholder="选择一个或多个存储目标"
           />
         </NFormItem>
 

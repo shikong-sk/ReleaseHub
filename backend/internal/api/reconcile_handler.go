@@ -85,17 +85,47 @@ func (h *reconcileHandler) reconcile(c *gin.Context) {
 	// 构建数据库资产索引：storagePath -> Asset
 	var dbAssets []models.Asset
 	if err := h.db.WithContext(ctx).
-		Where("status IN ? AND storage_path != ''",
-			[]models.AssetStatus{models.AssetStatusVerified, models.AssetStatusDownloaded}).
+		Where("status NOT IN ?", []models.AssetStatus{models.AssetStatusDeleted, models.AssetStatusSkipped}).
 		Find(&dbAssets).Error; err != nil {
 		writeError(c, http.StatusInternalServerError, "查询资产失败")
 		return
 	}
 	result.TotalDBAssets = len(dbAssets)
 
-	dbPathIndex := make(map[string]*models.Asset, len(dbAssets))
+	// 按 (存储ID, 路径) 建索引，区分不同存储上的同名文件
+	type dbKey struct {
+		StorageID uint
+		Path      string
+	}
+	dbPathIndex := make(map[dbKey]*models.Asset, len(dbAssets))
 	for i := range dbAssets {
-		dbPathIndex[dbAssets[i].StoragePath] = &dbAssets[i]
+		// 优先使用 Asset 自身的 StorageID（文件实际所在存储），回退到 Repository 配置
+		var assetStorageID uint
+		if dbAssets[i].StorageID != nil && *dbAssets[i].StorageID > 0 {
+			assetStorageID = *dbAssets[i].StorageID
+		} else {
+			// 回退：通过 Release→Repository 链推断
+			var release models.Release
+			if err := h.db.WithContext(ctx).First(&release, dbAssets[i].ReleaseID).Error; err == nil {
+				var repo models.Repository
+			if err := h.db.WithContext(ctx).First(&repo, release.RepositoryID).Error; err == nil {
+					if repo.StorageID != nil {
+						assetStorageID = *repo.StorageID
+					} else {
+						// 使用默认存储
+						for _, s := range storages {
+							if s.IsDefault {
+								assetStorageID = s.ID
+								break
+							}
+						}
+					}
+				}
+			}
+		}
+		if dbAssets[i].StoragePath != "" {
+			dbPathIndex[dbKey{StorageID: assetStorageID, Path: dbAssets[i].StoragePath}] = &dbAssets[i]
+		}
 	}
 
 	// 用于反向检测：收集每个存储实际存在的文件路径集合
@@ -118,7 +148,8 @@ func (h *reconcileHandler) reconcile(c *gin.Context) {
 			continue
 		}
 
-		storageFiles, err := lister.List(ctx, "")
+		// 只扫描 ReleaseHub 管理的 github/ 子目录，避免误报非管理文件
+		storageFiles, err := lister.List(ctx, "github")
 		if err != nil {
 			result.StorageScanErrors = append(result.StorageScanErrors,
 				fmt.Sprintf("存储 %s (%s): 扫描失败 - %v", storageModel.Name, storageModel.Type, err))
@@ -130,9 +161,15 @@ func (h *reconcileHandler) reconcile(c *gin.Context) {
 		for _, sf := range storageFiles {
 			fileSet[sf.Path] = true
 
-			// 检查 DB 中是否存在对应记录
-			if _, exists := dbPathIndex[sf.Path]; exists {
-				continue // DB 中有记录，一致
+			// 只处理 github/ 前缀下的文件，其他目录的文件不属于 ReleaseHub 管理
+			if !strings.HasPrefix(sf.Path, "github/") {
+				continue
+			}
+
+			// 检查 DB 中是否存在该存储+路径的对应记录
+			key := dbKey{StorageID: storageModel.ID, Path: sf.Path}
+			if _, exists := dbPathIndex[key]; exists {
+				continue // 该存储上有对应的 DB 记录，一致
 			}
 
 			// 存储中有文件但 DB 中没有 → MissingInDB
@@ -173,35 +210,46 @@ func (h *reconcileHandler) reconcile(c *gin.Context) {
 			continue
 		}
 
-		// 找到该资产所属的仓库，确定存储配置
-		var release models.Release
-		if err := h.db.WithContext(ctx).First(&release, asset.ReleaseID).Error; err != nil {
-			continue
-		}
-		var repo models.Repository
-		if err := h.db.WithContext(ctx).First(&repo, release.RepositoryID).Error; err != nil {
-			continue
-		}
-
-		// 确定该仓库使用的存储ID
-		storageID := repo.StorageID
-		if storageID == nil {
-			// 使用默认存储
-			var defaultStorage models.Storage
-			if err := h.db.WithContext(ctx).
-				Where("is_default = ?", true).
-				Order("updated_at DESC, created_at DESC").
-				First(&defaultStorage).Error; err != nil {
+		// 优先使用 Asset 自身的 StorageID 确定存储归属
+		var assetStorageID uint
+		if asset.StorageID != nil && *asset.StorageID > 0 {
+			assetStorageID = *asset.StorageID
+		} else {
+			// 回退：通过 Release→Repository 链推断
+			var release models.Release
+			if err := h.db.WithContext(ctx).First(&release, asset.ReleaseID).Error; err != nil {
 				continue
 			}
-			storageID = &defaultStorage.ID
+			var repo models.Repository
+			if err := h.db.WithContext(ctx).First(&repo, release.RepositoryID).Error; err != nil {
+				continue
+			}
+			if repo.StorageID != nil {
+				assetStorageID = *repo.StorageID
+			} else {
+				// 使用默认存储
+				for _, s := range storages {
+					if s.IsDefault {
+						assetStorageID = s.ID
+						break
+					}
+				}
+			}
 		}
+
+		// 用 storageID 变量统一后续代码
+		storageID := &assetStorageID
 
 		// 检查文件是否在存储文件集合中
 		fileSet, ok := storageFileSets[*storageID]
 		if !ok {
 			// 该存储未被扫描（可能不支持 List），用 Open 尝试检测
-			driver, err := h.storages.DriverForRepository(ctx, repo)
+			// 根据 assetStorageID 直接创建存储驱动
+			var storageModel models.Storage
+			if err := h.db.WithContext(ctx).First(&storageModel, assetStorageID).Error; err != nil {
+				continue
+			}
+			driver, err := storage.NewDriverFromModel(storageModel)
 			if err != nil {
 				continue
 			}
@@ -353,10 +401,10 @@ func (h *reconcileHandler) repairDB(ctx context.Context, storageModel models.Sto
 		}
 	}
 
-	// 查找或创建 Asset
+	// 查找或创建 Asset（按 release_id + name + storage_id 查找，区分不同存储上的记录）
 	var asset models.Asset
 	err = h.db.WithContext(ctx).
-		Where("release_id = ? AND name = ?", release.ID, parsed.filename).
+		Where("release_id = ? AND name = ? AND storage_id = ?", release.ID, parsed.filename, storageModel.ID).
 		First(&asset).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -367,6 +415,7 @@ func (h *reconcileHandler) repairDB(ctx context.Context, storageModel models.Sto
 				Size:         fileResult.Size,
 				StoragePath:  fileResult.Path,
 				Status:       models.AssetStatusVerified,
+				StorageID:    &storageModel.ID,
 				DownloadedAt: &now,
 			}
 			if err := h.db.WithContext(ctx).Create(&asset).Error; err != nil {
@@ -376,18 +425,30 @@ func (h *reconcileHandler) repairDB(ctx context.Context, storageModel models.Sto
 			return nil, fmt.Errorf("查询 Asset 失败: %w", err)
 		}
 	} else {
-		// Asset 已存在但可能状态不对，修正
-		if asset.Status != models.AssetStatusVerified || asset.StoragePath != fileResult.Path {
-			now := time.Now().UTC()
-			asset.StoragePath = fileResult.Path
-			asset.Status = models.AssetStatusVerified
-			asset.Size = fileResult.Size
-			asset.ErrorMessage = ""
-			asset.DownloadedAt = &now
-			if err := h.db.WithContext(ctx).Save(&asset).Error; err != nil {
-				return nil, fmt.Errorf("更新 Asset 记录失败: %w", err)
-			}
+		// Asset 已存在但 storage_path 或 status 可能不正确（预检已确认该存储文件不在 dbPathIndex 中）
+		// 强制修正为 verified 并设置正确的 StorageID 和 StoragePath
+		now := time.Now().UTC()
+		asset.StoragePath = fileResult.Path
+		asset.Status = models.AssetStatusVerified
+		asset.StorageID = &storageModel.ID
+		asset.Size = fileResult.Size
+		asset.ErrorMessage = ""
+		asset.DownloadedAt = &now
+		if err := h.db.WithContext(ctx).Save(&asset).Error; err != nil {
+			return nil, fmt.Errorf("更新 Asset 记录失败: %w", err)
 		}
+		// 返回修复结果，让上层统计修复数量
+		return &reconcileItem{
+			StorageName: storageModel.Name,
+			StorageType: storageModel.Type,
+			Path:        fileResult.Path,
+			Owner:       parsed.owner,
+			Repo:        parsed.repo,
+			Tag:         parsed.tag,
+			Filename:    parsed.filename,
+			Size:        fileResult.Size,
+			AssetID:     asset.ID,
+		}, nil
 	}
 
 	// 更新仓库的最新版本信息

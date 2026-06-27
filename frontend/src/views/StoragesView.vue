@@ -155,14 +155,9 @@ onMounted(() => {
 })
 
 function viewStorageFiles(row: StorageItem) {
-  // 默认本地存储（id=0）传 null 显示该存储下的所有文件
-  // 实际存储的 id 直接传
-  if (row.id === 0) {
-    // 从后端树节点获取默认本地存储的真实 storageId
-    fileTreeStorageId.value = null
-  } else {
-    fileTreeStorageId.value = row.id
-  }
+  // 内置默认本地存储（id=0）不存在于后端数据库，不传 storageId
+  // 其他存储直接传实际 ID
+  fileTreeStorageId.value = row.id > 0 ? row.id : null
   fileTreeTitle.value = `${row.name} - 文件浏览`
   showFileTreeModal.value = true
 }

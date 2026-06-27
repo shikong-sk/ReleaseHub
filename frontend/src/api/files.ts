@@ -13,6 +13,10 @@ export function getFileTree(): Promise<FileTreeResponse> {
   return getJson<FileTreeResponse>('/api/files/tree')
 }
 
-export function getRepositoryFileTree(repositoryId: number): Promise<FileTreeResponse> {
-  return getJson<FileTreeResponse>(`/api/files/tree?repositoryId=${repositoryId}`)
+export function getRepositoryFileTree(repositoryId: number, storageId?: number | null): Promise<FileTreeResponse> {
+  let url = `/api/files/tree?repositoryId=${repositoryId}`
+  if (storageId != null && storageId !== undefined && storageId > 0) {
+    url += `&storageId=${storageId}`
+  }
+  return getJson<FileTreeResponse>(url)
 }

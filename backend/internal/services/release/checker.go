@@ -495,6 +495,7 @@ func (s *CheckService) persistProviderReleaseWithIsLatest(ctx context.Context, r
 				Columns: []clause.Column{
 					{Name: "release_id"},
 					{Name: "name"},
+						{Name: "storage_id"},
 				},
 				DoUpdates: clause.AssignmentColumns([]string{
 					"provider_asset_id",
@@ -502,7 +503,6 @@ func (s *CheckService) persistProviderReleaseWithIsLatest(ctx context.Context, r
 					"content_type",
 					"download_url",
 					"browser_download_url",
-					"status",
 					"updated_at",
 				}),
 			}).Create(&asset).Error; err != nil {
@@ -617,6 +617,7 @@ func (s *CheckService) persistProviderReleaseWithLatest(ctx context.Context, rep
 				Columns: []clause.Column{
 					{Name: "release_id"},
 					{Name: "name"},
+						{Name: "storage_id"},
 				},
 				DoUpdates: clause.AssignmentColumns([]string{
 					"provider_asset_id",
@@ -624,7 +625,6 @@ func (s *CheckService) persistProviderReleaseWithLatest(ctx context.Context, rep
 					"content_type",
 					"download_url",
 					"browser_download_url",
-					"status",
 					"updated_at",
 				}),
 			}).Create(&asset).Error; err != nil {

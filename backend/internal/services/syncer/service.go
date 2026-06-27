@@ -13,6 +13,7 @@ import (
 	assetsvc "releasehub/backend/internal/services/asset"
 	notifysvc "releasehub/backend/internal/services/notify"
 	releasesvc "releasehub/backend/internal/services/release"
+	repositorysvc "releasehub/backend/internal/services/repository"
 	tasklogsvc "releasehub/backend/internal/services/tasklog"
 
 	"gorm.io/gorm"
@@ -130,7 +131,21 @@ func (s *Service) executeSyncRepository(ctx context.Context, repositoryID uint, 
 	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("待下载资产 %d 个（跳过 %d 个）",
 		len(assetsToDownload), len(checkResult.Assets)-len(assetsToDownload)))
 
-	downloadResults, failedAssets := s.downloadAssets(ctx, assetsToDownload)
+	// 为每个配置的存储目标分别下载
+	repoSvc := repositorysvc.NewService(s.db)
+	storageIDs, err := repoSvc.GetRepositoryStorages(ctx, repositoryID)
+	if err != nil {
+		s.failTaskWithLog(ctx, &task, err, "获取仓库存储配置失败")
+		s.notifySyncFailed(ctx, repositoryID, err)
+		return
+	}
+	if len(storageIDs) == 0 {
+		s.failTaskWithLog(ctx, &task, fmt.Errorf("仓库没有配置存储目标"), "仓库没有配置存储目标")
+		s.notifySyncFailed(ctx, repositoryID, fmt.Errorf("仓库没有配置存储目标"))
+		return
+	}
+
+	downloadResults, failedAssets := s.downloadAssetsToStorages(ctx, assetsToDownload, storageIDs)
 
 	if len(downloadResults) > 0 {
 		s.appendLog(ctx, task.ID, "info", fmt.Sprintf("已下载 %d 个资产", len(downloadResults)))
@@ -182,7 +197,21 @@ func (s *Service) executeSyncByTag(ctx context.Context, repositoryID uint, tag s
 	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("待下载资产 %d 个（跳过 %d 个）",
 		len(assetsToDownload), len(checkResult.Assets)-len(assetsToDownload)))
 
-	downloadResults, failedAssets := s.downloadAssets(ctx, assetsToDownload)
+	// 为每个配置的存储目标分别下载
+	repoSvc := repositorysvc.NewService(s.db)
+	storageIDs, err := repoSvc.GetRepositoryStorages(ctx, repositoryID)
+	if err != nil {
+		s.failTaskWithLog(ctx, &task, err, "获取仓库存储配置失败")
+		s.notifySyncFailed(ctx, repositoryID, err)
+		return
+	}
+	if len(storageIDs) == 0 {
+		s.failTaskWithLog(ctx, &task, fmt.Errorf("仓库没有配置存储目标"), "仓库没有配置存储目标")
+		s.notifySyncFailed(ctx, repositoryID, fmt.Errorf("仓库没有配置存储目标"))
+		return
+	}
+
+	downloadResults, failedAssets := s.downloadAssetsToStorages(ctx, assetsToDownload, storageIDs)
 
 	if len(downloadResults) > 0 {
 		s.appendLog(ctx, task.ID, "info", fmt.Sprintf("已下载 %d 个资产", len(downloadResults)))
@@ -218,6 +247,66 @@ func downloadableAssets(assets []models.Asset) []models.Asset {
 	}
 
 	return downloadable
+}
+
+// downloadAssetsToStorages 为每个配置的存储分别下载资产
+// 同一个资产文件会被下载到多个存储（如果仓库配置了多存储）
+func (s *Service) downloadAssetsToStorages(ctx context.Context, assets []models.Asset, storageIDs []uint) ([]assetsvc.DownloadResult, []AssetError) {
+	if len(assets) == 0 || len(storageIDs) == 0 {
+		return nil, nil
+	}
+
+	limit := s.maxConcurrentDownloads
+	if limit < 1 {
+		limit = defaultMaxConcurrentDownloads
+	}
+
+	semaphore := make(chan struct{}, limit)
+	var wg stdsync.WaitGroup
+	var mu stdsync.Mutex
+	downloadResults := make([]assetsvc.DownloadResult, 0)
+	failedAssets := make([]AssetError, 0)
+
+	// 遍历每个存储 + 每个资产，并行下载
+	for _, storageID := range storageIDs {
+		for _, asset := range assets {
+			asset := asset
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+
+				select {
+				case <-ctx.Done():
+					mu.Lock()
+					failedAssets = append(failedAssets, AssetError{
+						AssetID: asset.ID,
+						Name:    asset.Name,
+						Error:   ctx.Err().Error(),
+					})
+					mu.Unlock()
+					return
+				case semaphore <- struct{}{}:
+					defer func() { <-semaphore }()
+					}
+
+				downloadResult, err := s.assetService.DownloadToStorage(ctx, asset.ID, storageID)
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					failedAssets = append(failedAssets, AssetError{
+						AssetID: asset.ID,
+						Name:    fmt.Sprintf("%s (存储 %d)", asset.Name, storageID),
+						Error:   err.Error(),
+					})
+					return
+				}
+				downloadResults = append(downloadResults, *downloadResult)
+			}()
+		}
+	}
+
+	wg.Wait()
+	return downloadResults, failedAssets
 }
 
 func (s *Service) downloadAssets(ctx context.Context, assets []models.Asset) ([]assetsvc.DownloadResult, []AssetError) {

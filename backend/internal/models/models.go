@@ -85,6 +85,17 @@ type Repository struct {
 	CreatedAt            time.Time        `json:"createdAt" gorm:"column:created_at"`
 	UpdatedAt            time.Time        `json:"updatedAt" gorm:"column:updated_at"`
 	DeletedAt            gorm.DeletedAt   `json:"-" gorm:"column:deleted_at;index"`
+
+	// 非数据库字段，API 响应时填充
+	StorageIDs           []uint           `json:"storageIds" gorm:"-"`
+}
+
+// RepositoryStorage 仓库-存储多对多关联
+type RepositoryStorage struct {
+	ID           uint      `json:"id" gorm:"primaryKey"`
+	RepositoryID uint      `json:"repositoryId" gorm:"column:repository_id;not null;uniqueIndex:idx_repo_storage"`
+	StorageID    uint      `json:"storageId" gorm:"column:storage_id;not null;uniqueIndex:idx_repo_storage"`
+	CreatedAt    time.Time `json:"createdAt" gorm:"column:created_at"`
 }
 
 type Release struct {
@@ -107,9 +118,9 @@ type Release struct {
 
 type Asset struct {
 	ID                 uint           `json:"id" gorm:"primaryKey"`
-	ReleaseID          uint           `json:"releaseId" gorm:"column:release_id;not null;index;uniqueIndex:idx_release_asset_name"`
+	ReleaseID          uint           `json:"releaseId" gorm:"column:release_id;not null;uniqueIndex:idx_release_asset_storage"`
 	ProviderAssetID    int64          `json:"providerAssetId" gorm:"column:provider_asset_id"`
-	Name               string         `json:"name" gorm:"column:name;size:512;not null;uniqueIndex:idx_release_asset_name"`
+	Name               string         `json:"name" gorm:"column:name;size:512;not null;uniqueIndex:idx_release_asset_storage"`
 	Size               int64          `json:"size" gorm:"column:size"`
 	ContentType        string         `json:"contentType" gorm:"column:content_type;size:255"`
 	DownloadURL        string         `json:"downloadUrl" gorm:"column:download_url;size:1024"`
@@ -117,6 +128,7 @@ type Asset struct {
 	StoragePath        string         `json:"storagePath" gorm:"column:storage_path;size:1024"`
 	SHA256             string         `json:"sha256" gorm:"column:sha256;size:64"`
 	Status             AssetStatus    `json:"status" gorm:"column:status;size:40;not null;default:pending"`
+	StorageID          *uint          `json:"storageId" gorm:"column:storage_id;uniqueIndex:idx_release_asset_storage"`
 	ErrorMessage       string         `json:"errorMessage" gorm:"column:error_message;type:text"`
 	DownloadedAt       *time.Time     `json:"downloadedAt" gorm:"column:downloaded_at"`
 	CreatedAt          time.Time      `json:"createdAt" gorm:"column:created_at"`

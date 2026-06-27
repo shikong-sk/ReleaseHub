@@ -108,6 +108,7 @@ async function submitRepository(payload: RepositoryPayload) {
       await repositoryStore.update(editingRepository.value.id, {
         githubTokenId: payload.githubTokenId,
         storageId: payload.storageId,
+        storageIds: payload.storageIds,
         proxyId: payload.proxyId,
         providerApiBaseUrl: payload.providerApiBaseUrl,
         enabled: payload.enabled,
