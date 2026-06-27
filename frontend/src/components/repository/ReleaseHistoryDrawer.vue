@@ -2,9 +2,9 @@
 import { computed, h, shallowRef, watch } from 'vue'
 import { NButton, NDataTable, NDrawer, NDrawerContent, NInput, NModal, NPopconfirm, NSpace, NTag, NSpin, NAlert, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { Pin, PinOff } from 'lucide-vue-next'
+import { Pin, PinOff, Trash2 } from 'lucide-vue-next'
 
-import { listRepositoryReleases, listReleaseAssets, pinRelease, unpinRelease } from '@/api/releases'
+import { listRepositoryReleases, listReleaseAssets, pinRelease, unpinRelease, deleteRelease } from '@/api/releases'
 import { syncRepositoryByTag } from '@/api/repositories'
 import type { Release, Asset } from '@/types/release'
 import type { Repository } from '@/types/repository'
@@ -95,7 +95,7 @@ const columns = computed<DataTableColumns<Release>>(() => [
             // Pin/Unpin
             if (row.isPinned) {
               buttons.push(
-                h(NPopconfirm, {
+                h(NPopconfirm, { positiveText: "确定", negativeText: "取消",
                   onPositiveClick: () => handleUnpin(row)
                 }, {
                   trigger: () => h(NButton, {
@@ -122,6 +122,25 @@ const columns = computed<DataTableColumns<Release>>(() => [
                 })
               )
             }
+            // 删除版本
+            buttons.push(
+              h(NPopconfirm, { positiveText: "确定", negativeText: "取消",
+                onPositiveClick: () => handleDeleteRelease(row)
+              }, {
+                trigger: () => h(NButton, {
+                  size: 'small',
+                  type: 'error',
+                  secondary: true,
+                  disabled: row.isPinned
+                }, {
+                  icon: () => h(Trash2, { size: 14 }),
+                  default: () => '删除'
+                }),
+                default: () => row.isPinned
+                  ? '固定版本无法删除，请先取消固定'
+                  : `删除版本 ${row.tag}？将同时删除该版本的所有资产文件。`
+              })
+            )
           }
           return buttons
         }
@@ -187,6 +206,25 @@ async function handlePin(release: Release) {
     message.success(`已固定版本 ${release.tag}`)
   } catch (err) {
     message.error(err instanceof Error ? err.message : '固定版本失败')
+  }
+}
+
+async function handleDeleteRelease(release: Release) {
+  if (release.isPinned) {
+    message.warning('固定版本无法删除，请先取消固定')
+    return
+  }
+  try {
+    await deleteRelease(release.id)
+    releases.value = releases.value.filter(r => r.id !== release.id)
+    if (expandedReleaseId.value === release.id) {
+      expandedReleaseId.value = null
+      assets.value = []
+    }
+    message.success(`已删除版本 ${release.tag}`)
+    emit('synced')
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '删除版本失败')
   }
 }
 

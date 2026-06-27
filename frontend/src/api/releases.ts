@@ -49,3 +49,9 @@ export function unpinRelease(id: number): Promise<Release> {
     method: 'POST'
   })
 }
+
+export async function deleteRelease(id: number): Promise<void> {
+  await requestJson<void>(`/api/releases/${id}`, {
+    method: 'DELETE'
+  })
+}

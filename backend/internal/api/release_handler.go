@@ -28,6 +28,7 @@ func registerReleaseRoutes(router *gin.Engine, db *gorm.DB, storageConfig config
 	group.GET("/:id/assets", handler.listAssets)
 	group.POST("/:id/pin", handler.pinRelease)
 	group.POST("/:id/unpin", handler.unpinRelease)
+	group.DELETE("/:id", handler.deleteRelease)
 
 	assetGroup := router.Group("/api/assets")
 	assetGroup.POST("/:id/download", handler.downloadAsset)
@@ -172,4 +173,60 @@ func (h *releaseHandler) openAsset(c *gin.Context) {
 
 	c.Header("Content-Disposition", `attachment; filename="`+object.Filename+`"`)
 	c.DataFromReader(http.StatusOK, object.Size, asset.ContentType, file, nil)
+}
+
+// deleteRelease 删除指定版本及其所有资产（含存储文件）
+func (h *releaseHandler) deleteRelease(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	var release models.Release
+	if err := h.db.WithContext(ctx).First(&release, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			writeError(c, http.StatusNotFound, "Release 不存在")
+			return
+		}
+		writeError(c, http.StatusInternalServerError, "查询 Release 失败")
+		return
+	}
+
+	if release.IsPinned {
+		writeError(c, http.StatusConflict, "该版本已固定，无法删除。请先取消固定。")
+		return
+	}
+
+	// 查询该 Release 下所有资产
+	var assets []models.Asset
+	if err := h.db.WithContext(ctx).Where("release_id = ?", release.ID).Find(&assets).Error; err != nil {
+		writeError(c, http.StatusInternalServerError, "查询资产失败")
+		return
+	}
+
+	// 逐个删除资产（含存储文件）
+	for _, asset := range assets {
+		if asset.Status == models.AssetStatusVerified || asset.Status == models.AssetStatusDownloaded {
+			if err := h.assetService.Delete(ctx, asset.ID); err != nil {
+				h.db.WithContext(ctx).Model(&models.Asset{}).Where("id = ?", asset.ID).
+					Update("status", models.AssetStatusDeleted)
+			}
+		}
+	}
+
+	// 删除数据库中的资产记录
+	if err := h.db.WithContext(ctx).Where("release_id = ?", release.ID).Delete(&models.Asset{}).Error; err != nil {
+		writeError(c, http.StatusInternalServerError, "删除资产记录失败")
+		return
+	}
+
+	// 删除 Release 记录
+	if err := h.db.WithContext(ctx).Delete(&release).Error; err != nil {
+		writeError(c, http.StatusInternalServerError, "删除 Release 失败")
+		return
+	}
+
+	c.Status(http.StatusNoContent)
 }
