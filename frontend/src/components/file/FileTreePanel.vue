@@ -286,7 +286,7 @@ function formatBytes(size: number) {
       expand-on-click
       :default-expand-all="false"
       block-node
-      style="min-height: 200px; max-height: 70vh"
+      style="min-height: 200px; max-height: calc(90vh - 120px)"
     />
     <NEmpty v-else-if="!loading" description="暂无已同步文件" />
   </NSpin>

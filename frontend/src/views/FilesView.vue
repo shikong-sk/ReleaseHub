@@ -1,21 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, shallowRef } from 'vue'
-import { NAlert, NButton, NCard, NCollapse, NCollapseItem, NGrid, NGi, NInput, NRadioButton, NRadioGroup, NSpace, NStatistic, NSwitch, NTag, useMessage } from 'naive-ui'
-import { RefreshCw, Search, Database, Trash2, Wrench } from 'lucide-vue-next'
+import { onMounted, shallowRef } from 'vue'
+import { NAlert, NButton, NCard, NCollapse, NCollapseItem, NGrid, NGi, NInput, NSpace, NStatistic, NSwitch, NTag, useMessage } from 'naive-ui'
+import { FolderOpen, RefreshCw, Search, Database } from 'lucide-vue-next'
 
-import FileTable from '@/components/file/FileTable.vue'
-import FileTreePanel from '@/components/file/FileTreePanel.vue'
+import FileTreeModal from '@/components/file/FileTreeModal.vue'
 import { useFilesStore } from '@/stores/files'
-import { getFileTree } from '@/api/files'
-import type { FileTreeNode } from '@/types/file'
+
 import { search as apiSearch, type SearchResult } from '@/api/search'
 import { runReconcile, type ReconcileItem, type ReconcileResult } from '@/api/reconcile'
-import { deleteAsset } from '@/api/releases'
 import { useAuthStore } from '@/stores/auth'
-import type { FileItem } from '@/types/file'
 
 const filesStore = useFilesStore()
-const localSearch = shallowRef('')
+
 const globalQuery = shallowRef('')
 const message = useMessage()
 const globalLoading = shallowRef(false)
@@ -27,37 +23,12 @@ const reconcileResult = shallowRef<ReconcileResult | null>(null)
 const reconcileDryRun = shallowRef(true)
 const authStore = useAuthStore()
 
-const viewMode = shallowRef<'tree' | 'table'>('tree')
-const fileTree = shallowRef<FileTreeNode[]>([])
-const fileTreeLoading = shallowRef(false)
-
-const filteredFiles = computed(() => {
-  const keyword = localSearch.value.trim().toLowerCase()
-  if (!keyword) {
-    return filesStore.items
-  }
-
-  return filesStore.items.filter((item) =>
-    `${item.owner}/${item.repo}/${item.tag}/${item.name}`.toLowerCase().includes(keyword)
-  )
-})
+// 全屏文件树弹窗
+const showFileTreeModal = shallowRef(false)
 
 onMounted(() => {
   void filesStore.refresh()
-  void loadFileTree()
 })
-
-async function loadFileTree() {
-  fileTreeLoading.value = true
-  try {
-    const result = await getFileTree()
-    fileTree.value = result.tree ?? []
-  } catch {
-    // 树加载失败不影响平铺视图
-  } finally {
-    fileTreeLoading.value = false
-  }
-}
 
 function formatBytes(size: number) {
   if (size < 1024) {
@@ -92,24 +63,12 @@ async function handleReconcile() {
       const repaired = reconcileResult.value.repairedInDB.length
       const reset = reconcileResult.value.resetToPending.length
       message.success(`修复完成：修复 ${repaired} 条记录，重置 ${reset} 条记录。`)
-      // 修复后刷新文件列表和树
       void filesStore.refresh()
-      void loadFileTree()
     }
   } catch (err) {
     reconcileError.value = err instanceof Error ? err.message : '对账失败'
   } finally {
     reconcileLoading.value = false
-  }
-}
-
-async function handleDeleteFile(file: FileItem) {
-  try {
-    await deleteAsset(file.assetId)
-    message.success(`${file.name} 已删除`)
-    void filesStore.refresh()
-  } catch (err) {
-    message.error(err instanceof Error ? err.message : '删除失败')
   }
 }
 
@@ -139,6 +98,10 @@ async function handleGlobalSearch() {
         <NButton secondary :loading="filesStore.loading" @click="filesStore.refresh">
           <template #icon><RefreshCw /></template>
           刷新
+        </NButton>
+        <NButton type="primary" @click="showFileTreeModal = true">
+          <template #icon><FolderOpen /></template>
+          浏览文件树
         </NButton>
         <template v-if="authStore.canAdmin">
           <NSpace align="center" :size="6">
@@ -239,7 +202,7 @@ async function handleGlobalSearch() {
         </NGi>
       </NGrid>
 
-      <!-- 存储缺失文件（DB有记录但存储无文件） -->
+      <!-- 存储缺失文件 -->
       <template v-if="reconcileResult.missingInStorage.length">
         <h4 style="color: #cf1322; margin: 0 0 8px">存储缺失（{{ reconcileResult.missingInStorage.length }}）</h4>
         <p style="color: #667085; font-size: 13px; margin: 0 0 8px">数据库中有记录但存储中找不到对应文件，{{ reconcileResult.dryRun ? '预检模式不会修改数据' : '已将状态重置为待下载' }}。</p>
@@ -252,7 +215,7 @@ async function handleGlobalSearch() {
         </div>
       </template>
 
-      <!-- 数据库缺失记录（存储有文件但DB无记录） -->
+      <!-- 数据库缺失记录 -->
       <template v-if="reconcileResult.missingInDB.length">
         <h4 style="color: #fa8c16; margin: 16px 0 8px">数据库缺失（{{ reconcileResult.missingInDB.length }}）</h4>
         <p style="color: #667085; font-size: 13px; margin: 0 0 8px">存储中有文件但数据库中无对应记录，{{ reconcileResult.dryRun ? '预检模式不会修改数据' : '已在数据库中补建记录' }}。</p>
@@ -298,26 +261,11 @@ async function handleGlobalSearch() {
       </NAlert>
     </NCard>
 
-    <NCard :bordered="false" title="本地文件">
-      <template #header-extra>
-        <NRadioGroup v-model:value="viewMode" size="small">
-          <NRadioButton value="tree">树状</NRadioButton>
-          <NRadioButton value="table">列表</NRadioButton>
-        </NRadioGroup>
-      </template>
-      <template v-if="viewMode === 'tree'">
-        <FileTreePanel
-          :tree="fileTree"
-          :loading="fileTreeLoading"
-          :can-write="authStore.canWrite"
-          @refresh="loadFileTree"
-        />
-      </template>
-      <template v-else>
-        <NInput v-model:value="localSearch" class="file-search" clearable placeholder="搜索 owner/repo/tag/name" />
-        <FileTable class="file-table" :files="filteredFiles" :loading="filesStore.loading" :can-write="authStore.canWrite" @delete="handleDeleteFile" />
-      </template>
-    </NCard>
+    <!-- 全屏文件树弹窗 -->
+    <FileTreeModal
+      v-model:show="showFileTreeModal"
+      title="文件浏览"
+    />
   </main>
 </template>
 
@@ -378,14 +326,6 @@ async function handleGlobalSearch() {
   color: #667085;
   font-size: 13px;
   margin: 8px 0 0;
-}
-
-.file-search {
-  max-width: 420px;
-}
-
-.file-table {
-  margin-top: 16px;
 }
 
 .reconcile-list {

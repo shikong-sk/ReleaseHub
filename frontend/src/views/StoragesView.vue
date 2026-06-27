@@ -15,13 +15,11 @@ import {
   NTag,
   useMessage
 } from 'naive-ui'
-import { Plus, RefreshCw } from 'lucide-vue-next'
+import { FolderOpen, Plus, RefreshCw } from 'lucide-vue-next'
 import type { DataTableColumns } from 'naive-ui'
 
-import FileTreePanel from '@/components/file/FileTreePanel.vue'
+import FileTreeModal from '@/components/file/FileTreeModal.vue'
 import { getAppConfig } from '@/api/settings'
-import { getFileTree } from '@/api/files'
-import type { FileTreeNode } from '@/types/file'
 import { useStoragesStore } from '@/stores/storages'
 import type { StorageItem, StorageType } from '@/types/storage'
 
@@ -44,9 +42,10 @@ const formPassword = shallowRef('')
 const formRemoteUrl = shallowRef('')
 const defaultDataDir = shallowRef('data/releases')
 
-const showFilesForStorage = shallowRef<number | null>(null)
-const fileTree = shallowRef<FileTreeNode[]>([])
-const fileTreeLoading = shallowRef(false)
+// 全屏文件树弹窗
+const showFileTreeModal = shallowRef(false)
+const fileTreeStorageId = shallowRef<number | null>(null)
+const fileTreeTitle = shallowRef('文件浏览')
 
 const typeOptions = [
   { label: '本地存储', value: 'local' },
@@ -108,7 +107,7 @@ const storageColumns = computed<DataTableColumns<StorageItem>>(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 240,
+    width: 280,
     render: (row) =>
       h(NSpace, null, {
         default: () => [
@@ -130,12 +129,12 @@ const storageColumns = computed<DataTableColumns<StorageItem>>(() => [
           ),
           h(
             NButton,
-            { size: 'small', secondary: true, onClick: () => viewStorageFiles(row.id) },
-            { default: () => '文件' }
+            { size: 'small', secondary: true, onClick: () => viewStorageFiles(row) },
+            { icon: () => h(FolderOpen, { size: 14 }), default: () => '文件' }
           ),
           h(
             NPopconfirm,
-            { onPositiveClick: () => handleDelete(row.id) },
+            { positiveText: '确定', negativeText: '取消', onPositiveClick: () => handleDelete(row.id) },
             {
               trigger: () => h(NButton, { size: 'small', type: 'error', secondary: true, disabled: row.builtin, loading: storagesStore.saving }, { default: () => '删除' }),
               default: () => `删除存储 "${row.name}"？`
@@ -153,29 +152,19 @@ const showLocalFields = computed(() => formType.value === 'local')
 onMounted(() => {
   void storagesStore.refresh()
   void loadConfig()
-  void loadFileTree()
 })
 
-async function loadFileTree() {
-  fileTreeLoading.value = true
-  try {
-    const result = await getFileTree()
-    fileTree.value = result.tree ?? []
-  } catch {
-    // 加载失败不阻塞存储配置页
-  } finally {
-    fileTreeLoading.value = false
+function viewStorageFiles(row: StorageItem) {
+  // 默认本地存储（id=0）传 null 显示该存储下的所有文件
+  // 实际存储的 id 直接传
+  if (row.id === 0) {
+    // 从后端树节点获取默认本地存储的真实 storageId
+    fileTreeStorageId.value = null
+  } else {
+    fileTreeStorageId.value = row.id
   }
-}
-
-function viewStorageFiles(storageId: number | null) {
-  // 对于虚拟的默认本地存储（id=0），从树中找 local 类型存储节点的 storageId
-  if (storageId === 0) {
-    const localNode = fileTree.value.find((n) => n.storageId != null)
-    showFilesForStorage.value = localNode?.storageId ?? 0
-    return
-  }
-  showFilesForStorage.value = storageId
+  fileTreeTitle.value = `${row.name} - 文件浏览`
+  showFileTreeModal.value = true
 }
 
 async function loadConfig() {
@@ -311,21 +300,12 @@ async function handleTest(id: number) {
       />
     </NCard>
 
-    <NCard v-if="showFilesForStorage !== null" :bordered="false">
-      <template #header>
-        <span>存储文件 — {{ storagesStore.items.find((s) => s.id === showFilesForStorage)?.name ?? '默认本地存储' }}</span>
-      </template>
-      <template #header-extra>
-        <NButton size="small" secondary @click="showFilesForStorage = null">关闭</NButton>
-      </template>
-      <FileTreePanel
-        :tree="fileTree"
-        :loading="fileTreeLoading"
-        :can-write="true"
-        :storage-id="showFilesForStorage === 0 ? 0 : showFilesForStorage"
-        @refresh="loadFileTree"
-      />
-    </NCard>
+    <!-- 全屏文件树弹窗 -->
+    <FileTreeModal
+      v-model:show="showFileTreeModal"
+      :storage-id="fileTreeStorageId"
+      :title="fileTreeTitle"
+    />
 
     <NModal v-model:show="showModal" preset="dialog" :title="editingId ? '编辑存储' : '添加存储'" :positive-text="editingId ? '保存' : '添加'" negative-text="取消" @positive-click="handleSubmit">
       <NForm label-placement="left" label-width="auto">
