@@ -169,6 +169,12 @@ async function loadFileTree() {
 }
 
 function viewStorageFiles(storageId: number | null) {
+  // 对于虚拟的默认本地存储（id=0），从树中找 local 类型存储节点的 storageId
+  if (storageId === 0) {
+    const localNode = fileTree.value.find((n) => n.storageId != null)
+    showFilesForStorage.value = localNode?.storageId ?? 0
+    return
+  }
   showFilesForStorage.value = storageId
 }
 

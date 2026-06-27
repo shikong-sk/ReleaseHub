@@ -153,6 +153,9 @@ type treeNode struct {
 	Children []treeNode `json:"children,omitempty"`
 	Prefix   string     `json:"prefix,omitempty"`
 
+	// 存储层附加字段
+	StorageID    uint   `json:"storageId,omitempty"`
+
 	// 仓库层附加字段
 	RepositoryID uint `json:"repositoryId,omitempty"`
 	FileCount    int  `json:"fileCount,omitempty"`
@@ -202,8 +205,9 @@ func (h *fileHandler) treeTopLevel(c *gin.Context) {
 		countMap[rc.RepositoryID] = rc.FileCount
 	}
 
-	// 预加载存储名称
+	// 预加载存储名称，同时查找默认存储 ID
 	storagesByID := map[uint]models.Storage{}
+	var defaultStorageID uint
 	{
 		var storages []models.Storage
 		if err := h.db.WithContext(c.Request.Context()).Find(&storages).Error; err != nil {
@@ -212,7 +216,24 @@ func (h *fileHandler) treeTopLevel(c *gin.Context) {
 		}
 		for _, s := range storages {
 			storagesByID[s.ID] = s
+			if s.IsDefault && defaultStorageID == 0 {
+				defaultStorageID = s.ID
+			}
 		}
+	}
+
+	// resolveStorageID 将仓库的 StorageID 解析为实际存储 ID
+	// StorageID 为 nil 时使用默认存储 ID；找不到存储记录时返回 0（默认本地存储）
+	resolveStorageID := func(repo *models.Repository) uint {
+		if repo.StorageID != nil {
+			if _, ok := storagesByID[*repo.StorageID]; ok {
+				return *repo.StorageID
+			}
+		}
+		if defaultStorageID != 0 {
+			return defaultStorageID
+		}
+		return 0
 	}
 
 	// 按 storage 分组构建树
@@ -231,19 +252,14 @@ func (h *fileHandler) treeTopLevel(c *gin.Context) {
 	storageOrder = append(storageOrder, 0)
 
 	for _, repo := range repos {
-		var groupID uint
+		groupID := resolveStorageID(&repo)
 		var groupName string
 		var groupType string
 
-		if repo.StorageID != nil {
-			if s, ok := storagesByID[*repo.StorageID]; ok {
-				groupID = s.ID
-				groupName = s.Name
-				groupType = s.Type
-			}
-		}
-
-		if groupID == 0 {
+		if s, ok := storagesByID[groupID]; ok {
+			groupName = s.Name
+			groupType = s.Type
+		} else {
 			groupName = "默认本地存储"
 			groupType = "local"
 		}
@@ -277,11 +293,12 @@ func (h *fileHandler) treeTopLevel(c *gin.Context) {
 			totalFiles += child.FileCount
 		}
 		nodes = append(nodes, treeNode{
-			Key:      fmt.Sprintf("storage-%d", id),
-			Label:    fmt.Sprintf("%s (%s) — %d 文件", group.Name, strings.ToUpper(group.Type), totalFiles),
-			IsLeaf:   false,
-			Prefix:   "💾",
-			Children: group.Children,
+			Key:       fmt.Sprintf("storage-%d", id),
+			Label:     fmt.Sprintf("%s (%s) — %d 文件", group.Name, strings.ToUpper(group.Type), totalFiles),
+			IsLeaf:    false,
+			Prefix:    "💾",
+			StorageID: id,
+			Children:  group.Children,
 		})
 	}
 

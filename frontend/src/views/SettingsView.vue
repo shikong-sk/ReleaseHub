@@ -10,9 +10,11 @@ import {
   NForm,
   NFormItem,
   NInput,
+  NInputNumber,
   NModal,
   NPopconfirm,
   NSpace,
+  NSwitch,
   NTag,
   NTooltip,
   useMessage
@@ -20,7 +22,7 @@ import {
 import { Activity, Plus, RefreshCw } from 'lucide-vue-next'
 import type { DataTableColumns } from 'naive-ui'
 
-import { getAppConfig } from '@/api/settings'
+import { getAppConfig, updateAppConfig, type AppConfigUpdate } from '@/api/settings'
 import APIKeyPanel from '@/components/settings/APIKeyPanel.vue'
 import { checkTokenHealth, checkTokenRateLimit, type TokenHealthResult } from '@/api/tokens'
 import { useTokensStore } from '@/stores/tokens'
@@ -36,6 +38,14 @@ const schedulerMaxConcurrent = shallowRef(5)
 const storageDataDir = shallowRef('')
 const githubApiBaseUrl = shallowRef('')
 const authEnabled = shallowRef(false)
+const configSaving = shallowRef(false)
+const configEditing = shallowRef(false)
+
+// 编辑表单的临时值
+const editSchedulerEnabled = shallowRef(false)
+const editSchedulerTickSeconds = shallowRef(60)
+const editSchedulerMaxConcurrent = shallowRef(5)
+const editGithubApiBaseUrl = shallowRef('')
 
 const showModal = shallowRef(false)
 const formName = shallowRef('')
@@ -109,10 +119,67 @@ onMounted(async () => {
     githubApiBaseUrl.value = config.githubApiBaseUrl
     authEnabled.value = config.authEnabled
     configLoaded.value = true
+    resetEditForm()
   } catch {
     // 配置加载失败不影响页面
   }
 })
+
+function resetEditForm() {
+  editSchedulerEnabled.value = schedulerEnabled.value
+  editSchedulerTickSeconds.value = schedulerTickSeconds.value
+  editSchedulerMaxConcurrent.value = schedulerMaxConcurrent.value
+  editGithubApiBaseUrl.value = githubApiBaseUrl.value
+}
+
+function startEditConfig() {
+  resetEditForm()
+  configEditing.value = true
+}
+
+function cancelEditConfig() {
+  configEditing.value = false
+}
+
+// 保存配置修改
+async function saveConfig() {
+  configSaving.value = true
+  try {
+    const update: AppConfigUpdate = {}
+    if (editSchedulerEnabled.value !== schedulerEnabled.value) {
+      update.schedulerEnabled = editSchedulerEnabled.value
+    }
+    if (editSchedulerTickSeconds.value !== schedulerTickSeconds.value) {
+      update.schedulerTickSeconds = editSchedulerTickSeconds.value
+    }
+    if (editSchedulerMaxConcurrent.value !== schedulerMaxConcurrent.value) {
+      update.schedulerMaxConcurrent = editSchedulerMaxConcurrent.value
+    }
+    if (editGithubApiBaseUrl.value !== githubApiBaseUrl.value) {
+      update.githubApiBaseUrl = editGithubApiBaseUrl.value
+    }
+
+    // 没有变更则直接退出编辑
+    if (Object.keys(update).length === 0) {
+      configEditing.value = false
+      return
+    }
+
+    const result = await updateAppConfig(update)
+    schedulerEnabled.value = result.schedulerEnabled
+    schedulerTickSeconds.value = result.schedulerTickSeconds
+    schedulerMaxConcurrent.value = result.schedulerMaxConcurrent
+    storageDataDir.value = result.storageDataDir
+    githubApiBaseUrl.value = result.githubApiBaseUrl
+    authEnabled.value = result.authEnabled
+    configEditing.value = false
+    message.success('配置已更新')
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '更新配置失败')
+  } finally {
+    configSaving.value = false
+  }
+}
 
 function openCreateModal() {
   formName.value = ''
@@ -165,7 +232,7 @@ async function handleDelete(id: number) {
   <main class="settings-page">
     <section class="settings-heading">
       <h1>设置</h1>
-      <p>管理访问凭据、查看全局配置。</p>
+      <p>管理访问凭据、修改全局配置。</p>
     </section>
 
     <NCard title="GitHub Token" :bordered="false">
@@ -196,7 +263,24 @@ async function handleDelete(id: number) {
     <APIKeyPanel />
 
     <NCard v-if="configLoaded" title="全局配置" :bordered="false">
-      <NDescriptions :column="2" bordered label-placement="left">
+      <template #header-extra>
+        <NSpace>
+          <NButton v-if="!configEditing" secondary @click="startEditConfig">
+            编辑配置
+          </NButton>
+          <template v-else>
+            <NButton secondary @click="cancelEditConfig">
+              取消
+            </NButton>
+            <NButton type="primary" :loading="configSaving" @click="saveConfig">
+              保存
+            </NButton>
+          </template>
+        </NSpace>
+      </template>
+
+      <!-- 只读展示模式 -->
+      <NDescriptions v-if="!configEditing" :column="2" bordered label-placement="left">
         <NDescriptionsItem label="认证">
           <NTag :type="authEnabled ? 'success' : 'default'">
             {{ authEnabled ? '已启用' : '已禁用' }}
@@ -220,6 +304,26 @@ async function handleDelete(id: number) {
           {{ githubApiBaseUrl }}
         </NDescriptionsItem>
       </NDescriptions>
+
+      <!-- 编辑模式 -->
+      <NForm v-else label-placement="left" label-width="120">
+        <NFormItem label="Scheduler">
+          <NSwitch v-model:value="editSchedulerEnabled" />
+        </NFormItem>
+        <NFormItem label="扫描间隔">
+          <NInputNumber v-model:value="editSchedulerTickSeconds" :min="10" :step="10" />
+          <span style="margin-left: 8px; color: #8c8c8c">秒</span>
+        </NFormItem>
+        <NFormItem label="最大并发">
+          <NInputNumber v-model:value="editSchedulerMaxConcurrent" :min="1" :max="50" />
+        </NFormItem>
+        <NFormItem label="GitHub API">
+          <NInput v-model:value="editGithubApiBaseUrl" placeholder="https://api.github.com" />
+        </NFormItem>
+        <NAlert type="info" style="margin-top: 8px">
+          认证开关和存储目录为环境变量配置，需重启服务生效，暂不支持在线修改。
+        </NAlert>
+      </NForm>
     </NCard>
 
     <NModal v-model:show="showModal" preset="dialog" title="添加 GitHub Token" positive-text="添加" negative-text="取消" @positive-click="handleCreate">

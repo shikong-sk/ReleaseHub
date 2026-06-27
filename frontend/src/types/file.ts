@@ -22,14 +22,17 @@ export interface FileTreeNode {
   prefix?: string
   children?: FileTreeNode[]
 
-  // 仓库层
+  // 存储层附加字段
+  storageId?: number
+
+  // 仓库层附加字段
   repositoryId?: number
   fileCount?: number
 
-  // 版本层
+  // 版本层附加字段
   releaseId?: number
 
-  // 文件叶节点
+  // 文件叶节点附加字段
   status?: string
   assetId?: number
   size?: number

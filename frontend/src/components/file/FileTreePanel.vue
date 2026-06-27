@@ -53,7 +53,7 @@ watch(
 
     const source = storageId == null
       ? rawTree
-      : (rawTree ?? []).filter((n) => n.key === `storage-${storageId}`)
+      : (rawTree ?? []).filter((n) => n.storageId === storageId)
     localTree.value = mergeIncoming(source, localTree.value)
   },
   { immediate: true }
