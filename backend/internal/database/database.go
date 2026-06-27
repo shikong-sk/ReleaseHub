@@ -106,3 +106,33 @@ func hashPassword(password string) (string, error) {
 	}
 	return string(hash), nil
 }
+
+
+// SeedDefaultStorage 确保数据库中存在一条默认本地存储记录。
+// 如果没有 is_default=true 的存储配置，自动创建一条指向 data/releases 的本地存储。
+func SeedDefaultStorage(db *gorm.DB, dataDir string) error {
+	var count int64
+	if err := db.Model(&models.Storage{}).Where("is_default = ?", true).Count(&count).Error; err != nil {
+		return fmt.Errorf("查询默认存储失败: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+
+	basePath := dataDir
+	if basePath == "" {
+		basePath = "./data/releases"
+	}
+
+	defaultStorage := models.Storage{
+		Name:      "默认本地存储",
+		Type:      "local",
+		BasePath:  basePath,
+		IsDefault: true,
+	}
+	if err := db.Create(&defaultStorage).Error; err != nil {
+		return fmt.Errorf("创建默认本地存储失败: %w", err)
+	}
+
+	return nil
+}

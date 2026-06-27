@@ -53,6 +53,10 @@ func main() {
 		logger.Warn("创建默认管理员失败", zap.Error(err))
 	}
 
+	if err := database.SeedDefaultStorage(db, cfg.Storage.DataDir); err != nil {
+		logger.Warn("创建默认本地存储失败", zap.Error(err))
+	}
+
 	router := api.NewRouter(api.Dependencies{
 		Config: cfg,
 		DB:     db,

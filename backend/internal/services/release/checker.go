@@ -142,14 +142,14 @@ func (s *CheckService) CheckByTag(ctx context.Context, repositoryID uint, tag st
 		return nil, fmt.Errorf("资产过滤规则无效: %w", err)
 	}
 
-	result, err := s.persistProviderRelease(ctx, repository, task, providerRelease, matcher)
+	result, err := s.persistProviderReleaseWithIsLatest(ctx, repository, task, providerRelease, matcher, false)
 	if err != nil {
 		s.failTaskWithLog(ctx, &task, err, "持久化 Release 数据失败")
 		return nil, err
 	}
 
-	// 更新仓库状态为健康
-	s.markRepositoryHealthy(ctx, repository.ID, providerRelease.TagName)
+	// 同步历史版本不更新仓库的 lastReleaseTag，仅更新状态为健康
+	s.markRepositoryHealthy(ctx, repository.ID, repository.LastReleaseTag)
 
 	// 标记任务成功
 	now := time.Now().UTC()
@@ -220,14 +220,14 @@ func (s *CheckService) CheckLatest(ctx context.Context, repositoryID uint) (*Che
 		return nil, fmt.Errorf("资产过滤规则无效: %w", err)
 	}
 
-	result, err := s.persistProviderRelease(ctx, repository, task, providerRelease, matcher)
+	result, err := s.persistProviderReleaseWithIsLatest(ctx, repository, task, providerRelease, matcher, false)
 	if err != nil {
 		s.failTaskWithLog(ctx, &task, err, "持久化 Release 数据失败")
 		return nil, err
 	}
 
-	// 更新仓库状态为健康
-	s.markRepositoryHealthy(ctx, repository.ID, providerRelease.TagName)
+	// 同步历史版本不更新仓库的 lastReleaseTag，仅更新状态为健康
+	s.markRepositoryHealthy(ctx, repository.ID, repository.LastReleaseTag)
 
 	if s.retention != nil {
 		s.appendLog(ctx, task.ID, "info", "执行保留策略清理旧版本")
@@ -405,15 +405,18 @@ func (s *CheckService) resolveProvider(ctx context.Context, repository models.Re
 }
 
 // persistProviderRelease 将 ProviderRelease 持久化到数据库
-func (s *CheckService) persistProviderRelease(ctx context.Context, repository models.Repository, task models.Task, pRelease *provider.ProviderRelease, matcher *filter.Matcher) (*CheckResult, error) {
+func (s *CheckService) persistProviderReleaseWithIsLatest(ctx context.Context, repository models.Repository, task models.Task, pRelease *provider.ProviderRelease, matcher *filter.Matcher, isLatest bool) (*CheckResult, error) {
 	now := time.Now().UTC()
 	result := &CheckResult{}
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&models.Release{}).
-			Where("repository_id = ?", repository.ID).
-			Update("is_latest", false).Error; err != nil {
-			return err
+		// 仅当 isLatest=true 时清除其他版本的 is_latest 标记并设当前版本为最新
+		if isLatest {
+			if err := tx.Model(&models.Release{}).
+				Where("repository_id = ?", repository.ID).
+				Update("is_latest", false).Error; err != nil {
+				return err
+			}
 		}
 
 		publishedAt := pRelease.PublishedAt
@@ -426,7 +429,7 @@ func (s *CheckService) persistProviderRelease(ctx context.Context, repository mo
 			Body:              pRelease.Body,
 			HTMLURL:           pRelease.HTMLURL,
 			APIURL:            pRelease.APIURL,
-			IsLatest:          true,
+			IsLatest:          isLatest,
 			SyncStatus:        "checked",
 		}
 
