@@ -192,7 +192,7 @@ func (h *repositoryHandler) syncLatest(c *gin.Context) {
 		return
 	}
 
-	result, err := h.syncService.SyncRepository(c.Request.Context(), id)
+	result, err := h.syncService.EnqueueSyncRepository(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error":  err.Error(),
@@ -229,7 +229,7 @@ func (h *repositoryHandler) syncByTag(c *gin.Context) {
 		return
 	}
 
-	result, err := h.syncService.SyncByTag(c.Request.Context(), id, input.Tag)
+	result, err := h.syncService.EnqueueSyncByTag(c.Request.Context(), id, input.Tag)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error":  err.Error(),

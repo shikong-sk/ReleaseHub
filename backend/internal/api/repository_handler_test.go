@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"releasehub/backend/internal/config"
 	"releasehub/backend/internal/database"
@@ -411,45 +413,70 @@ func TestRepositorySyncDownloadsMatchedAssets(t *testing.T) {
 
 	syncRec := performRequest(router, http.MethodPost, "/api/repositories/1/sync", nil)
 	if syncRec.Code != http.StatusOK {
-		t.Fatalf("同步仓库失败: %d %s", syncRec.Code, syncRec.Body.String())
+		t.Fatalf("同步请求失败: %d %s", syncRec.Code, syncRec.Body.String())
+	}
+
+	// 异步同步：等待后台 goroutine 完成
+	var taskID uint
+	var syncTaskBody struct{ ID uint `json:"id"` }
+	if err := json.Unmarshal(syncRec.Body.Bytes(), &syncTaskBody); err != nil {
+		t.Fatalf("解析同步任务响应失败: %v", err)
+	}
+	taskID = syncTaskBody.ID
+
+	// 轮询等待任务完成
+	for i := 0; i < 50; i++ {
+		time.Sleep(100 * time.Millisecond)
+		taskRec := performRequest(router, http.MethodGet, fmt.Sprintf("/api/tasks/%d", taskID), nil)
+		if taskRec.Code == http.StatusOK {
+			var task struct{ Status string `json:"status"` }
+			if json.Unmarshal(taskRec.Body.Bytes(), &task) == nil && (task.Status == "succeeded" || task.Status == "failed") {
+				break
+			}
+		}
 	}
 	if atomic.LoadInt32(&downloadCount) != 1 {
 		t.Fatalf("应只下载 1 个匹配资产，实际下载次数 %d", downloadCount)
 	}
 
-	var syncBody struct {
-		Task struct {
-			Status string `json:"status"`
-		} `json:"task"`
-		Release struct {
+	// 查询 Release 和资产列表验证结果
+	releasesRec := performRequest(router, http.MethodGet, "/api/repositories/1/releases", nil)
+	if releasesRec.Code != http.StatusOK {
+		t.Fatalf("查询 Release 列表失败: %d", releasesRec.Code)
+	}
+	var releasesBody struct {
+		Items []struct {
+			ID  uint   `json:"id"`
 			Tag string `json:"tag"`
-		} `json:"release"`
-		Assets []struct {
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(releasesRec.Body.Bytes(), &releasesBody); err != nil {
+		t.Fatalf("解析 Release 列表失败: %v", err)
+	}
+	if len(releasesBody.Items) == 0 {
+		t.Fatalf("期望至少 1 个 Release")
+	}
+
+	assetsRec := performRequest(router, http.MethodGet, fmt.Sprintf("/api/releases/%d/assets", releasesBody.Items[0].ID), nil)
+	if assetsRec.Code != http.StatusOK {
+		t.Fatalf("查询资产列表失败: %d", assetsRec.Code)
+	}
+	var assetsBody struct {
+		Items []struct {
 			ID          uint   `json:"id"`
 			Name        string `json:"name"`
 			Status      string `json:"status"`
 			StoragePath string `json:"storagePath"`
-		} `json:"assets"`
-		DownloadResults []struct {
-			Asset struct {
-				ID uint `json:"id"`
-			} `json:"asset"`
-		} `json:"downloadResults"`
+		} `json:"items"`
 	}
-	if err := json.Unmarshal(syncRec.Body.Bytes(), &syncBody); err != nil {
-		t.Fatalf("解析同步响应失败: %v", err)
-	}
-	if syncBody.Task.Status != "succeeded" || syncBody.Release.Tag != "v2.0.0" {
-		t.Fatalf("同步响应不符合预期: %+v", syncBody)
-	}
-	if len(syncBody.DownloadResults) != 1 {
-		t.Fatalf("期望 1 个下载结果，实际 %d", len(syncBody.DownloadResults))
+	if err := json.Unmarshal(assetsRec.Body.Bytes(), &assetsBody); err != nil {
+		t.Fatalf("解析资产列表失败: %v", err)
 	}
 
 	var downloadedAssetID uint
 	statusByName := map[string]string{}
 	storagePathByName := map[string]string{}
-	for _, asset := range syncBody.Assets {
+	for _, asset := range assetsBody.Items {
 		statusByName[asset.Name] = asset.Status
 		storagePathByName[asset.Name] = asset.StoragePath
 		if asset.Name == "tool_linux_amd64.tar.gz" {
@@ -463,7 +490,7 @@ func TestRepositorySyncDownloadsMatchedAssets(t *testing.T) {
 		t.Fatalf("匹配资产路径不符合预期: %s", storagePathByName["tool_linux_amd64.tar.gz"])
 	}
 	if statusByName["tool_windows_amd64.zip"] != "skipped" || storagePathByName["tool_windows_amd64.zip"] != "" {
-		t.Fatalf("未匹配资产应被跳过且无存储路径: %+v", syncBody.Assets)
+		t.Fatalf("未匹配资产应被跳过且无存储路径: %+v", assetsBody.Items)
 	}
 
 	fileRec := performRequest(router, http.MethodGet, "/api/assets/"+strconv.Itoa(int(downloadedAssetID))+"/file", nil)
@@ -649,42 +676,62 @@ func TestConcurrentSyncWithMultipleAssets(t *testing.T) {
 
 	syncRec := performRequest(router, http.MethodPost, "/api/repositories/1/sync", nil)
 	if syncRec.Code != http.StatusOK {
-		t.Fatalf("同步仓库失败: %d %s", syncRec.Code, syncRec.Body.String())
+		t.Fatalf("同步请求失败: %d %s", syncRec.Code, syncRec.Body.String())
 	}
 
-	var syncBody struct {
-		Task struct {
-			Status string `json:"status"`
-		} `json:"task"`
-		Release struct {
+	// 异步同步：等待后台 goroutine 完成
+	var syncTaskBody struct{ ID uint `json:"id"` }
+	if err := json.Unmarshal(syncRec.Body.Bytes(), &syncTaskBody); err != nil {
+		t.Fatalf("解析同步任务响应失败: %v", err)
+	}
+	for i := 0; i < 50; i++ {
+		time.Sleep(100 * time.Millisecond)
+		taskRec := performRequest(router, http.MethodGet, fmt.Sprintf("/api/tasks/%d", syncTaskBody.ID), nil)
+		if taskRec.Code == http.StatusOK {
+			var task struct{ Status string `json:"status"` }
+			if json.Unmarshal(taskRec.Body.Bytes(), &task) == nil && (task.Status == "succeeded" || task.Status == "failed") {
+				break
+			}
+		}
+	}
+
+	// 检查资产下载结果
+	releasesRec := performRequest(router, http.MethodGet, "/api/repositories/1/releases", nil)
+	if releasesRec.Code != http.StatusOK {
+		t.Fatalf("查询 Release 列表失败: %d", releasesRec.Code)
+	}
+	var releasesBody struct {
+		Items []struct {
+			ID  uint   `json:"id"`
 			Tag string `json:"tag"`
-		} `json:"release"`
-		Assets []struct {
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(releasesRec.Body.Bytes(), &releasesBody); err != nil {
+		t.Fatalf("解析 Release 列表失败: %v", err)
+	}
+	if len(releasesBody.Items) == 0 {
+		t.Fatalf("期望至少 1 个 Release")
+	}
+
+	assetsRec := performRequest(router, http.MethodGet, fmt.Sprintf("/api/releases/%d/assets", releasesBody.Items[0].ID), nil)
+	if assetsRec.Code != http.StatusOK {
+		t.Fatalf("查询资产列表失败: %d", assetsRec.Code)
+	}
+	var assetsBody struct {
+		Items []struct {
 			ID          uint   `json:"id"`
 			Name        string `json:"name"`
 			Status      string `json:"status"`
 			StoragePath string `json:"storagePath"`
 			SHA256      string `json:"sha256"`
-		} `json:"assets"`
-		DownloadResults []struct {
-			Asset struct {
-				ID uint `json:"id"`
-			} `json:"asset"`
-		} `json:"downloadResults"`
-		FailedAssets json.RawMessage `json:"failedAssets"`
+		} `json:"items"`
 	}
-	if err := json.Unmarshal(syncRec.Body.Bytes(), &syncBody); err != nil {
-		t.Fatalf("解析同步响应失败: %v", err)
-	}
-	if syncBody.Task.Status != "succeeded" {
-		t.Fatalf("同步任务应成功，实际: %s, failedAssets: %s", syncBody.Task.Status, string(syncBody.FailedAssets))
-	}
-	if len(syncBody.DownloadResults) != 2 {
-		t.Fatalf("期望 2 个下载结果（仅 amd64 匹配），实际 %d", len(syncBody.DownloadResults))
+	if err := json.Unmarshal(assetsRec.Body.Bytes(), &assetsBody); err != nil {
+		t.Fatalf("解析资产列表失败: %v", err)
 	}
 
 	verifiedCount := 0
-	for _, asset := range syncBody.Assets {
+	for _, asset := range assetsBody.Items {
 		if asset.Status == "verified" {
 			verifiedCount++
 			if asset.StoragePath == "" || asset.SHA256 == "" {

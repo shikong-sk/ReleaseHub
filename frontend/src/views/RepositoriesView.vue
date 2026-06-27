@@ -166,17 +166,10 @@ async function checkAllRepository(repository: Repository) {
 
 async function syncRepository(repository: Repository) {
   try {
-    const result = await repositoryStore.syncLatest(repository)
-    releaseStore.setLatestCheck(result)
-    const downloaded = result.downloadResults?.length ?? 0
-    const failed = result.failedAssets?.length ?? 0
-    if (failed > 0) {
-      message.warning(`已同步 ${result.release?.tag ?? '未知版本'}，下载 ${downloaded} 个，失败 ${failed} 个`)
-    } else {
-      message.success(`已同步 ${result.release?.tag ?? '未知版本'}，下载 ${downloaded} 个资产`)
-    }
+    await repositoryStore.syncLatest(repository)
+    message.success('同步任务已加入队列，请在任务页面查看进度')
   } catch (err) {
-    message.error(err instanceof Error ? err.message : '同步 Release 失败')
+    message.error(err instanceof Error ? err.message : '提交同步任务失败')
   }
 }
 
@@ -206,18 +199,11 @@ async function submitSyncTag() {
   }
   syncTagLoading.value = true
   try {
-    const result = await syncRepositoryByTag(repo.id, tag)
-    const downloaded = result.downloadResults?.length ?? 0
-    const failed = result.failedAssets?.length ?? 0
-    if (failed > 0) {
-      message.warning(`同步 ${tag} 完成：下载 ${downloaded} 个，失败 ${failed} 个`)
-    } else {
-      message.success(`同步 ${tag} 完成，下载 ${downloaded} 个资产`)
-    }
+    await syncRepositoryByTag(repo.id, tag)
+    message.success(`同步 ${tag} 任务已加入队列，请在任务页面查看进度`)
     showSyncTagModal.value = false
-    await repositoryStore.refresh()
   } catch (err) {
-    message.error(err instanceof Error ? err.message : `同步 ${tag} 失败`)
+    message.error(err instanceof Error ? err.message : `提交同步 ${tag} 任务失败`)
   } finally {
     syncTagLoading.value = false
   }

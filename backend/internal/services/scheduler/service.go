@@ -127,7 +127,7 @@ func (s *Service) RunDue(ctx context.Context, now time.Time) int {
 				s.unmarkRunning(repositoryID)
 			}()
 			if s.syncer != nil {
-				if _, syncErr := s.syncer.SyncRepository(ctx, repositoryID); syncErr != nil {
+				if _, syncErr := s.syncer.EnqueueSyncRepository(ctx, repositoryID); syncErr != nil {
 					s.logger.Warn("定时同步仓库失败", zap.Uint("repositoryID", repositoryID), zap.Error(syncErr))
 				}
 			} else if s.checker != nil {

@@ -11,7 +11,7 @@ import {
   updateRepository
 } from '@/api/repositories'
 import type { Repository, RepositoryPayload } from '@/types/repository'
-import type { CheckAllReleaseResult, CheckReleaseResult, SyncReleaseResult } from '@/types/release'
+import type { CheckAllReleaseResult, CheckReleaseResult } from '@/types/release'
 
 export const useRepositoriesStore = defineStore('repositories', () => {
   const items = shallowRef<Repository[]>([])
@@ -113,16 +113,12 @@ export const useRepositoriesStore = defineStore('repositories', () => {
     }
   }
 
-  async function syncLatest(repository: Repository): Promise<SyncReleaseResult> {
+  async function syncLatest(repository: Repository): Promise<void> {
     syncingId.value = repository.id
     error.value = null
 
     try {
-      const result = await syncRepository(repository.id)
-      items.value = items.value.map((item) =>
-        item.id === repository.id ? result.repository : item
-      )
-      return result
+      await syncRepository(repository.id)
     } finally {
       syncingId.value = null
     }

@@ -169,20 +169,11 @@ async function handleSyncTag(tag: string) {
   if (!props.repository) return
   syncingTag.value = tag
   try {
-    const result = await syncRepositoryByTag(props.repository.id, tag)
-    const downloaded = result.downloadResults?.length ?? 0
-    const failed = result.failedAssets?.length ?? 0
-    if (failed > 0) {
-      message.warning(`同步 ${tag} 完成：下载 ${downloaded} 个，失败 ${failed} 个`)
-    } else {
-      message.success(`同步 ${tag} 完成，下载 ${downloaded} 个资产`)
-    }
-    // 刷新列表
-    const listResult = await listRepositoryReleases(props.repository.id)
-    releases.value = listResult.items
+    await syncRepositoryByTag(props.repository.id, tag)
+    message.success(`同步 ${tag} 任务已加入队列，请在任务页面查看进度`)
     emit('synced')
   } catch (err) {
-    message.error(err instanceof Error ? err.message : `同步 ${tag} 失败`)
+    message.error(err instanceof Error ? err.message : `提交同步 ${tag} 任务失败`)
   } finally {
     syncingTag.value = null
   }

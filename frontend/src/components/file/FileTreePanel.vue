@@ -37,6 +37,7 @@ const rawMap = new Map<string, FileTreeNode>()
 
 // 将节点及其子节点全部注册到 rawMap
 function registerRawNodes(nodes: FileTreeNode[]) {
+  if (!nodes) return
   for (const node of nodes) {
     rawMap.set(node.key, node)
     if (node.children) registerRawNodes(node.children)
