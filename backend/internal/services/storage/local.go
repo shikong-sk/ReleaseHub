@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -158,6 +159,64 @@ func (s *LocalStorage) SetLatestTag(ctx context.Context, provider string, owner 
 func (s *LocalStorage) Capabilities() Capabilities {
 	return Capabilities{CanSymlink: true}
 }
+
+// List 列举指定前缀下的所有文件（跳过符号链接、.partial 和 latest.json）
+func (s *LocalStorage) List(ctx context.Context, prefix string) ([]ListResult, error) {
+	var results []ListResult
+	searchDir := s.baseDir
+	if strings.TrimSpace(prefix) != "" {
+		safe, err := s.safePath(prefix)
+		if err != nil {
+			return nil, err
+		}
+		searchDir = safe
+	}
+
+	err := filepath.WalkDir(searchDir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil // 跳过无权限等错误
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		name := d.Name()
+		// 跳过临时/元数据文件
+		if strings.HasSuffix(name, ".partial") || name == "latest.json" {
+			return nil
+		}
+
+		// 跳过符号链接（latest 指向目录）
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+
+		relPath, err := filepath.Rel(s.baseDir, path)
+		if err != nil {
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+
+		results = append(results, ListResult{
+			Path:  filepath.ToSlash(filepath.Clean(relPath)),
+			Size:  info.Size(),
+		})
+		return nil
+	})
+
+	if err != nil && err != context.Canceled {
+		return results, err
+	}
+	return results, nil
+}
+
 
 func (s *LocalStorage) safePath(objectPath string) (string, error) {
 	cleanPath := filepath.Clean(strings.TrimSpace(objectPath))

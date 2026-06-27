@@ -26,3 +26,15 @@ type Capabilities struct {
 type CapabilityGetter interface {
 	Capabilities() Capabilities
 }
+
+// ListResult 目录列表中的一条记录
+type ListResult struct {
+	Path  string // 相对于存储根目录的对象路径（如 github/owner/repo/tag/file.tar.gz）
+	Size int64
+}
+
+// Lister 可选接口，驱动可实现此接口支持目录列举。
+// 不实现此接口的驱动在 reconcile 时只能做单向检测（DB→存储）。
+type Lister interface {
+	List(ctx context.Context, prefix string) ([]ListResult, error)
+}

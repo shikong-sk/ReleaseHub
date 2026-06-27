@@ -138,3 +138,60 @@ func (s *WebDAVStorage) remotePath(objectPath string) string {
 	cleanPath := filepath.ToSlash(filepath.Clean(objectPath))
 	return filepath.ToSlash(filepath.Join(s.basePath, cleanPath))
 }
+
+
+// List 列举指定前缀下的所有文件（递归遍历 WebDAV 目录）
+func (s *WebDAVStorage) List(ctx context.Context, prefix string) ([]ListResult, error) {
+	var results []ListResult
+	searchPath := s.basePath
+	if strings.TrimSpace(prefix) != "" {
+		searchPath = filepath.ToSlash(filepath.Join(s.basePath, prefix))
+	}
+
+	err := s.walkWebDAV(ctx, searchPath, &results)
+	if err != nil {
+		return results, err
+	}
+	return results, nil
+}
+
+func (s *WebDAVStorage) walkWebDAV(ctx context.Context, dirPath string, results *[]ListResult) error {
+	files, err := s.client.ReadDir(dirPath)
+	if err != nil {
+		return nil // 目录不存在或无权限，跳过
+	}
+
+	for _, f := range files {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		remotePath := filepath.ToSlash(filepath.Join(dirPath, f.Name()))
+
+		if f.IsDir() {
+			if err := s.walkWebDAV(ctx, remotePath, results); err != nil {
+				return err
+			}
+			continue
+		}
+
+		// 跳过元数据文件
+		name := f.Name()
+		if name == "latest.json" {
+			continue
+		}
+
+		// 去掉 basePath 前缀，返回相对路径
+		relPath := strings.TrimPrefix(remotePath, s.basePath+"/")
+		if relPath == remotePath {
+			relPath = strings.TrimPrefix(remotePath, s.basePath)
+		}
+		relPath = filepath.ToSlash(filepath.Clean(relPath))
+
+		*results = append(*results, ListResult{
+			Path:  relPath,
+			Size:  f.Size(),
+		})
+	}
+	return nil
+}

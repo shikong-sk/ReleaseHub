@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -247,4 +248,75 @@ func BuildObjectPath(provider, owner, repo, tag, filename string) string {
 // parseStorageURL 解析存储 URL（用于 S3 endpoint 解析）
 func parseStorageURL(rawURL string) (*url.URL, error) {
 	return url.Parse(rawURL)
+}
+
+
+// List 列举指定前缀下的所有对象（S3 ListObjectsV2 path-style）
+func (s *S3Storage) List(ctx context.Context, prefix string) ([]ListResult, error) {
+	var results []ListResult
+	searchPrefix := s.prefix
+	if strings.TrimSpace(prefix) != "" {
+		searchPrefix = filepath.ToSlash(filepath.Join(s.prefix, prefix))
+	}
+	if !strings.HasSuffix(searchPrefix, "/") {
+		searchPrefix += "/"
+	}
+
+	reqURL := fmt.Sprintf("%s/%s?list-type=2&prefix=%s&max-keys=1000",
+		s.endpoint, s.bucket, url.PathEscape(searchPrefix))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	s.setAuth(req)
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("S3 ListObjects 请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("S3 ListObjects 响应异常: HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取 S3 响应失败: %w", err)
+	}
+
+	// 简单解析 XML ListBucketResult
+	type xmlContent struct {
+		Key  string `xml:"Key"`
+		Size int64  `xml:"Size"`
+	}
+	type xmlListResult struct {
+		XMLName    xml.Name     `xml:"ListBucketResult"`
+		Contents   []xmlContent `xml:"Contents"`
+	}
+
+	var listResult xmlListResult
+	if err := xml.Unmarshal(body, &listResult); err != nil {
+		return nil, fmt.Errorf("解析 S3 ListObjects 响应失败: %w", err)
+	}
+
+	for _, obj := range listResult.Contents {
+		// 去掉 prefix 前缀，返回相对于存储根的路径
+		relPath := strings.TrimPrefix(obj.Key, s.prefix+"/")
+		if relPath == obj.Key {
+			relPath = strings.TrimPrefix(obj.Key, s.prefix)
+		}
+		relPath = filepath.ToSlash(filepath.Clean(relPath))
+		// 跳过目录标记和元数据文件
+		if strings.HasSuffix(relPath, "/") || filepath.Base(relPath) == "latest.json" {
+			continue
+		}
+		results = append(results, ListResult{
+			Path:  relPath,
+			Size:  obj.Size,
+		})
+	}
+
+	return results, nil
 }
