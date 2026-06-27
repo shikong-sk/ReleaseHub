@@ -49,24 +49,24 @@ const tokensStore = useTokensStore()
 const storagesStore = useStoragesStore()
 const proxiesStore = useProxiesStore()
 
-const selectedTokenId = computed<number | undefined>({
-  get: () => form.githubTokenId ?? undefined,
-  set: (val: number | undefined) => {
-    form.githubTokenId = val ?? null
+const selectedTokenId = computed<number>({
+  get: () => form.githubTokenId ?? 0,
+  set: (val: number) => {
+    form.githubTokenId = val === 0 ? null : val
   }
 })
 
-const selectedStorageId = computed<number | undefined>({
-  get: () => form.storageId ?? undefined,
-  set: (val: number | undefined) => {
-    form.storageId = val ?? null
+const selectedStorageId = computed<number>({
+  get: () => form.storageId ?? 0,
+  set: (val: number) => {
+    form.storageId = val === 0 ? null : val
   }
 })
 
-const selectedProxyId = computed<number | undefined>({
-  get: () => form.proxyId ?? undefined,
-  set: (val: number | undefined) => {
-    form.proxyId = val ?? null
+const selectedProxyId = computed<number>({
+  get: () => form.proxyId ?? 0,
+  set: (val: number) => {
+    form.proxyId = val === 0 ? null : val
   }
 })
 
