@@ -105,11 +105,31 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 	if targetStorageID != nil {
 		// 查找该 release+name+storage 的记录
 		var storageAsset models.Asset
-		err := s.db.WithContext(ctx).
+		err := s.db.WithContext(ctx).Unscoped().
 			Where("release_id = ? AND name = ? AND storage_id = ?", asset.ReleaseID, asset.Name, *targetStorageID).
 			First(&storageAsset).Error
 
 		if err == nil {
+			// 如果记录已被软删除，先恢复它（清除 deleted_at）
+			if storageAsset.DeletedAt.Valid {
+				s.db.WithContext(ctx).Model(&storageAsset).Update("deleted_at", nil)
+				storageAsset.DeletedAt = gorm.DeletedAt{}
+			}
+			// 恢复下载地址（软删除的旧记录可能缺少下载地址）
+			if strings.TrimSpace(storageAsset.BrowserDownloadURL) == "" && strings.TrimSpace(storageAsset.DownloadURL) == "" {
+				storageAsset.DownloadURL = asset.DownloadURL
+				storageAsset.BrowserDownloadURL = asset.BrowserDownloadURL
+				storageAsset.ProviderAssetID = asset.ProviderAssetID
+				storageAsset.Size = asset.Size
+				storageAsset.ContentType = asset.ContentType
+				s.db.WithContext(ctx).Model(&storageAsset).Updates(map[string]any{
+					"download_url":          asset.DownloadURL,
+					"browser_download_url":  asset.BrowserDownloadURL,
+					"provider_asset_id":     asset.ProviderAssetID,
+					"size":                  asset.Size,
+					"content_type":          asset.ContentType,
+				})
+			}
 			// 该存储上已有记录
 			if storageAsset.Status == models.AssetStatusVerified || storageAsset.Status == models.AssetStatusDownloaded {
 				// 已完成下载，直接返回

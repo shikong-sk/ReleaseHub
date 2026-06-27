@@ -473,7 +473,7 @@ func (s *CheckService) persistProviderReleaseWithIsLatest(ctx context.Context, r
 			}
 
 			var existingAsset models.Asset
-			existingErr := tx.Where("release_id = ? AND name = ?", release.ID, pAsset.Name).First(&existingAsset).Error
+			existingErr := tx.Unscoped().Where("release_id = ? AND name = ?", release.ID, pAsset.Name).First(&existingAsset).Error
 			if existingErr != nil && !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 				return existingErr
 			}

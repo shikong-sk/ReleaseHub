@@ -159,6 +159,38 @@ func (s *Service) RunDue(ctx context.Context, now time.Time) int {
 	return started
 }
 
+// retryFailedAssetsInScheduling 在调度循环中重试最近失败的资产下载
+func (s *Service) retryFailedAssetsInScheduling(ctx context.Context) {
+	var failedAssets []models.Asset
+	if err := s.db.WithContext(ctx).
+		Where("status = ?", models.AssetStatusFailed).
+		Order("updated_at ASC").
+		Limit(5).
+		Find(&failedAssets).Error; err != nil {
+		return
+	}
+
+	for _, asset := range failedAssets {
+		// 检查失败次数，超过 5 次不再自动重试
+		var failCount int64
+		s.db.WithContext(ctx).
+			Model(&models.Task{}).
+			Where("asset_id = ? AND status = ?", asset.ID, models.TaskStatusFailed).
+			Count(&failCount)
+		if failCount >= 5 {
+			continue
+		}
+
+		if _, err := s.syncer.EnqueueRetryAsset(ctx, asset.ID); err != nil {
+			s.logger.Debug("重试下载资产失败",
+				zap.Uint("assetID", asset.ID),
+				zap.String("name", asset.Name),
+				zap.Error(err),
+			)
+		}
+	}
+}
+
 // RetryFailedAssets 扫描最近失败的资产，通过 assetService 触发重试下载。
 // 调用方应在定时循环中周期性调用此方法。
 func (s *Service) RetryFailedAssets(ctx context.Context, assetService interface {

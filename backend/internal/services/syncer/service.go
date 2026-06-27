@@ -106,6 +106,91 @@ func (s *Service) EnqueueSyncByTag(ctx context.Context, repositoryID uint, tag s
 	return &task, nil
 }
 
+// EnqueueRetryAsset 异步重试失败资产的下载
+func (s *Service) EnqueueRetryAsset(ctx context.Context, assetID uint) (*models.Task, error) {
+	task := models.Task{
+		Type:   "download_asset",
+		Status: models.TaskStatusPending,
+		MaxAttempts: 3,
+	}
+	// 查找资产所属的 Release 和 Repository
+	var asset models.Asset
+	if err := s.db.WithContext(ctx).First(&asset, assetID).Error; err != nil {
+		return nil, err
+	}
+	var release models.Release
+	if err := s.db.WithContext(ctx).First(&release, asset.ReleaseID).Error; err != nil {
+		return nil, err
+	}
+	task.RepositoryID = &release.RepositoryID
+	task.ReleaseID = &release.ID
+	task.AssetID = &assetID
+
+	if err := s.db.WithContext(ctx).Create(&task).Error; err != nil {
+		return nil, err
+	}
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("已加入队列: 重试下载资产 %s (ID: %d)", asset.Name, assetID))
+
+	go func() {
+		bgCtx := context.Background()
+		s.executeRetryAsset(bgCtx, assetID, task)
+	}()
+
+	return &task, nil
+}
+
+// executeRetryAsset 后台执行重试资产下载
+func (s *Service) executeRetryAsset(ctx context.Context, assetID uint, task models.Task) {
+	task.Status = models.TaskStatusRunning
+	task.StartedAt = ptrTime(time.Now().UTC())
+	_ = s.db.WithContext(ctx).Save(&task).Error
+
+	// 重置资产状态为 pending
+	var asset models.Asset
+	if err := s.db.WithContext(ctx).First(&asset, assetID).Error; err != nil {
+		s.failTaskWithLog(ctx, &task, err, "查找资产失败")
+		return
+	}
+	asset.Status = models.AssetStatusPending
+	asset.ErrorMessage = ""
+	_ = s.db.WithContext(ctx).Save(&asset).Error
+
+	// 确定存储：使用资产自身的 StorageID 或回退到仓库配置
+	var release models.Release
+	if err := s.db.WithContext(ctx).First(&release, asset.ReleaseID).Error; err != nil {
+		s.failTaskWithLog(ctx, &task, err, "查找 Release 失败")
+		return
+	}
+
+	var targetStorageID *uint
+	if asset.StorageID != nil && *asset.StorageID > 0 {
+		targetStorageID = asset.StorageID
+	} else {
+		repoSvc := repositorysvc.NewService(s.db)
+		storageIDs, err := repoSvc.GetRepositoryStorages(ctx, release.RepositoryID)
+		if err != nil || len(storageIDs) == 0 {
+			s.failTaskWithLog(ctx, &task, fmt.Errorf("无法确定存储目标"), "获取仓库存储配置失败")
+			return
+		}
+		first := storageIDs[0]
+		targetStorageID = &first
+	}
+
+	result, err := s.assetService.DownloadToStorage(ctx, assetID, *targetStorageID)
+	if err != nil {
+		s.failTaskWithLog(ctx, &task, err, fmt.Sprintf("重试下载资产 %s 失败", asset.Name))
+		return
+	}
+
+	now := time.Now().UTC()
+	task.FinishedAt = &now
+	task.Status = models.TaskStatusSucceeded
+	_ = s.db.WithContext(ctx).Save(&task).Error
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("重试下载完成: %s", result.Asset.Name))
+}
+
 // executeSyncRepository 后台执行同步最新版本
 func (s *Service) executeSyncRepository(ctx context.Context, repositoryID uint, task models.Task) {
 	task.Status = models.TaskStatusRunning
@@ -146,6 +231,9 @@ func (s *Service) executeSyncRepository(ctx context.Context, repositoryID uint, 
 	}
 
 	downloadResults, failedAssets := s.downloadAssetsToStorages(ctx, assetsToDownload, storageIDs)
+
+	// 清理 checker 创建的 StorageID=NULL 模板记录，避免多存储场景下文件树重复
+	s.cleanupOrphanTemplateAssets(ctx, checkResult.Release.ID)
 
 	if len(downloadResults) > 0 {
 		s.appendLog(ctx, task.ID, "info", fmt.Sprintf("已下载 %d 个资产", len(downloadResults)))
@@ -212,6 +300,9 @@ func (s *Service) executeSyncByTag(ctx context.Context, repositoryID uint, tag s
 	}
 
 	downloadResults, failedAssets := s.downloadAssetsToStorages(ctx, assetsToDownload, storageIDs)
+
+	// 清理 checker 创建的 StorageID=NULL 模板记录，避免多存储场景下文件树重复
+	s.cleanupOrphanTemplateAssets(ctx, checkResult.Release.ID)
 
 	if len(downloadResults) > 0 {
 		s.appendLog(ctx, task.ID, "info", fmt.Sprintf("已下载 %d 个资产", len(downloadResults)))
@@ -406,6 +497,46 @@ func (s *Service) notifySyncFailed(ctx context.Context, repositoryID uint, err e
 		title = fmt.Sprintf("ReleaseHub 同步失败: %s/%s", repository.Owner, repository.Repo)
 	}
 	_ = s.notifier.Notify(ctx, notifysvc.EventSyncFailed, title, err.Error())
+}
+
+
+// cleanupOrphanTemplateAssets 清理 checker 创建的 StorageID=NULL 的模板 Asset 记录
+// 当仓库配置了多个存储时，checker 会为每个资产创建一条 StorageID=NULL 的记录，
+// 而 downloadAssetsToStorages 会为每个存储创建带 StorageID 的实际记录。
+// 模板记录永远停留在 pending 状态，造成文件树中重复显示，需要清理。
+func (s *Service) cleanupOrphanTemplateAssets(ctx context.Context, releaseID uint) {
+	// 查找该 Release 下 StorageID=NULL 且状态为 pending 的记录
+	var orphanIDs []uint
+	s.db.WithContext(ctx).
+		Model(&models.Asset{}).
+		Where("release_id = ? AND storage_id IS NULL AND status = ?", releaseID, models.AssetStatusPending).
+		Pluck("id", &orphanIDs)
+
+	if len(orphanIDs) == 0 {
+		return
+	}
+
+	// 对每个幽灵记录，检查是否存在同名的已下载记录（任一存储上）
+	for _, id := range orphanIDs {
+		var asset models.Asset
+		if err := s.db.WithContext(ctx).First(&asset, id).Error; err != nil {
+			continue
+		}
+
+		// 检查是否有同 release+name 的非 NULL 存储记录已成功
+		var verifiedCount int64
+		s.db.WithContext(ctx).
+			Model(&models.Asset{}).
+			Where("release_id = ? AND name = ? AND storage_id IS NOT NULL AND status IN ?",
+				asset.ReleaseID, asset.Name,
+				[]models.AssetStatus{models.AssetStatusVerified, models.AssetStatusDownloaded}).
+			Count(&verifiedCount)
+
+		if verifiedCount > 0 {
+			// 有已成功的实际记录，可以安全删除模板记录
+			s.db.WithContext(ctx).Delete(&asset)
+		}
+	}
 }
 
 func joinAssetErrors(failedAssets []AssetError) string {
