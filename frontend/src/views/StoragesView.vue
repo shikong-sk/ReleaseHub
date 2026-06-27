@@ -18,7 +18,10 @@ import {
 import { Plus, RefreshCw } from 'lucide-vue-next'
 import type { DataTableColumns } from 'naive-ui'
 
+import FileTreePanel from '@/components/file/FileTreePanel.vue'
 import { getAppConfig } from '@/api/settings'
+import { getFileTree } from '@/api/files'
+import type { FileTreeNode } from '@/types/file'
 import { useStoragesStore } from '@/stores/storages'
 import type { StorageItem, StorageType } from '@/types/storage'
 
@@ -40,6 +43,10 @@ const formUsername = shallowRef('')
 const formPassword = shallowRef('')
 const formRemoteUrl = shallowRef('')
 const defaultDataDir = shallowRef('data/releases')
+
+const showFilesForStorage = shallowRef<number | null>(null)
+const fileTree = shallowRef<FileTreeNode[]>([])
+const fileTreeLoading = shallowRef(false)
 
 const typeOptions = [
   { label: '本地存储', value: 'local' },
@@ -122,6 +129,11 @@ const storageColumns = computed<DataTableColumns<StorageItem>>(() => [
             { default: () => '编辑' }
           ),
           h(
+            NButton,
+            { size: 'small', secondary: true, onClick: () => viewStorageFiles(row.id) },
+            { default: () => '文件' }
+          ),
+          h(
             NPopconfirm,
             { onPositiveClick: () => handleDelete(row.id) },
             {
@@ -141,7 +153,24 @@ const showLocalFields = computed(() => formType.value === 'local')
 onMounted(() => {
   void storagesStore.refresh()
   void loadConfig()
+  void loadFileTree()
 })
+
+async function loadFileTree() {
+  fileTreeLoading.value = true
+  try {
+    const result = await getFileTree()
+    fileTree.value = result.tree
+  } catch {
+    // 加载失败不阻塞存储配置页
+  } finally {
+    fileTreeLoading.value = false
+  }
+}
+
+function viewStorageFiles(storageId: number | null) {
+  showFilesForStorage.value = storageId
+}
 
 async function loadConfig() {
   try {
@@ -273,6 +302,22 @@ async function handleTest(id: number) {
         :row-key="(row: StorageItem) => row.id"
         :pagination="{ pageSize: 10 }"
         :scroll-x="980"
+      />
+    </NCard>
+
+    <NCard v-if="showFilesForStorage !== null" :bordered="false">
+      <template #header>
+        <span>存储文件 — {{ storagesStore.items.find((s) => s.id === showFilesForStorage)?.name ?? '默认本地存储' }}</span>
+      </template>
+      <template #header-extra>
+        <NButton size="small" secondary @click="showFilesForStorage = null">关闭</NButton>
+      </template>
+      <FileTreePanel
+        :tree="fileTree"
+        :loading="fileTreeLoading"
+        :can-write="true"
+        :storage-id="showFilesForStorage === 0 ? 0 : showFilesForStorage"
+        @refresh="loadFileTree"
       />
     </NCard>
 

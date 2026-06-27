@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, shallowRef } from 'vue'
-import { NAlert, NButton, NCard, NCollapse, NCollapseItem, NGrid, NGi, NInput, NPopconfirm, NStatistic, NTag, useMessage } from 'naive-ui'
+import { NAlert, NButton, NCard, NCollapse, NCollapseItem, NGrid, NGi, NInput, NRadioButton, NRadioGroup, NStatistic, NTag, useMessage } from 'naive-ui'
 import { RefreshCw, Search, Database, Trash2 } from 'lucide-vue-next'
 
 import FileTable from '@/components/file/FileTable.vue'
+import FileTreePanel from '@/components/file/FileTreePanel.vue'
 import { useFilesStore } from '@/stores/files'
+import { getFileTree } from '@/api/files'
+import type { FileTreeNode } from '@/types/file'
 import { search as apiSearch, type SearchResult } from '@/api/search'
 import { runReconcile, type ReconcileResult } from '@/api/reconcile'
 import { deleteAsset } from '@/api/releases'
@@ -23,6 +26,10 @@ const reconcileError = shallowRef<string | null>(null)
 const reconcileResult = shallowRef<ReconcileResult | null>(null)
 const authStore = useAuthStore()
 
+const viewMode = shallowRef<'tree' | 'table'>('tree')
+const fileTree = shallowRef<FileTreeNode[]>([])
+const fileTreeLoading = shallowRef(false)
+
 const filteredFiles = computed(() => {
   const keyword = localSearch.value.trim().toLowerCase()
   if (!keyword) {
@@ -36,7 +43,20 @@ const filteredFiles = computed(() => {
 
 onMounted(() => {
   void filesStore.refresh()
+  void loadFileTree()
 })
+
+async function loadFileTree() {
+  fileTreeLoading.value = true
+  try {
+    const result = await getFileTree()
+    fileTree.value = result.tree
+  } catch {
+    // 树加载失败不影响平铺视图
+  } finally {
+    fileTreeLoading.value = false
+  }
+}
 
 function formatBytes(size: number) {
   if (size < 1024) {
@@ -175,8 +195,24 @@ async function handleGlobalSearch() {
     </NCard>
 
     <NCard :bordered="false" title="本地文件">
-      <NInput v-model:value="localSearch" class="file-search" clearable placeholder="搜索 owner/repo/tag/name" />
-      <FileTable class="file-table" :files="filteredFiles" :loading="filesStore.loading" :can-write="authStore.canWrite" @delete="handleDeleteFile" />
+      <template #header-extra>
+        <NRadioGroup v-model:value="viewMode" size="small">
+          <NRadioButton value="tree">树状</NRadioButton>
+          <NRadioButton value="table">列表</NRadioButton>
+        </NRadioGroup>
+      </template>
+      <template v-if="viewMode === 'tree'">
+        <FileTreePanel
+          :tree="fileTree"
+          :loading="fileTreeLoading"
+          :can-write="authStore.canWrite"
+          @refresh="loadFileTree"
+        />
+      </template>
+      <template v-else>
+        <NInput v-model:value="localSearch" class="file-search" clearable placeholder="搜索 owner/repo/tag/name" />
+        <FileTable class="file-table" :files="filteredFiles" :loading="filesStore.loading" :can-write="authStore.canWrite" @delete="handleDeleteFile" />
+      </template>
     </NCard>
   </main>
 </template>
