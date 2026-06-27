@@ -161,6 +161,7 @@ type treeNode struct {
 	ReleaseID uint `json:"releaseId,omitempty"`
 
 	// 文件叶节点附加字段
+	Status       string `json:"status,omitempty"`
 	AssetID      uint   `json:"assetId,omitempty"`
 	Size         int64  `json:"size,omitempty"`
 	SHA256       string `json:"sha256,omitempty"`
@@ -170,27 +171,35 @@ type treeNode struct {
 
 // treeTopLevel 返回 存储→仓库 两层，仓库节点标记为非叶节点并携带文件计数
 func (h *fileHandler) treeTopLevel(c *gin.Context) {
-	// 查询所有 verified 资产，按 repository_id 分组计数
+	// 查询所有 enabled 的仓库，无论是否有 verified 资产
+	var repos []models.Repository
+	if err := h.db.WithContext(c.Request.Context()).
+		Where("enabled = ?", true).
+		Order("owner, repo").
+		Find(&repos).Error; err != nil {
+		writeError(c, http.StatusInternalServerError, "查询仓库列表失败")
+		return
+	}
+
+	// 查询 verified 资产计数，按 repository 分组
 	type repoCount struct {
 		RepositoryID uint
-		StorageID    *uint
-		Owner        string
-		Repo         string
 		FileCount    int
 	}
 	var counts []repoCount
-	err := h.db.WithContext(c.Request.Context()).
+	_ = h.db.WithContext(c.Request.Context()).
 		Model(&models.Asset{}).
-		Select("repositories.id as repository_id, repositories.storage_id, repositories.owner, repositories.repo, COUNT(*) as file_count").
+		Select("repositories.id as repository_id, COUNT(*) as file_count").
 		Joins("JOIN releases ON releases.id = assets.release_id").
 		Joins("JOIN repositories ON repositories.id = releases.repository_id").
 		Where("assets.status = ? AND assets.storage_path <> ''", models.AssetStatusVerified).
-		Group("repositories.id, repositories.storage_id, repositories.owner, repositories.repo").
-		Order("repositories.owner, repositories.repo").
+		Group("repositories.id").
 		Find(&counts).Error
-	if err != nil {
-		writeError(c, http.StatusInternalServerError, "查询文件树失败")
-		return
+
+	// 构建 repository_id → file_count 映射
+	countMap := make(map[uint]int, len(counts))
+	for _, rc := range counts {
+		countMap[rc.RepositoryID] = rc.FileCount
 	}
 
 	// 预加载存储名称
@@ -221,13 +230,13 @@ func (h *fileHandler) treeTopLevel(c *gin.Context) {
 	storageMap[0] = defaultStorage
 	storageOrder = append(storageOrder, 0)
 
-	for _, rc := range counts {
+	for _, repo := range repos {
 		var groupID uint
 		var groupName string
 		var groupType string
 
-		if rc.StorageID != nil {
-			if s, ok := storagesByID[*rc.StorageID]; ok {
+		if repo.StorageID != nil {
+			if s, ok := storagesByID[*repo.StorageID]; ok {
 				groupID = s.ID
 				groupName = s.Name
 				groupType = s.Type
@@ -235,7 +244,6 @@ func (h *fileHandler) treeTopLevel(c *gin.Context) {
 		}
 
 		if groupID == 0 {
-			groupID = 0
 			groupName = "默认本地存储"
 			groupType = "local"
 		}
@@ -245,19 +253,20 @@ func (h *fileHandler) treeTopLevel(c *gin.Context) {
 			storageOrder = append(storageOrder, groupID)
 		}
 
+		fc := countMap[repo.ID]
 		repoNode := treeNode{
-			Key:          fmt.Sprintf("repo-%d", rc.RepositoryID),
-			Label:        fmt.Sprintf("%s/%s", rc.Owner, rc.Repo),
+			Key:          fmt.Sprintf("repo-%d", repo.ID),
+			Label:        fmt.Sprintf("%s/%s", repo.Owner, repo.Repo),
 			IsLeaf:       false,
 			Prefix:       "📁",
-			RepositoryID: rc.RepositoryID,
-			FileCount:    rc.FileCount,
+			RepositoryID: repo.ID,
+			FileCount:    fc,
 		}
 		storageMap[groupID].Children = append(storageMap[groupID].Children, repoNode)
 	}
 
 	// 组装顶层节点
-	var nodes []treeNode
+	nodes := make([]treeNode, 0)
 	for _, id := range storageOrder {
 		group := storageMap[id]
 		if len(group.Children) == 0 {
@@ -280,6 +289,7 @@ func (h *fileHandler) treeTopLevel(c *gin.Context) {
 }
 
 // treeForRepository 返回指定仓库的 版本→文件 子树
+// 显示所有 Release（包括正在同步的），资产状态为 pending/downloading/failed 的也展示
 func (h *fileHandler) treeForRepository(c *gin.Context, repoQuery string) {
 	repoID, err := strconv.ParseUint(repoQuery, 10, 64)
 	if err != nil || repoID == 0 {
@@ -287,68 +297,115 @@ func (h *fileHandler) treeForRepository(c *gin.Context, repoQuery string) {
 		return
 	}
 
-	// 查询该仓库下所有 verified 资产
+	ctx := c.Request.Context()
+
+	// 查询该仓库下所有 Release（按 tag 倒序）
+	var releases []models.Release
+	if err := h.db.WithContext(ctx).
+		Where("repository_id = ? AND deleted_at IS NULL", repoID).
+		Order("tag DESC").
+		Find(&releases).Error; err != nil {
+		writeError(c, http.StatusInternalServerError, "查询 Release 列表失败")
+		return
+	}
+
+	if len(releases) == 0 {
+		c.JSON(http.StatusOK, gin.H{"tree": make([]treeNode, 0)})
+		return
+	}
+
+	releaseIDs := make([]uint, 0, len(releases))
+	for _, r := range releases {
+		releaseIDs = append(releaseIDs, r.ID)
+	}
+
+	// 查询这些 Release 下的所有资产（不限状态，排除 deleted 和 skipped）
 	var assets []models.Asset
-	err = h.db.WithContext(c.Request.Context()).
-		Where("assets.status = ? AND assets.storage_path <> ''", models.AssetStatusVerified).
-		Joins("JOIN releases ON releases.id = assets.release_id").
-		Where("releases.repository_id = ?", repoID).
-		Order("releases.tag DESC, assets.name").
-		Find(&assets).Error
-	if err != nil {
+	if err := h.db.WithContext(ctx).
+		Where("release_id IN ? AND status NOT IN ?", releaseIDs,
+			[]models.AssetStatus{models.AssetStatusDeleted, models.AssetStatusSkipped}).
+		Order("release_id, name").
+		Find(&assets).Error; err != nil {
 		writeError(c, http.StatusInternalServerError, "查询仓库文件失败")
 		return
 	}
 
-	// 按 release 分组
-	type releaseGroup struct {
-		ReleaseID uint
-		Tag       string
-		Assets    []treeNode
+	// 按 release_id 分组
+	assetsByRelease := make(map[uint][]models.Asset, len(releases))
+	for _, a := range assets {
+		assetsByRelease[a.ReleaseID] = append(assetsByRelease[a.ReleaseID], a)
 	}
-	releaseMap := map[uint]*releaseGroup{}
-	var releaseOrder []uint
 
-	for _, asset := range assets {
-		if _, exists := releaseMap[asset.ReleaseID]; !exists {
-			var release models.Release
-			if err := h.db.WithContext(c.Request.Context()).First(&release, asset.ReleaseID).Error; err != nil {
-				continue
+	nodes := make([]treeNode, 0, len(releases))
+	for _, release := range releases {
+		releaseAssets := assetsByRelease[release.ID]
+
+		// 检查该版本是否有正在进行的任务
+		var syncing bool
+		for _, a := range releaseAssets {
+			if a.Status == models.AssetStatusPending || a.Status == models.AssetStatusDownloading {
+				syncing = true
+				break
 			}
-			releaseMap[asset.ReleaseID] = &releaseGroup{
-				ReleaseID: release.ID,
-				Tag:       release.Tag,
-			}
-			releaseOrder = append(releaseOrder, asset.ReleaseID)
 		}
 
-		releaseMap[asset.ReleaseID].Assets = append(releaseMap[asset.ReleaseID].Assets, treeNode{
-			Key:          fmt.Sprintf("asset-%d", asset.ID),
-			Label:        asset.Name,
-			IsLeaf:       true,
-			Prefix:       "📄",
-			AssetID:      asset.ID,
-			Size:         asset.Size,
-			SHA256:       asset.SHA256,
-			StoragePath:  asset.StoragePath,
-			DownloadedAt: formatTime(asset.DownloadedAt),
-		})
-	}
+		label := release.Tag
+		if syncing {
+			label = release.Tag + " (同步中)"
+		}
 
-	var nodes []treeNode
-	for _, id := range releaseOrder {
-		rg := releaseMap[id]
+		children := make([]treeNode, 0, len(releaseAssets))
+		for _, a := range releaseAssets {
+			assetLabel := a.Name
+			switch a.Status {
+			case models.AssetStatusPending:
+				assetLabel = a.Name + " (待下载)"
+			case models.AssetStatusDownloading:
+				assetLabel = a.Name + " (下载中)"
+			case models.AssetStatusFailed:
+				assetLabel = a.Name + " (失败)"
+			}
+			children = append(children, treeNode{
+				Key:          fmt.Sprintf("asset-%d", a.ID),
+				Label:        assetLabel,
+				IsLeaf:       true,
+				Prefix:       assetPrefix(a.Status),
+				Status:       string(a.Status),
+				AssetID:      a.ID,
+				Size:         a.Size,
+				SHA256:       a.SHA256,
+				StoragePath:  a.StoragePath,
+				DownloadedAt: formatTime(a.DownloadedAt),
+			})
+		}
+
 		nodes = append(nodes, treeNode{
-			Key:       fmt.Sprintf("release-%d", rg.ReleaseID),
-			Label:     rg.Tag,
+			Key:       fmt.Sprintf("release-%d", release.ID),
+			Label:     label,
 			IsLeaf:    false,
 			Prefix:    "🏷️",
-			ReleaseID: rg.ReleaseID,
-			Children:  rg.Assets,
+			ReleaseID: release.ID,
+			Children:  children,
 		})
 	}
 
 	c.JSON(http.StatusOK, gin.H{"tree": nodes})
+}
+
+// assetPrefix 根据资产状态返回图标前缀
+func assetPrefix(status models.AssetStatus) string {
+	switch status {
+	case models.AssetStatusVerified, models.AssetStatusDownloaded:
+		return "📄"
+	case models.AssetStatusDownloading:
+		return "⬇️"
+	case models.AssetStatusPending:
+		return "⏳"
+	case models.AssetStatusFailed:
+		return "❌"
+	default:
+		return "📄"
+	}
 }
 
 func (h *fileHandler) download(c *gin.Context) {

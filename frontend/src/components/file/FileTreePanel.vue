@@ -36,7 +36,7 @@ const localTree = shallowRef<TreeOption[]>([])
 const rawMap = new Map<string, FileTreeNode>()
 
 // 将节点及其子节点全部注册到 rawMap
-function registerRawNodes(nodes: FileTreeNode[]) {
+function registerRawNodes(nodes: FileTreeNode[] | null | undefined) {
   if (!nodes) return
   for (const node of nodes) {
     rawMap.set(node.key, node)
@@ -53,7 +53,7 @@ watch(
 
     const source = storageId == null
       ? rawTree
-      : rawTree.filter((n) => n.key === `storage-${storageId}`)
+      : (rawTree ?? []).filter((n) => n.key === `storage-${storageId}`)
     localTree.value = mergeIncoming(source, localTree.value)
   },
   { immediate: true }
@@ -100,7 +100,14 @@ function renderPrefix({ option }: { option: TreeOption }): string {
   if (key.startsWith('storage-')) return '💾'
   if (key.startsWith('repo-')) return '📁'
   if (key.startsWith('release-')) return '🏷️'
-  if (key.startsWith('asset-')) return '📄'
+  // 文件节点根据状态显示不同图标
+  if (key.startsWith('asset-')) {
+    const raw = findRaw(key)
+    if (raw?.status === 'pending') return '⏳'
+    if (raw?.status === 'downloading') return '⬇️'
+    if (raw?.status === 'failed') return '❌'
+    return '📄'
+  }
   return ''
 }
 
@@ -111,30 +118,62 @@ function renderLabel({ option }: { option: TreeOption }) {
   // 仓库节点：名称 + 文件数标签
   if (key.startsWith('repo-')) {
     const raw = findRaw(key)
-    if (raw?.fileCount) {
+    if (raw?.fileCount != null) {
       return h('span', { style: 'display: inline-flex; align-items: center; gap: 8px' }, [
         h('span', raw.label),
-        h(NTag, { size: 'small', type: 'info' }, {
-          default: () => `${raw.fileCount} 文件`
-        })
+        raw.fileCount > 0
+          ? h(NTag, { size: 'small', type: 'info' }, { default: () => `${raw.fileCount} 文件` })
+          : h(NTag, { size: 'small', type: 'default' }, { default: () => '暂无文件' })
       ])
     }
+  }
+
+  // 版本节点：正在同步的显示状态标签
+  if (key.startsWith('release-')) {
+    const raw = findRaw(key)
+    // label 中已经包含 "(同步中)" 后缀
+    if (raw?.label?.includes('(同步中)')) {
+      return h('span', { style: 'display: inline-flex; align-items: center; gap: 8px' }, [
+        h('span', raw.label),
+        h(NTag, { size: 'small', type: 'warning' }, { default: () => '同步中' })
+      ])
+    }
+    return raw?.label ?? option.label
   }
 
   // 文件节点：文件名 + 大小 + SHA256 摘要
   if (key.startsWith('asset-')) {
     const raw = findRaw(key)
     if (raw?.size != null) {
-      return h('span', { style: 'display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex: 1' }, [
-        h('span', { style: 'overflow: hidden; text-overflow: ellipsis; white-space: nowrap' }, raw.label),
-        h(NTag, { size: 'small', flexShrink: 0 }, { default: () => formatBytes(raw.size!) }),
-        raw.sha256
-          ? h('span', {
-              style: 'font-size: 11px; color: #667085; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0',
-              title: raw.sha256
-            }, raw.sha256.slice(0, 12) + '...')
-          : null
-      ])
+      const children = [
+        h('span', { style: 'overflow: hidden; text-overflow: ellipsis; white-space: nowrap' }, raw.label)
+      ]
+
+      // 非 verified/downloaded 状态时显示状态标签代替大小
+      if (raw.status && raw.status !== 'verified' && raw.status !== 'downloaded') {
+        const tagType = raw.status === 'downloading' ? 'info'
+          : raw.status === 'pending' ? 'warning'
+          : raw.status === 'failed' ? 'error' : 'default'
+        children.push(
+          h(NTag, { size: 'small', type: tagType as any, flexShrink: 0 },
+            { default: () => statusText(raw.status!) })
+        )
+      } else {
+        children.push(
+          h(NTag, { size: 'small', flexShrink: 0 }, { default: () => formatBytes(raw.size!) })
+        )
+      }
+
+      if (raw.sha256) {
+        children.push(
+          h('span', {
+            style: 'font-size: 11px; color: #667085; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0',
+            title: raw.sha256
+          }, raw.sha256.slice(0, 12) + '...')
+        )
+      }
+
+      return h('span', { style: 'display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex: 1' }, children)
     }
   }
 
@@ -148,13 +187,22 @@ function renderSuffix({ option }: { option: TreeOption }) {
   const raw = findRaw(key)
   if (!raw?.assetId) return null
 
-  const buttons = [
-    h(NButton, {
-      size: 'tiny', type: 'primary', secondary: true, tag: 'a',
-      href: assetFileURL(raw.assetId)
-    }, { default: () => '下载' })
-  ]
+  // 正在下载或等待下载的不显示操作按钮
+  if (raw.status === 'pending' || raw.status === 'downloading') return null
 
+  const buttons: any[] = []
+
+  // 已验证/已下载的显示下载按钮
+  if (raw.status === 'verified' || raw.status === 'downloaded') {
+    buttons.push(
+      h(NButton, {
+        size: 'tiny', type: 'primary', secondary: true, tag: 'a',
+        href: assetFileURL(raw.assetId)
+      }, { default: () => '下载' })
+    )
+  }
+
+  // failed 和 verified/downloaded 都可以删除
   if (props.canWrite) {
     buttons.push(
       h(NPopconfirm, {
@@ -168,7 +216,22 @@ function renderSuffix({ option }: { option: TreeOption }) {
     )
   }
 
-  return h('div', { style: 'display: flex; gap: 6px; margin-left: auto; flex-shrink: 0' }, buttons)
+  return buttons.length > 0
+    ? h('div', { style: 'display: flex; gap: 6px; margin-left: auto; flex-shrink: 0' }, buttons)
+    : null
+}
+
+function statusText(status: string): string {
+  const map: Record<string, string> = {
+    pending: '待下载',
+    downloading: '下载中',
+    downloaded: '已下载',
+    verified: '已验证',
+    failed: '失败',
+    skipped: '已跳过',
+    deleted: '已删除'
+  }
+  return map[status] ?? status
 }
 
 // 懒加载：展开仓库节点时请求 版本→文件 子树

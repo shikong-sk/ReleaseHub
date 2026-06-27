@@ -30,6 +30,7 @@ export interface FileTreeNode {
   releaseId?: number
 
   // 文件叶节点
+  status?: string
   assetId?: number
   size?: number
   sha256?: string

@@ -8,6 +8,7 @@ import (
 )
 
 type Config struct {
+
 	App       AppConfig
 	HTTP      HTTPConfig
 	Database  DatabaseConfig
@@ -122,4 +123,46 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// UpdateConfig 定义可运行时更新的配置项
+type UpdateConfig struct {
+	SchedulerEnabled       *bool   `json:"schedulerEnabled,omitempty"`
+	SchedulerTickSeconds   *int    `json:"schedulerTickSeconds,omitempty"`
+	SchedulerMaxConcurrent *int    `json:"schedulerMaxConcurrent,omitempty"`
+	GitHubAPIBaseURL       *string `json:"githubApiBaseUrl,omitempty"`
+}
+
+// ApplyUpdate 应用运行时配置更新，返回实际被修改的字段名列表
+func (c *Config) ApplyUpdate(update UpdateConfig) ([]string, error) {
+	var changed []string
+
+	if update.SchedulerEnabled != nil && *update.SchedulerEnabled != c.Scheduler.Enabled {
+		c.Scheduler.Enabled = *update.SchedulerEnabled
+		changed = append(changed, "schedulerEnabled")
+	}
+	if update.SchedulerTickSeconds != nil {
+		if *update.SchedulerTickSeconds < 10 {
+			return nil, fmt.Errorf("scheduler.tick_seconds 不能小于 10")
+		}
+		if *update.SchedulerTickSeconds != c.Scheduler.TickSeconds {
+			c.Scheduler.TickSeconds = *update.SchedulerTickSeconds
+			changed = append(changed, "schedulerTickSeconds")
+		}
+	}
+	if update.SchedulerMaxConcurrent != nil {
+		if *update.SchedulerMaxConcurrent < 1 {
+			return nil, fmt.Errorf("scheduler.max_concurrent 不能小于 1")
+		}
+		if *update.SchedulerMaxConcurrent != c.Scheduler.MaxConcurrent {
+			c.Scheduler.MaxConcurrent = *update.SchedulerMaxConcurrent
+			changed = append(changed, "schedulerMaxConcurrent")
+		}
+	}
+	if update.GitHubAPIBaseURL != nil && *update.GitHubAPIBaseURL != c.GitHub.APIBaseURL {
+		c.GitHub.APIBaseURL = *update.GitHubAPIBaseURL
+		changed = append(changed, "githubApiBaseUrl")
+	}
+
+	return changed, nil
 }

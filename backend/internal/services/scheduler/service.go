@@ -32,6 +32,24 @@ type Service struct {
 	semaphore chan struct{}
 }
 
+// UpdateInterval 运行时更新调度间隔
+func (s *Service) UpdateInterval(interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	s.interval = interval
+}
+
+// UpdateMaxConcurrent 运行时更新最大并发数
+func (s *Service) UpdateMaxConcurrent(maxConcurrent int) {
+	if maxConcurrent < 1 {
+		maxConcurrent = defaultMaxConcurrent
+	}
+	s.maxConcurrent = maxConcurrent
+	// 重建信号量以匹配新的并发上限
+	s.semaphore = make(chan struct{}, maxConcurrent)
+}
+
 func NewService(db *gorm.DB, checker *releasesvc.CheckService, logger *zap.Logger, interval time.Duration) *Service {
 	return NewServiceWithConcurrency(db, checker, logger, interval, defaultMaxConcurrent)
 }

@@ -57,15 +57,10 @@ func main() {
 		logger.Warn("创建默认本地存储失败", zap.Error(err))
 	}
 
-	router := api.NewRouter(api.Dependencies{
-		Config: cfg,
-		DB:     db,
-		Logger: logger,
-	})
-
 	appCtx, stopApp := context.WithCancel(context.Background())
 	defer stopApp()
 
+	var scheduler *schedulersvc.Service
 	if cfg.Scheduler.Enabled {
 		githubClient, err := githubsvc.NewClient(cfg.GitHub.APIBaseURL)
 		if err != nil {
@@ -82,7 +77,7 @@ func main() {
 			logger.Fatal("同步服务初始化失败", zap.Error(err))
 		}
 
-		scheduler := schedulersvc.NewServiceWithConcurrency(
+		scheduler = schedulersvc.NewServiceWithConcurrency(
 			db,
 			checkService,
 			logger,
@@ -93,6 +88,13 @@ func main() {
 		scheduler.WithSyncer(syncService)
 		scheduler.Start(appCtx)
 	}
+
+	router := api.NewRouter(api.Dependencies{
+		Config:    cfg,
+		DB:        db,
+		Logger:    logger,
+		Scheduler: scheduler,
+	})
 
 	server := &http.Server{
 		Addr:              cfg.HTTP.Addr(),

@@ -160,7 +160,7 @@ async function loadFileTree() {
   fileTreeLoading.value = true
   try {
     const result = await getFileTree()
-    fileTree.value = result.tree
+    fileTree.value = result.tree ?? []
   } catch {
     // 加载失败不阻塞存储配置页
   } finally {

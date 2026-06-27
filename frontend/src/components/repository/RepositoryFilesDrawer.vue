@@ -36,7 +36,7 @@ async function loadTree() {
   fileTree.value = []
   try {
     const result = await getRepositoryFileTree(props.repository.id)
-    fileTree.value = result.tree
+    fileTree.value = result.tree ?? []
   } catch {
     // 加载失败保留空树
   } finally {

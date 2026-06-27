@@ -51,7 +51,7 @@ async function loadFileTree() {
   fileTreeLoading.value = true
   try {
     const result = await getFileTree()
-    fileTree.value = result.tree
+    fileTree.value = result.tree ?? []
   } catch {
     // 树加载失败不影响平铺视图
   } finally {

@@ -17,6 +17,7 @@ type Dependencies struct {
 	Config *config.Config
 	DB     *gorm.DB
 	Logger *zap.Logger
+	Scheduler SchedulerUpdater
 }
 
 func NewRouter(deps Dependencies) http.Handler {
@@ -37,7 +38,7 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	// 认证路由
 	registerAuthRoutes(router, deps.DB)
-	registerConfigRoutes(router, deps.Config)
+	registerConfigRoutes(router, deps.Config, deps.Scheduler)
 
 	if deps.Config.Auth.Enabled {
 		router.Use(middleware.APIKeyOrAuth(deps.DB))
