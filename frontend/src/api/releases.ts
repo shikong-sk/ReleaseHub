@@ -36,3 +36,16 @@ export async function deleteAsset(assetId: number): Promise<void> {
     method: 'DELETE'
   })
 }
+
+
+export function pinRelease(id: number): Promise<Release> {
+  return requestJson<Release>(`/api/releases/${id}/pin`, {
+    method: 'POST'
+  })
+}
+
+export function unpinRelease(id: number): Promise<Release> {
+  return requestJson<Release>(`/api/releases/${id}/unpin`, {
+    method: 'POST'
+  })
+}

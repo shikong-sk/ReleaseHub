@@ -27,6 +27,14 @@ func (g *GitHubProvider) GetLatestRelease(ctx context.Context, owner, repo, toke
 	return toProviderRelease(release), nil
 }
 
+func (g *GitHubProvider) GetReleaseByTag(ctx context.Context, owner, repo, tag, token string) (*ProviderRelease, error) {
+	release, err := g.client.GetReleaseByTag(ctx, owner, repo, tag, token)
+	if err != nil {
+		return nil, err
+	}
+	return toProviderRelease(release), nil
+}
+
 func (g *GitHubProvider) ListAllReleases(ctx context.Context, owner, repo, token string, maxPages int) ([]ProviderRelease, error) {
 	releases, err := g.client.ListAllReleases(ctx, owner, repo, token, maxPages)
 	if err != nil {

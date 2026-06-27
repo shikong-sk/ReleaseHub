@@ -53,6 +53,7 @@ func registerRepositoryRoutes(router *gin.Engine, db *gorm.DB, storageConfig con
 	group.POST("/:id/check", handler.checkLatest)
 	group.POST("/:id/check-all", handler.checkAll)
 	group.POST("/:id/sync", handler.syncLatest)
+	group.POST("/:id/sync-tag", handler.syncByTag)
 	group.GET("/:id/releases", handler.listReleases)
 }
 
@@ -201,6 +202,42 @@ func (h *repositoryHandler) syncLatest(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+
+// syncByTag 同步指定 tag 的 Release
+func (h *repositoryHandler) syncByTag(c *gin.Context) {
+	if h.githubClientErr != nil {
+		writeError(c, http.StatusInternalServerError, h.githubClientErr.Error())
+		return
+	}
+	if h.syncServiceErr != nil {
+		writeError(c, http.StatusInternalServerError, h.syncServiceErr.Error())
+		return
+	}
+
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+
+	var input struct {
+		Tag string `json:"tag" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		writeError(c, http.StatusBadRequest, "tag 参数必填")
+		return
+	}
+
+	result, err := h.syncService.SyncByTag(c.Request.Context(), id, input.Tag)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error":  err.Error(),
+			"result": result,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
 func (h *repositoryHandler) listReleases(c *gin.Context) {
 	id, ok := parseID(c)
 	if !ok {

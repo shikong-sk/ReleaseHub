@@ -74,11 +74,19 @@ func (s *Service) Cleanup(ctx context.Context, repository models.Repository) (*C
 		return nil, err
 	}
 
-	if len(releases) <= keepLatest {
+	// 过滤掉 pinned 版本，pinned 版本不受保留策略影响
+	var unpinnedReleases []models.Release
+	for _, r := range releases {
+		if !r.IsPinned {
+			unpinnedReleases = append(unpinnedReleases, r)
+		}
+	}
+
+	if len(unpinnedReleases) <= keepLatest {
 		return &CleanupResult{}, nil
 	}
 
-	outdatedReleases := releases[keepLatest:]
+	outdatedReleases := unpinnedReleases[keepLatest:]
 	releaseIDs := make([]uint, 0, len(outdatedReleases))
 	for _, release := range outdatedReleases {
 		releaseIDs = append(releaseIDs, release.ID)
@@ -96,7 +104,7 @@ func (s *Service) Cleanup(ctx context.Context, repository models.Repository) (*C
 	}
 
 	s.appendLog(ctx, task.ID, "info", fmt.Sprintf(
-		"开始清理: 保留最近 %d 个版本，删除 %d 个旧版本",
+		"开始清理: 保留最近 %d 个版本（固定版本除外），删除 %d 个旧版本",
 		keepLatest, len(outdatedReleases),
 	))
 

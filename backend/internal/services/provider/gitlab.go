@@ -44,6 +44,42 @@ func (g *GitLabProvider) GetLatestRelease(ctx context.Context, owner, repo, toke
 	return &releases[0], nil
 }
 
+func (g *GitLabProvider) GetReleaseByTag(ctx context.Context, owner, repo, tag, token string) (*ProviderRelease, error) {
+	projectPath := url.PathEscape(owner + "/" + repo)
+	endpoint := fmt.Sprintf("%s/projects/%s/releases/%s", g.baseURL, projectPath, url.PathEscape(tag))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "ReleaseHub")
+	if token != "" {
+		req.Header.Set("PRIVATE-TOKEN", token)
+	}
+
+	resp, err := g.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求 GitLab Release (tag: %s) 失败: %w", tag, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("Release %s 不存在", tag)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("GitLab API 返回异常状态: HTTP %d", resp.StatusCode)
+	}
+
+	var glRelease gitLabRelease
+	if err := json.NewDecoder(resp.Body).Decode(&glRelease); err != nil {
+		return nil, fmt.Errorf("解析 GitLab Release 响应失败: %w", err)
+	}
+
+	result := toGitLabProviderRelease(glRelease)
+	return &result, nil
+}
+
 func (g *GitLabProvider) ListAllReleases(ctx context.Context, owner, repo, token string, maxPages int) ([]ProviderRelease, error) {
 	if maxPages < 1 {
 		maxPages = 10

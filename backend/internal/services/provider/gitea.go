@@ -68,6 +68,41 @@ func (g *GiteaProvider) GetLatestRelease(ctx context.Context, owner, repo, token
 	return &result, nil
 }
 
+func (g *GiteaProvider) GetReleaseByTag(ctx context.Context, owner, repo, tag, token string) (*ProviderRelease, error) {
+	endpoint := fmt.Sprintf("%s/repos/%s/%s/releases/tags/%s", g.baseURL, url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(tag))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "ReleaseHub")
+	if token != "" {
+		req.Header.Set("Authorization", "token "+token)
+	}
+
+	resp, err := g.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求 Gitea Release (tag: %s) 失败: %w", tag, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("Release %s 不存在", tag)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("Gitea API 返回异常状态: HTTP %d", resp.StatusCode)
+	}
+
+	var release giteaRelease
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return nil, fmt.Errorf("解析 Gitea Release 响应失败: %w", err)
+	}
+
+	result := toGiteaProviderRelease(release)
+	return &result, nil
+}
+
 func (g *GiteaProvider) ListAllReleases(ctx context.Context, owner, repo, token string, maxPages int) ([]ProviderRelease, error) {
 	if maxPages < 1 {
 		maxPages = 10

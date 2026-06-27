@@ -10,6 +10,8 @@ import (
 type ReleaseProvider interface {
 	// GetLatestRelease 获取仓库最新 Release
 	GetLatestRelease(ctx context.Context, owner, repo, token string) (*ProviderRelease, error)
+	// GetReleaseByTag 根据 tag 获取指定版本的 Release
+	GetReleaseByTag(ctx context.Context, owner, repo, tag, token string) (*ProviderRelease, error)
 	// ListAllReleases 拉取所有 Release（自动分页，最多 maxPages 页）
 	ListAllReleases(ctx context.Context, owner, repo, token string, maxPages int) ([]ProviderRelease, error)
 	// GetAssetDownloadURL 获取资产的实际下载地址

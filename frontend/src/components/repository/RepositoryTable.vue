@@ -23,6 +23,7 @@ const emit = defineEmits<{
   check: [repository: Repository]
   'check-all': [repository: Repository]
   sync: [repository: Repository]
+  'sync-tag': [repository: Repository]
   history: [repository: Repository]
   files: [repository: Repository]
 }>()
@@ -136,7 +137,15 @@ const columns = computed<DataTableColumns<Repository>>(() => [
                 secondary: true,
                 loading: props.syncingId === row.id,
                 onClick: () => emit('sync', row)
-              }, { default: () => '立即同步' })
+              }, { default: () => '同步最新' })
+            )
+            buttons.push(
+              h(NButton, {
+                size: 'small',
+                type: 'success',
+                secondary: true,
+                onClick: () => emit('sync-tag', row)
+              }, { default: () => '同步指定版本' })
             )
             buttons.push(
               h(NButton, {

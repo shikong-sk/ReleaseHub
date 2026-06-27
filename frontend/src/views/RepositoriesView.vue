@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, shallowRef } from 'vue'
-import { NAlert, NCard, NGrid, NGi, NStatistic, useMessage } from 'naive-ui'
+import { NAlert, NCard, NGrid, NGi, NInput, NModal, NStatistic, useMessage } from 'naive-ui'
 
 import AssetPanel from '@/components/repository/AssetPanel.vue'
 import RepositoryFilesDrawer from '@/components/repository/RepositoryFilesDrawer.vue'
@@ -12,6 +12,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useRepositoriesStore } from '@/stores/repositories'
 import { useReleasesStore } from '@/stores/releases'
 import { deleteAsset, listReleaseAssets } from '@/api/releases'
+import { syncRepositoryByTag } from '@/api/repositories'
 import type { Asset } from '@/types/release'
 import type { Repository, RepositoryFormMode, RepositoryPayload } from '@/types/repository'
 
@@ -29,6 +30,11 @@ const showHistory = shallowRef(false)
 const filesRepository = shallowRef<Repository | null>(null)
 const showFiles = shallowRef(false)
 let assetsRefreshTimer: number | undefined
+
+const showSyncTagModal = shallowRef(false)
+const syncTagRepository = shallowRef<Repository | null>(null)
+const syncTagInput = shallowRef('')
+const syncTagLoading = shallowRef(false)
 
 const filteredRepositories = computed(() => {
   const keyword = search.value.trim().toLowerCase()
@@ -160,9 +166,47 @@ async function syncRepository(repository: Repository) {
   try {
     const result = await repositoryStore.syncLatest(repository)
     releaseStore.setLatestCheck(result)
-    message.success(`已同步 ${result.release.tag}，下载 ${result.downloadResults.length} 个资产`)
+    const downloaded = result.downloadResults?.length ?? 0
+    const failed = result.failedAssets?.length ?? 0
+    if (failed > 0) {
+      message.warning(`已同步 ${result.release?.tag ?? '未知版本'}，下载 ${downloaded} 个，失败 ${failed} 个`)
+    } else {
+      message.success(`已同步 ${result.release?.tag ?? '未知版本'}，下载 ${downloaded} 个资产`)
+    }
   } catch (err) {
     message.error(err instanceof Error ? err.message : '同步 Release 失败')
+  }
+}
+
+function openSyncTagModal(repository: Repository) {
+  syncTagRepository.value = repository
+  syncTagInput.value = ''
+  showSyncTagModal.value = true
+}
+
+async function submitSyncTag() {
+  const tag = syncTagInput.value.trim()
+  const repo = syncTagRepository.value
+  if (!tag || !repo) {
+    message.warning('请输入版本号')
+    return
+  }
+  syncTagLoading.value = true
+  try {
+    const result = await syncRepositoryByTag(repo.id, tag)
+    const downloaded = result.downloadResults?.length ?? 0
+    const failed = result.failedAssets?.length ?? 0
+    if (failed > 0) {
+      message.warning(`同步 ${tag} 完成：下载 ${downloaded} 个，失败 ${failed} 个`)
+    } else {
+      message.success(`同步 ${tag} 完成，下载 ${downloaded} 个资产`)
+    }
+    showSyncTagModal.value = false
+    await repositoryStore.refresh()
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : `同步 ${tag} 失败`)
+  } finally {
+    syncTagLoading.value = false
   }
 }
 
@@ -243,6 +287,7 @@ async function retryAsset(asset: Asset) {
         @check="checkRepository"
         @check-all="checkAllRepository"
         @sync="syncRepository"
+        @sync-tag="openSyncTagModal"
         @history="openHistory"
         @files="openFiles"
       />
@@ -260,6 +305,8 @@ async function retryAsset(asset: Asset) {
     <ReleaseHistoryDrawer
       v-model:show="showHistory"
       :repository="historyRepository"
+      :can-write="authStore.canWrite"
+      @synced="repositoryStore.refresh"
     />
 
     <RepositoryFilesDrawer
@@ -274,6 +321,21 @@ async function retryAsset(asset: Asset) {
       :saving="repositoryStore.saving"
       @submit="submitRepository"
     />
+
+    <NModal
+      v-model:show="showSyncTagModal"
+      preset="dialog"
+      title="同步指定版本"
+      positive-text="开始同步"
+      negative-text="取消"
+      :loading="syncTagLoading"
+      @positive-click="submitSyncTag"
+    >
+      <p style="margin-bottom: 8px; color: #667085">
+        仓库：{{ syncTagRepository ? `${syncTagRepository.owner}/${syncTagRepository.repo}` : '' }}
+      </p>
+      <NInput v-model:value="syncTagInput" placeholder="输入版本号，例如 v1.0.0" @keyup.enter="submitSyncTag" />
+    </NModal>
   </main>
 </template>
 

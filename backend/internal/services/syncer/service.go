@@ -61,6 +61,89 @@ func NewService(db *gorm.DB, checker *releasesvc.CheckService, storageConfig con
 	}, nil
 }
 
+
+// SyncByTag 同步指定 tag 的 Release
+func (s *Service) SyncByTag(ctx context.Context, repositoryID uint, tag string) (*Result, error) {
+	task := models.Task{
+		Type:         "sync_release",
+		RepositoryID: &repositoryID,
+		Status:       models.TaskStatusRunning,
+		MaxAttempts:  1,
+		StartedAt:    ptrTime(time.Now().UTC()),
+	}
+	if err := s.db.WithContext(ctx).Create(&task).Error; err != nil {
+		return nil, err
+	}
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("开始同步仓库 (ID: %d) 指定版本 %s", repositoryID, tag))
+
+	checkResult, err := s.checker.CheckByTag(ctx, repositoryID, tag)
+	if err != nil {
+		s.failTaskWithLog(ctx, &task, err, fmt.Sprintf("检查指定版本 %s 失败", tag))
+		s.notifySyncFailed(ctx, repositoryID, err)
+		return nil, err
+	}
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("检查完成: %s/%s 版本 %s",
+		checkResult.Repository.Owner, checkResult.Repository.Repo, checkResult.Release.Tag))
+
+	task.ReleaseID = &checkResult.Release.ID
+	result := &Result{
+		Repository:      checkResult.Repository,
+		Release:         checkResult.Release,
+		Assets:          checkResult.Assets,
+		Task:            task,
+		CheckTask:       checkResult.Task,
+		DownloadResults: []assetsvc.DownloadResult{},
+		FailedAssets:    []AssetError{},
+	}
+
+	assetsToDownload := downloadableAssets(checkResult.Assets)
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("待下载资产 %d 个（跳过 %d 个）",
+		len(assetsToDownload), len(checkResult.Assets)-len(assetsToDownload)))
+
+	downloadResults, failedAssets := s.downloadAssets(ctx, assetsToDownload)
+	result.DownloadResults = downloadResults
+	result.FailedAssets = failedAssets
+
+	if len(downloadResults) > 0 {
+		s.appendLog(ctx, task.ID, "info", fmt.Sprintf("已下载 %d 个资产", len(downloadResults)))
+	}
+	if len(failedAssets) > 0 {
+		s.appendLog(ctx, task.ID, "warn", fmt.Sprintf("%d 个资产下载失败: %s", len(failedAssets), joinAssetErrors(failedAssets)))
+	}
+
+	if err := s.reloadAssets(ctx, &result.Assets, checkResult.Release.ID); err != nil {
+		s.failTaskWithLog(ctx, &task, err, "重新加载资产数据失败")
+		return result, err
+	}
+
+	now := time.Now().UTC()
+	task.FinishedAt = &now
+	if len(failedAssets) > 0 {
+		task.Status = models.TaskStatusFailed
+		task.ErrorMessage = joinAssetErrors(failedAssets)
+		if err := s.db.WithContext(ctx).Save(&task).Error; err != nil {
+			return result, err
+		}
+		result.Task = task
+		s.notifySyncFailed(ctx, repositoryID, errors.New(task.ErrorMessage))
+		return result, errors.New(task.ErrorMessage)
+	}
+
+	task.Status = models.TaskStatusSucceeded
+	if err := s.db.WithContext(ctx).Save(&task).Error; err != nil {
+		return result, err
+	}
+	result.Task = task
+	s.notifySyncSuccess(ctx, result.Repository, result.Release, len(downloadResults))
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("同步完成: %s/%s 版本 %s，下载 %d 个资产",
+		result.Repository.Owner, result.Repository.Repo, result.Release.Tag, len(downloadResults)))
+
+	return result, nil
+}
+
 func (s *Service) SyncRepository(ctx context.Context, repositoryID uint) (*Result, error) {
 	task := models.Task{
 		Type:         "sync_release",
@@ -87,11 +170,13 @@ func (s *Service) SyncRepository(ctx context.Context, repositoryID uint) (*Resul
 
 	task.ReleaseID = &checkResult.Release.ID
 	result := &Result{
-		Repository: checkResult.Repository,
-		Release:    checkResult.Release,
-		Assets:     checkResult.Assets,
-		Task:       task,
-		CheckTask:  checkResult.Task,
+		Repository:      checkResult.Repository,
+		Release:         checkResult.Release,
+		Assets:          checkResult.Assets,
+		Task:            task,
+		CheckTask:       checkResult.Task,
+		DownloadResults: []assetsvc.DownloadResult{},
+		FailedAssets:    []AssetError{},
 	}
 
 	assetsToDownload := downloadableAssets(checkResult.Assets)

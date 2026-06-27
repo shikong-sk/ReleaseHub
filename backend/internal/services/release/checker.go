@@ -88,6 +88,80 @@ func (s *CheckService) WithProviderRegistry(registry *provider.Registry) *CheckS
 	return s
 }
 
+
+// CheckByTag 检查指定 tag 的 Release 并持久化到数据库
+func (s *CheckService) CheckByTag(ctx context.Context, repositoryID uint, tag string) (*CheckResult, error) {
+	var repository models.Repository
+	if err := s.db.WithContext(ctx).First(&repository, repositoryID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("仓库不存在")
+		}
+		return nil, err
+	}
+
+	task := models.Task{
+		Type:         "check_release",
+		RepositoryID: &repository.ID,
+		Status:       models.TaskStatusRunning,
+		MaxAttempts:  1,
+		StartedAt:    ptrTime(time.Now().UTC()),
+	}
+	if err := s.db.WithContext(ctx).Create(&task).Error; err != nil {
+		return nil, err
+	}
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("开始检查 %s/%s 指定版本 %s", repository.Owner, repository.Repo, tag))
+
+	token, err := s.githubToken(ctx, repository.GitHubTokenID)
+	if err != nil {
+		s.failTaskWithLog(ctx, &task, err, "获取 GitHub Token 失败")
+		return nil, err
+	}
+
+	releaseProvider, err := s.resolveProvider(ctx, repository)
+	if err != nil {
+		s.failTaskWithLog(ctx, &task, err, "创建 Provider 失败")
+		return nil, err
+	}
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("通过 %s Provider 查询 Release %s", repository.Provider, tag))
+
+	providerRelease, err := releaseProvider.GetReleaseByTag(ctx, repository.Owner, repository.Repo, tag, token)
+	if err != nil {
+		s.markRepositoryFailed(ctx, repository.ID)
+		s.failTaskWithLog(ctx, &task, err, fmt.Sprintf("查询 Release %s 失败", tag))
+		return nil, err
+	}
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("发现 Release %s，资产数 %d", providerRelease.TagName, len(providerRelease.Assets)))
+
+	matcher, err := filter.NewMatcher(repository.FilterMode, repository.AssetIncludePatterns, repository.AssetExcludePatterns)
+	if err != nil {
+		s.markRepositoryFailed(ctx, repository.ID)
+		s.failTaskWithLog(ctx, &task, err, "资产过滤规则无效")
+		return nil, fmt.Errorf("资产过滤规则无效: %w", err)
+	}
+
+	result, err := s.persistProviderRelease(ctx, repository, task, providerRelease, matcher)
+	if err != nil {
+		s.failTaskWithLog(ctx, &task, err, "持久化 Release 数据失败")
+		return nil, err
+	}
+
+	// 更新仓库状态为健康
+	s.markRepositoryHealthy(ctx, repository.ID, providerRelease.TagName)
+
+	// 标记任务成功
+	now := time.Now().UTC()
+	task.Status = models.TaskStatusSucceeded
+	task.FinishedAt = &now
+	_ = s.db.WithContext(ctx).Save(&task).Error
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("检查完成: %s/%s 版本 %s", repository.Owner, repository.Repo, tag))
+	result.Task = task
+	return result, nil
+}
+
 func (s *CheckService) CheckLatest(ctx context.Context, repositoryID uint) (*CheckResult, error) {
 	var repository models.Repository
 	if err := s.db.WithContext(ctx).First(&repository, repositoryID).Error; err != nil {

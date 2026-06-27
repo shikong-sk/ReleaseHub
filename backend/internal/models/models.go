@@ -98,6 +98,7 @@ type Release struct {
 	HTMLURL           string         `json:"htmlUrl" gorm:"column:html_url;size:1024"`
 	APIURL            string         `json:"apiUrl" gorm:"column:api_url;size:1024"`
 	IsLatest          bool           `json:"isLatest" gorm:"column:is_latest;not null;default:false"`
+	IsPinned          bool           `json:"isPinned" gorm:"column:is_pinned;not null;default:false"`
 	SyncStatus        string         `json:"syncStatus" gorm:"column:sync_status;size:40;not null;default:pending"`
 	CreatedAt         time.Time      `json:"createdAt" gorm:"column:created_at"`
 	UpdatedAt         time.Time      `json:"updatedAt" gorm:"column:updated_at"`

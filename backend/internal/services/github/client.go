@@ -196,3 +196,46 @@ func (c *Client) ListAllReleases(ctx context.Context, owner string, repo string,
 
 	return allReleases, nil
 }
+
+// GetReleaseByTag 根据 tag 获取指定版本的 Release
+// GitHub API: GET /repos/{owner}/{repo}/releases/tags/{tag}
+func (c *Client) GetReleaseByTag(ctx context.Context, owner string, repo string, tag string, token string) (*Release, error) {
+	endpoint := *c.baseURL
+	endpoint.Path = path.Join(endpoint.Path, "repos", owner, repo, "releases", "tags", tag)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "ReleaseHub")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求 GitHub Release (tag: %s) 失败: %w", tag, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("Release %s 不存在或无权限访问", tag)
+	}
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+		return nil, fmt.Errorf("GitHub API 限流或拒绝访问: HTTP %d", resp.StatusCode)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("GitHub API 返回异常状态: HTTP %d", resp.StatusCode)
+	}
+
+	var release Release
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return nil, fmt.Errorf("解析 GitHub Release 响应失败: %w", err)
+	}
+	if strings.TrimSpace(release.TagName) == "" {
+		return nil, fmt.Errorf("GitHub Release 响应缺少 tag_name")
+	}
+
+	return &release, nil
+}

@@ -22,6 +22,7 @@ export interface Release {
   htmlUrl: string
   apiUrl: string
   isLatest: boolean
+  isPinned: boolean
   syncStatus: string
   createdAt: string
   updatedAt: string

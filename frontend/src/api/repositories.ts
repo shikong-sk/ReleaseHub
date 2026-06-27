@@ -43,3 +43,11 @@ export function syncRepository(id: number): Promise<SyncReleaseResult> {
     method: 'POST'
   })
 }
+
+
+export function syncRepositoryByTag(id: number, tag: string): Promise<SyncReleaseResult> {
+  return requestJson<SyncReleaseResult>(`/api/repositories/${id}/sync-tag`, {
+    method: 'POST',
+    body: { tag }
+  })
+}
