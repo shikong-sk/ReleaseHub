@@ -177,6 +177,8 @@ async function onLoad(node: TreeOption) {
     const result = await getRepositoryFileTree(raw.repositoryId)
     if (result.tree.length > 0) {
       node.children = mergeIncoming(result.tree, [])
+      // shallowRef 不会追踪深层属性变化，必须替换顶层引用才能触发 NTree 重新渲染
+      localTree.value = [...localTree.value]
     } else {
       node.isLeaf = true
     }
