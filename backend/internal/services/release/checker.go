@@ -148,7 +148,7 @@ func (s *CheckService) CheckByTag(ctx context.Context, repositoryID uint, tag st
 		return nil, err
 	}
 
-	// 同步历史版本不更新仓库的 lastReleaseTag，仅更新状态为健康
+	// 同步指定历史版本不更新仓库的 lastReleaseTag，仅更新状态为健康
 	s.markRepositoryHealthy(ctx, repository.ID, repository.LastReleaseTag)
 
 	// 标记任务成功
@@ -220,14 +220,16 @@ func (s *CheckService) CheckLatest(ctx context.Context, repositoryID uint) (*Che
 		return nil, fmt.Errorf("资产过滤规则无效: %w", err)
 	}
 
-	result, err := s.persistProviderReleaseWithIsLatest(ctx, repository, task, providerRelease, matcher, false)
+	result, err := s.persistProviderReleaseWithIsLatest(ctx, repository, task, providerRelease, matcher, true)
 	if err != nil {
 		s.failTaskWithLog(ctx, &task, err, "持久化 Release 数据失败")
 		return nil, err
 	}
 
-	// 同步历史版本不更新仓库的 lastReleaseTag，仅更新状态为健康
-	s.markRepositoryHealthy(ctx, repository.ID, repository.LastReleaseTag)
+	// CheckLatest 检查的就是最新版本，更新 lastReleaseTag 为最新版本
+	s.markRepositoryHealthy(ctx, repository.ID, providerRelease.TagName)
+	// 重新加载仓库信息以包含 markRepositoryHealthy 的更新
+	_ = s.db.WithContext(ctx).First(&result.Repository, repository.ID)
 
 	if s.retention != nil {
 		s.appendLog(ctx, task.ID, "info", "执行保留策略清理旧版本")
@@ -513,8 +515,8 @@ func (s *CheckService) persistProviderReleaseWithIsLatest(ctx context.Context, r
 		}
 
 		repository.LastCheckAt = &now
-		repository.LastReleaseTag = release.Tag
 		repository.LastStatus = models.RepositoryStatusHealthy
+		// LastReleaseTag 不在此处更新，由调用方根据场景决定
 		if err := tx.Save(&repository).Error; err != nil {
 			return err
 		}

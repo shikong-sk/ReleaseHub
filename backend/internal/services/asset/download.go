@@ -17,6 +17,7 @@ import (
 	"releasehub/backend/internal/services/storage"
 	"releasehub/backend/internal/services/tasklog"
 
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -27,6 +28,7 @@ type Service struct {
 	downloader *downloader.HTTPDownloader
 	logService *tasklog.Service
 	notifier   *notifysvc.Service
+	logger     *zap.Logger
 }
 
 type DownloadResult struct {
@@ -42,6 +44,7 @@ func NewService(db *gorm.DB, storageConfig config.StorageConfig) (*Service, erro
 
 	service := NewServiceWithFactory(db, storageConfig)
 	service.storage = localStorage
+	service.logger = zap.NewNop()
 	return service, nil
 }
 
@@ -53,6 +56,7 @@ func NewServiceWithDriver(db *gorm.DB, driver storage.Driver) *Service {
 		downloader: downloader.NewHTTPDownloader(),
 		logService: tasklog.NewService(db),
 		notifier:   notifysvc.NewService(db),
+		logger:     zap.NewNop(),
 	}
 }
 
@@ -64,6 +68,7 @@ func NewServiceWithDownloaderAndDriver(db *gorm.DB, driver storage.Driver, dl *d
 		downloader: dl,
 		logService: tasklog.NewService(db),
 		notifier:   notifysvc.NewService(db),
+		logger:     zap.NewNop(),
 	}
 }
 
@@ -74,6 +79,7 @@ func NewServiceWithFactory(db *gorm.DB, storageConfig config.StorageConfig) *Ser
 		downloader: downloader.NewHTTPDownloader(),
 		logService: tasklog.NewService(db),
 		notifier:   notifysvc.NewService(db),
+		logger:     zap.NewNop(),
 	}
 }
 
@@ -187,11 +193,14 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 		return nil, storageErr
 	}
 
-	if err := storageDriver.SetLatestTag(ctx, repository.Provider, repository.Owner, repository.Repo, release.Tag); err != nil {
-		s.markAssetFailed(ctx, &asset, err)
-		s.failTaskWithLog(ctx, &task, err, "设置 latest 标签失败")
-		s.notifyDownloadFailed(ctx, repository, release, asset, err)
-		return nil, err
+	// 仅当该 Release 是最新版本时才更新 latest 标签，避免同步历史版本时覆盖
+	if release.IsLatest {
+		if err := storageDriver.SetLatestTag(ctx, repository.Provider, repository.Owner, repository.Repo, release.Tag); err != nil {
+			s.logger.Warn("设置 latest 标签失败，不影响下载结果",
+				zap.String("repo", fmt.Sprintf("%s/%s", repository.Owner, repository.Repo)),
+				zap.String("tag", release.Tag),
+				zap.Error(err))
+		}
 	}
 
 	now := time.Now().UTC()
