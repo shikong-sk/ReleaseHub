@@ -75,7 +75,7 @@ const columns = computed<DataTableColumns<FileItem>>(() => [
       ]
       if (props.canWrite) {
         buttons.push(
-          h(NPopconfirm, {
+          h(NPopconfirm, { positiveText: "确定", negativeText: "取消",
             onPositiveClick: () => emit('delete', row)
           }, {
             trigger: () => h(NButton, {

@@ -205,7 +205,7 @@ function renderSuffix({ option }: { option: TreeOption }) {
   // failed 和 verified/downloaded 都可以删除
   if (props.canWrite) {
     buttons.push(
-      h(NPopconfirm, {
+      h(NPopconfirm, { positiveText: "确定", negativeText: "取消",
         onPositiveClick: () => handleDelete(raw.assetId!, raw.label)
       }, {
         trigger: () => h(NButton, {

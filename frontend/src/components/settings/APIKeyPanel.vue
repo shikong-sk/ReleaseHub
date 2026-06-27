@@ -65,7 +65,7 @@ const columns: DataTableColumns<APIKeyItem> = [
     key: 'actions',
     width: 100,
     render: (row) =>
-      h(NPopconfirm, { onPositiveClick: () => handleDelete(row.id) }, {
+      h(NPopconfirm, { positiveText: "确定", negativeText: "取消", onPositiveClick: () => handleDelete(row.id) }, {
         trigger: () => h(NButton, { size: 'small', type: 'error', secondary: true, loading: apiKeysStore.saving }, { default: () => '删除' }),
         default: () => `删除 API Key "${row.name}"？`
       })

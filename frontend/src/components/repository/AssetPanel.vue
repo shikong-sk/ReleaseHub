@@ -94,7 +94,7 @@ const columns = computed<DataTableColumns<Asset>>(() => [
           )
         )
         buttons.push(
-          h(NPopconfirm, {
+          h(NPopconfirm, { positiveText: "确定", negativeText: "取消",
             onPositiveClick: () => emit('delete', row)
           }, {
             trigger: () =>
@@ -124,7 +124,7 @@ const columns = computed<DataTableColumns<Asset>>(() => [
           )
         )
         buttons.push(
-          h(NPopconfirm, {
+          h(NPopconfirm, { positiveText: "确定", negativeText: "取消",
             onPositiveClick: () => emit('delete', row)
           }, {
             trigger: () =>

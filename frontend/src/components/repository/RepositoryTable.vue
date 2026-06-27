@@ -155,7 +155,7 @@ const columns = computed<DataTableColumns<Repository>>(() => [
               }, { default: () => '编辑' })
             )
             buttons.push(
-              h(NPopconfirm, {
+              h(NPopconfirm, { positiveText: "确定", negativeText: "取消",
                 onPositiveClick: () => emit('remove', row)
               }, {
                 trigger: () =>
