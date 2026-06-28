@@ -109,8 +109,8 @@ func (s *Service) EnqueueSyncByTag(ctx context.Context, repositoryID uint, tag s
 // EnqueueRetryAsset 异步重试失败资产的下载
 func (s *Service) EnqueueRetryAsset(ctx context.Context, assetID uint) (*models.Task, error) {
 	task := models.Task{
-		Type:   "download_asset",
-		Status: models.TaskStatusPending,
+		Type:        "download_asset",
+		Status:      models.TaskStatusPending,
 		MaxAttempts: 3,
 	}
 	// 查找资产所属的 Release 和 Repository
@@ -213,6 +213,7 @@ func (s *Service) executeSyncRepository(ctx context.Context, repositoryID uint, 
 	_ = s.db.WithContext(ctx).Save(&task).Error
 
 	assetsToDownload := downloadableAssets(checkResult.Assets)
+
 	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("待下载资产 %d 个（跳过 %d 个）",
 		len(assetsToDownload), len(checkResult.Assets)-len(assetsToDownload)))
 
@@ -342,6 +343,10 @@ func downloadableAssets(assets []models.Asset) []models.Asset {
 
 // downloadAssetsToStorages 为每个配置的存储分别下载资产
 // 同一个资产文件会被下载到多个存储（如果仓库配置了多存储）
+//
+// 智能处理已有 StorageID 的记录：
+//   - 如果 asset.StorageID != nil，说明该记录已绑定具体存储，只下载到该存储
+//   - 如果 asset.StorageID == nil，说明是模板记录，为每个配置的存储分别创建记录并下载
 func (s *Service) downloadAssetsToStorages(ctx context.Context, assets []models.Asset, storageIDs []uint) ([]assetsvc.DownloadResult, []AssetError) {
 	if len(assets) == 0 || len(storageIDs) == 0 {
 		return nil, nil
@@ -358,42 +363,66 @@ func (s *Service) downloadAssetsToStorages(ctx context.Context, assets []models.
 	downloadResults := make([]assetsvc.DownloadResult, 0)
 	failedAssets := make([]AssetError, 0)
 
-	// 遍历每个存储 + 每个资产，并行下载
-	for _, storageID := range storageIDs {
-		for _, asset := range assets {
-			asset := asset
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+	// 构建「asset → 需要下载到的存储列表」映射
+	type downloadJob struct {
+		assetID   uint
+		storageID uint
+		name      string
+	}
+	jobs := make([]downloadJob, 0, len(assets)*len(storageIDs))
 
-				select {
-				case <-ctx.Done():
-					mu.Lock()
-					failedAssets = append(failedAssets, AssetError{
-						AssetID: asset.ID,
-						Name:    asset.Name,
-						Error:   ctx.Err().Error(),
-					})
-					mu.Unlock()
-					return
-				case semaphore <- struct{}{}:
-					defer func() { <-semaphore }()
-					}
-
-				downloadResult, err := s.assetService.DownloadToStorage(ctx, asset.ID, storageID)
-				mu.Lock()
-				defer mu.Unlock()
-				if err != nil {
-					failedAssets = append(failedAssets, AssetError{
-						AssetID: asset.ID,
-						Name:    fmt.Sprintf("%s (存储 %d)", asset.Name, storageID),
-						Error:   err.Error(),
-					})
-					return
-				}
-				downloadResults = append(downloadResults, *downloadResult)
-			}()
+	for _, asset := range assets {
+		if asset.StorageID != nil && *asset.StorageID > 0 {
+			// 已绑定具体存储的记录：只下载到该存储
+			jobs = append(jobs, downloadJob{
+				assetID:   asset.ID,
+				storageID: *asset.StorageID,
+				name:      asset.Name,
+			})
+		} else {
+			// 模板记录（StorageID=NULL）：为每个配置的存储分别下载
+			for _, sid := range storageIDs {
+				jobs = append(jobs, downloadJob{
+					assetID:   asset.ID,
+					storageID: sid,
+					name:      asset.Name,
+				})
+			}
 		}
+	}
+
+	for _, job := range jobs {
+		wg.Add(1)
+		go func(j downloadJob) {
+			defer wg.Done()
+
+			select {
+			case <-ctx.Done():
+				mu.Lock()
+				failedAssets = append(failedAssets, AssetError{
+					AssetID: j.assetID,
+					Name:    j.name,
+					Error:   ctx.Err().Error(),
+				})
+				mu.Unlock()
+				return
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			}
+
+			downloadResult, err := s.assetService.DownloadToStorage(ctx, j.assetID, j.storageID)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				failedAssets = append(failedAssets, AssetError{
+					AssetID: j.assetID,
+					Name:    fmt.Sprintf("%s (存储 %d)", j.name, j.storageID),
+					Error:   err.Error(),
+				})
+				return
+			}
+			downloadResults = append(downloadResults, *downloadResult)
+		}(job)
 	}
 
 	wg.Wait()
@@ -498,7 +527,6 @@ func (s *Service) notifySyncFailed(ctx context.Context, repositoryID uint, err e
 	}
 	_ = s.notifier.Notify(ctx, notifysvc.EventSyncFailed, title, err.Error())
 }
-
 
 // cleanupOrphanTemplateAssets 清理 checker 创建的 StorageID=NULL 的模板 Asset 记录
 // 当仓库配置了多个存储时，checker 会为每个资产创建一条 StorageID=NULL 的记录，

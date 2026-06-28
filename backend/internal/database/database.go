@@ -80,11 +80,11 @@ func MigrateAssetUniqueIndex(db *gorm.DB) error {
 	db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_release_asset_storage'").Scan(&count)
 	if count == 0 {
 		// 创建新索引
-		if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_release_asset_storage ON assets(release_id, name, storage_id) WHERE deleted_at IS NULL").Error; err != nil {
+		if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_release_asset_storage ON assets(release_id, name, storage_id)").Error; err != nil {
 			// 如果有重复数据导致索引创建失败，先清理重复记录
 			fmt.Printf("[MigrateAssetUniqueIndex] 创建索引失败，尝试清理重复数据: %v\n", err)
 			cleanDuplicateAssets(db)
-			if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_release_asset_storage ON assets(release_id, name, storage_id) WHERE deleted_at IS NULL").Error; err != nil {
+			if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_release_asset_storage ON assets(release_id, name, storage_id)").Error; err != nil {
 				return fmt.Errorf("创建新索引失败: %w", err)
 			}
 		}
@@ -96,9 +96,9 @@ func MigrateAssetUniqueIndex(db *gorm.DB) error {
 // cleanDuplicateAssets 清理重复的 asset 记录（保留最新的）
 func cleanDuplicateAssets(db *gorm.DB) {
 	db.Exec(`DELETE FROM assets WHERE id NOT IN (
-		SELECT MAX(id) FROM assets WHERE deleted_at IS NULL
+		SELECT MAX(id) FROM assets
 		GROUP BY release_id, name, COALESCE(storage_id, 0)
-	) AND deleted_at IS NULL`)
+	)`)
 }
 
 // SeedDefaultAdmin 确保数据库中至少存在一个管理员账户。
@@ -260,5 +260,57 @@ func BackfillAssetStorageID(db *gorm.DB) error {
 		fmt.Printf("[BackfillAssetStorageID] 已回填 %d 条资产的 StorageID\n", updated)
 	}
 
+	return nil
+}
+
+
+// MigrateDropDeletedAt 清理软删除列：删除已被软删除的记录，然后删除 deleted_at 列
+// 此函数仅在从软删除迁移到硬删除时需要执行一次
+func MigrateDropDeletedAt(db *gorm.DB) error {
+	// 检查 assets 表是否有 deleted_at 列
+	var colCount int64
+	db.Raw("SELECT COUNT(*) FROM pragma_table_info('assets') WHERE name='deleted_at'").Scan(&colCount)
+	if colCount == 0 {
+		// 没有 deleted_at 列，无需迁移
+		return nil
+	}
+
+	fmt.Println("[MigrateDropDeletedAt] 检测到 deleted_at 列，开始迁移...")
+
+	// 删除所有已软删除的记录（deleted_at 不为 NULL 的记录）
+	tables := []string{"assets", "releases", "repositories", "tasks", "storages",
+		"proxies", "notifications", "git_hub_tokens", "users", "api_keys"}
+
+	for _, table := range tables {
+		var count int64
+		db.Raw(fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE deleted_at IS NOT NULL", table)).Scan(&count)
+		if count > 0 {
+			if err := db.Exec(fmt.Sprintf("DELETE FROM %s WHERE deleted_at IS NOT NULL", table)).Error; err != nil {
+				fmt.Printf("[MigrateDropDeletedAt] 清理 %s 软删除记录失败: %v\n", table, err)
+			} else {
+				fmt.Printf("[MigrateDropDeletedAt] 清理 %s 中 %d 条软删除记录\n", table, count)
+			}
+		}
+	}
+
+	// 删除旧唯一索引（包含 WHERE deleted_at IS NULL 条件）
+	db.Exec("DROP INDEX IF EXISTS idx_release_asset_storage")
+
+	// SQLite 不支持 DROP COLUMN（3.35.0 之前），但我们只删除数据和索引
+	// 新记录不再有 deleted_at 字段，AutoMigrate 不会自动删除列
+	// 实际上 GORM AutoMigrate 在 SQLite 下会保留旧列，但不影响功能
+	// 因为 Go struct 中已经没有 DeletedAt 字段，GORM 查询不会再引用该列
+
+	// 重建不含 WHERE 条件的唯一索引
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_release_asset_storage ON assets(release_id, name, storage_id)").Error; err != nil {
+		// 如果有重复数据导致索引创建失败，先清理
+		fmt.Printf("[MigrateDropDeletedAt] 创建索引失败，尝试清理重复数据: %v\n", err)
+		cleanDuplicateAssets(db)
+		if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_release_asset_storage ON assets(release_id, name, storage_id)").Error; err != nil {
+			return fmt.Errorf("创建新索引失败: %w", err)
+		}
+	}
+
+	fmt.Println("[MigrateDropDeletedAt] 迁移完成")
 	return nil
 }

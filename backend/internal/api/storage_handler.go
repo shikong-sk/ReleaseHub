@@ -202,6 +202,11 @@ func (h *storageHandler) delete(c *gin.Context) {
 	var count int64
 	h.db.WithContext(c.Request.Context()).Model(&models.Repository{}).
 		Where("storage_id = ? AND storage_id IS NOT NULL", id).Count(&count)
+	// 同时检查多存储关联表
+	var rsCount int64
+	h.db.WithContext(c.Request.Context()).Model(&models.RepositoryStorage{}).
+		Where("storage_id = ?", id).Count(&rsCount)
+	count += rsCount
 	if count > 0 {
 		writeError(c, http.StatusConflict, "该存储正在被仓库使用，无法删除")
 		return

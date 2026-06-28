@@ -116,12 +116,11 @@ function statusTagType(status: string) {
 
 function taskTypeLabel(type: string) {
   const labels: Record<string, string> = {
-    check_latest: '检查最新',
-    check_all: '全量检查',
-    sync_latest: '同步最新',
+    check_release: '检查版本',
+    check_all_releases: '全量检查',
+    sync_release: '同步版本',
     download_asset: '下载文件',
-    redownload_asset: '重新下载',
-    retention_cleanup: '保留清理'
+    cleanup_release: '保留清理'
   }
   return labels[type] ?? type
 }

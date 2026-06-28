@@ -374,8 +374,8 @@ func (s *Service) resetAssetsToPending(ctx context.Context, repositoryID uint) e
 			"status":       models.AssetStatusPending,
 			"storage_path": "",
 			"sha256":       "",
-			"storage_id":   nil,
-			"downloaded_at": nil,
+			"storage_id":   gorm.Expr("NULL"),
+			"downloaded_at": gorm.Expr("NULL"),
 		})
 	return result.Error
 }
@@ -512,8 +512,8 @@ func (s *Service) resetOrphanedAssets(ctx context.Context, repositoryID uint) er
 			"status":        models.AssetStatusPending,
 			"storage_path":  "",
 			"sha256":        "",
-			"storage_id":    nil,
-			"downloaded_at": nil,
+			"storage_id":    gorm.Expr("NULL"),
+			"downloaded_at": gorm.Expr("NULL"),
 		})
 	return result.Error
 }

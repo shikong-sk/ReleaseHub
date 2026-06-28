@@ -286,6 +286,13 @@ func (h *fileHandler) treeTopLevel(c *gin.Context) {
 		storageOrder = append(storageOrder, s.ID)
 	}
 
+	// 如果没有存储记录但存在默认本地存储（配置中的 DataDir），添加虚拟的默认存储节点
+	if len(storagesByID) == 0 {
+		virtualID := uint(0)
+		storageMap[virtualID] = &storageGroup{ID: virtualID, Name: "默认本地存储", Type: "local", Children: make([]treeNode, 0)}
+		storageOrder = append(storageOrder, virtualID)
+	}
+
 	for _, repo := range repos {
 		// 该仓库的文件可能分布在多个存储上（历史原因）
 		// 首先看仓库当前配置的存储
@@ -306,6 +313,7 @@ func (h *fileHandler) treeTopLevel(c *gin.Context) {
 			Label:        fmt.Sprintf("%s/%s", repo.Owner, repo.Repo),
 			IsLeaf:       false,
 			Prefix:       "📁",
+			StorageID:    primaryStorageID,
 			RepositoryID: repo.ID,
 			FileCount:    fc,
 		}
@@ -321,6 +329,7 @@ func (h *fileHandler) treeTopLevel(c *gin.Context) {
 				Label:        fmt.Sprintf("%s/%s", repo.Owner, repo.Repo),
 				IsLeaf:       false,
 				Prefix:       "📁",
+				StorageID:    otherID,
 				RepositoryID: repo.ID,
 				FileCount:    otherFC,
 			}
@@ -375,7 +384,7 @@ func (h *fileHandler) treeForRepository(c *gin.Context, repoQuery string, storag
 	// 查询该仓库下所有 Release（按 tag 倒序）
 	var releases []models.Release
 	if err := h.db.WithContext(ctx).
-		Where("repository_id = ? AND deleted_at IS NULL", repoID).
+		Where("repository_id = ? ", repoID).
 		Order("tag DESC").
 		Find(&releases).Error; err != nil {
 		writeError(c, http.StatusInternalServerError, "查询 Release 列表失败")
@@ -416,7 +425,7 @@ func (h *fileHandler) treeForRepository(c *gin.Context, repoQuery string, storag
 			Pluck("id", &defaultSID).Error
 		if *filterStorageID == defaultSID {
 			// 请求的是默认存储：包含 storage_id = defaultSID 或 storage_id IS NULL 的资产
-			assetQuery = assetQuery.Where("storage_id = ? OR storage_id IS NULL", *filterStorageID)
+			assetQuery = assetQuery.Where("(storage_id = ? OR storage_id IS NULL)", *filterStorageID)
 		} else {
 			assetQuery = assetQuery.Where("storage_id = ?", *filterStorageID)
 		}

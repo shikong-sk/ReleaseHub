@@ -88,7 +88,6 @@ func (s *CheckService) WithProviderRegistry(registry *provider.Registry) *CheckS
 	return s
 }
 
-
 // CheckByTag 检查指定 tag 的 Release 并持久化到数据库
 func (s *CheckService) CheckByTag(ctx context.Context, repositoryID uint, tag string) (*CheckResult, error) {
 	var repository models.Repository
@@ -449,14 +448,13 @@ func (s *CheckService) persistProviderReleaseWithIsLatest(ctx context.Context, r
 				"api_url",
 				"is_latest",
 				"sync_status",
-				"deleted_at",
 				"updated_at",
 			}),
 		}).Create(&release).Error; err != nil {
 			return err
 		}
 
-		if err := tx.Unscoped().Where("repository_id = ? AND tag = ?", repository.ID, pRelease.TagName).First(&release).Error; err != nil {
+		if err := tx.Where("repository_id = ? AND tag = ?", repository.ID, pRelease.TagName).First(&release).Error; err != nil {
 			return err
 		}
 
@@ -472,43 +470,67 @@ func (s *CheckService) persistProviderReleaseWithIsLatest(ctx context.Context, r
 				status = models.AssetStatusPending
 			}
 
-			var existingAsset models.Asset
-			existingErr := tx.Unscoped().Where("release_id = ? AND name = ?", release.ID, pAsset.Name).First(&existingAsset).Error
-			if existingErr != nil && !errors.Is(existingErr, gorm.ErrRecordNotFound) {
-				return existingErr
-			}
-			if existingErr == nil && matched && existingAsset.StoragePath != "" && existingAsset.Status == models.AssetStatusVerified {
-				status = existingAsset.Status
-			}
-
-			asset := models.Asset{
-				ReleaseID:          release.ID,
-				ProviderAssetID:    pAsset.ID,
-				Name:               pAsset.Name,
-				Size:               pAsset.Size,
-				ContentType:        pAsset.ContentType,
-				DownloadURL:        pAsset.URL,
-				BrowserDownloadURL: pAsset.BrowserDownloadURL,
-				Status:             status,
-			}
-
-			if err := tx.Clauses(clause.OnConflict{
-				Columns: []clause.Column{
-					{Name: "release_id"},
-					{Name: "name"},
-						{Name: "storage_id"},
-				},
-				DoUpdates: clause.AssignmentColumns([]string{
-					"provider_asset_id",
-					"size",
-					"content_type",
-					"download_url",
-					"browser_download_url",
-					"deleted_at",
-					"updated_at",
-				}),
-			}).Create(&asset).Error; err != nil {
+			// 查找是否已有同 release+name 的资产记录（不限 storage_id）
+			// 如果已有，更新元数据即可，不创建新记录
+			var existingAssets []models.Asset
+			if err := tx.Where("release_id = ? AND name = ?", release.ID, pAsset.Name).
+				Find(&existingAssets).Error; err != nil {
 				return err
+			}
+
+				if len(existingAssets) > 0 {
+					// 已有记录：根据当前状态分别处理
+					for i := range existingAssets {
+						ea := &existingAssets[i]
+
+						updates := map[string]any{
+							"provider_asset_id":    pAsset.ID,
+							"size":                 pAsset.Size,
+							"content_type":         pAsset.ContentType,
+							"download_url":         pAsset.URL,
+							"browser_download_url": pAsset.BrowserDownloadURL,
+							"updated_at":           now,
+						}
+
+						if !matched {
+							// 不匹配的资产：保持 skipped 状态
+							updates["status"] = models.AssetStatusSkipped
+						} else if ea.StorageID != nil && *ea.StorageID > 0 &&
+							(ea.Status == models.AssetStatusVerified || ea.Status == models.AssetStatusDownloaded) {
+							// 已绑定存储且已下载成功的记录：只更新元数据，不重置下载状态
+							// 避免重复下载已存在的文件
+						} else if ea.StorageID != nil && *ea.StorageID > 0 &&
+							(ea.Status == models.AssetStatusPending || ea.Status == models.AssetStatusFailed) {
+							// 已绑定存储但未完成的记录：保持 storage_id，重置为 pending 重试
+							updates["status"] = models.AssetStatusPending
+							updates["storage_path"] = ""
+							updates["downloaded_at"] = gorm.Expr("NULL")
+						} else {
+							// 模板记录（storage_id=NULL）：保持模板状态，由 syncer 分配存储
+							updates["status"] = models.AssetStatusPending
+							updates["storage_path"] = ""
+							updates["downloaded_at"] = gorm.Expr("NULL")
+						}
+
+						if err := tx.Model(&existingAssets[i]).Updates(updates).Error; err != nil {
+							return err
+						}
+					}
+			} else {
+				// 没有记录，创建新的（不设 StorageID，由 syncer 下载时按存储创建）
+				asset := models.Asset{
+					ReleaseID:          release.ID,
+					ProviderAssetID:    pAsset.ID,
+					Name:               pAsset.Name,
+					Size:               pAsset.Size,
+					ContentType:        pAsset.ContentType,
+					DownloadURL:        pAsset.URL,
+					BrowserDownloadURL: pAsset.BrowserDownloadURL,
+					Status:             status,
+				}
+				if err := tx.Create(&asset).Error; err != nil {
+					return err
+				}
 			}
 		}
 
@@ -548,6 +570,8 @@ type persistResult struct {
 }
 
 func (s *CheckService) persistProviderReleaseWithLatest(ctx context.Context, repository models.Repository, pRelease *provider.ProviderRelease, matcher *filter.Matcher, isLatest bool) (*persistResult, error) {
+	now := time.Now().UTC()
+
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&models.Release{}).
 			Where("repository_id = ?", repository.ID).
@@ -581,7 +605,6 @@ func (s *CheckService) persistProviderReleaseWithLatest(ctx context.Context, rep
 				"body",
 				"html_url",
 				"api_url",
-				"deleted_at",
 				"is_latest",
 				"sync_status",
 				"updated_at",
@@ -590,7 +613,7 @@ func (s *CheckService) persistProviderReleaseWithLatest(ctx context.Context, rep
 			return err
 		}
 
-		if err := tx.Unscoped().Where("repository_id = ? AND tag = ?", repository.ID, pRelease.TagName).First(&release).Error; err != nil {
+		if err := tx.Where("repository_id = ? AND tag = ?", repository.ID, pRelease.TagName).First(&release).Error; err != nil {
 			return err
 		}
 
@@ -605,34 +628,65 @@ func (s *CheckService) persistProviderReleaseWithLatest(ctx context.Context, rep
 				status = models.AssetStatusPending
 			}
 
-			asset := models.Asset{
-				ReleaseID:          release.ID,
-				ProviderAssetID:    pAsset.ID,
-				Name:               pAsset.Name,
-				Size:               pAsset.Size,
-				ContentType:        pAsset.ContentType,
-				DownloadURL:        pAsset.URL,
-				BrowserDownloadURL: pAsset.BrowserDownloadURL,
-				Status:             status,
+			// 查找是否已有同 release+name 的资产记录（不限 storage_id）
+			var existingAssets []models.Asset
+			if err := tx.Where("release_id = ? AND name = ?", release.ID, pAsset.Name).
+				Find(&existingAssets).Error; err != nil {
+				return err
 			}
 
-			if err := tx.Clauses(clause.OnConflict{
-				Columns: []clause.Column{
-					{Name: "release_id"},
-					{Name: "name"},
-						{Name: "storage_id"},
-				},
-				DoUpdates: clause.AssignmentColumns([]string{
-					"provider_asset_id",
-					"size",
-					"content_type",
-					"download_url",
-					"browser_download_url",
-					"deleted_at",
-					"updated_at",
-				}),
-			}).Create(&asset).Error; err != nil {
-				return err
+				if len(existingAssets) > 0 {
+					// 已有记录：根据当前状态分别处理
+					for i := range existingAssets {
+						ea := &existingAssets[i]
+
+						updates := map[string]any{
+							"provider_asset_id":    pAsset.ID,
+							"size":                 pAsset.Size,
+							"content_type":         pAsset.ContentType,
+							"download_url":         pAsset.URL,
+							"browser_download_url": pAsset.BrowserDownloadURL,
+							"updated_at":           now,
+						}
+
+						if !matched {
+							// 不匹配的资产：保持 skipped 状态
+							updates["status"] = models.AssetStatusSkipped
+						} else if ea.StorageID != nil && *ea.StorageID > 0 &&
+							(ea.Status == models.AssetStatusVerified || ea.Status == models.AssetStatusDownloaded) {
+							// 已绑定存储且已下载成功的记录：只更新元数据，不重置下载状态
+						} else if ea.StorageID != nil && *ea.StorageID > 0 &&
+							(ea.Status == models.AssetStatusPending || ea.Status == models.AssetStatusFailed) {
+							// 已绑定存储但未完成的记录：保持 storage_id，重置为 pending 重试
+							updates["status"] = models.AssetStatusPending
+							updates["storage_path"] = ""
+							updates["downloaded_at"] = gorm.Expr("NULL")
+						} else {
+							// 模板记录（storage_id=NULL）：保持模板状态，由 syncer 分配存储
+							updates["status"] = models.AssetStatusPending
+							updates["storage_path"] = ""
+							updates["downloaded_at"] = gorm.Expr("NULL")
+						}
+
+						if err := tx.Model(&existingAssets[i]).Updates(updates).Error; err != nil {
+							return err
+						}
+					}
+			} else {
+				// 没有记录，创建新的
+				asset := models.Asset{
+					ReleaseID:          release.ID,
+					ProviderAssetID:    pAsset.ID,
+					Name:               pAsset.Name,
+					Size:               pAsset.Size,
+					ContentType:        pAsset.ContentType,
+					DownloadURL:        pAsset.URL,
+					BrowserDownloadURL: pAsset.BrowserDownloadURL,
+					Status:             status,
+				}
+				if err := tx.Create(&asset).Error; err != nil {
+					return err
+				}
 			}
 		}
 

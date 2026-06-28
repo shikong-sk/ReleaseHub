@@ -3,7 +3,6 @@ package models
 import (
 	"time"
 
-	"gorm.io/gorm"
 )
 
 type RepositoryStatus string
@@ -42,7 +41,6 @@ type GitHubToken struct {
 	Token     string         `json:"-" gorm:"column:token;size:512;not null"`
 	CreatedAt time.Time      `json:"createdAt" gorm:"column:created_at"`
 	UpdatedAt time.Time      `json:"updatedAt" gorm:"column:updated_at"`
-	DeletedAt gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
 }
 
 type Storage struct {
@@ -61,7 +59,6 @@ type Storage struct {
 	RemoteURL string         `json:"remoteUrl" gorm:"column:remote_url;size:1024"`
 	CreatedAt time.Time      `json:"createdAt" gorm:"column:created_at"`
 	UpdatedAt time.Time      `json:"updatedAt" gorm:"column:updated_at"`
-	DeletedAt gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
 }
 
 type Repository struct {
@@ -84,8 +81,6 @@ type Repository struct {
 	LastStatus           RepositoryStatus `json:"lastStatus" gorm:"column:last_status;size:40;not null;default:unknown"`
 	CreatedAt            time.Time        `json:"createdAt" gorm:"column:created_at"`
 	UpdatedAt            time.Time        `json:"updatedAt" gorm:"column:updated_at"`
-	DeletedAt            gorm.DeletedAt   `json:"-" gorm:"column:deleted_at;index"`
-
 	// 非数据库字段，API 响应时填充
 	StorageIDs           []uint           `json:"storageIds" gorm:"-"`
 }
@@ -113,7 +108,6 @@ type Release struct {
 	SyncStatus        string         `json:"syncStatus" gorm:"column:sync_status;size:40;not null;default:pending"`
 	CreatedAt         time.Time      `json:"createdAt" gorm:"column:created_at"`
 	UpdatedAt         time.Time      `json:"updatedAt" gorm:"column:updated_at"`
-	DeletedAt         gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
 }
 
 type Asset struct {
@@ -133,7 +127,6 @@ type Asset struct {
 	DownloadedAt       *time.Time     `json:"downloadedAt" gorm:"column:downloaded_at"`
 	CreatedAt          time.Time      `json:"createdAt" gorm:"column:created_at"`
 	UpdatedAt          time.Time      `json:"updatedAt" gorm:"column:updated_at"`
-	DeletedAt          gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
 }
 
 type Task struct {
@@ -152,7 +145,6 @@ type Task struct {
 	ErrorMessage string         `json:"errorMessage" gorm:"column:error_message;type:text"`
 	CreatedAt    time.Time      `json:"createdAt" gorm:"column:created_at"`
 	UpdatedAt    time.Time      `json:"updatedAt" gorm:"column:updated_at"`
-	DeletedAt    gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
 }
 
 type Proxy struct {
@@ -170,7 +162,6 @@ type Proxy struct {
 	LastTestedAt      *time.Time     `json:"lastTestedAt" gorm:"column:last_tested_at"`
 	CreatedAt         time.Time      `json:"createdAt" gorm:"column:created_at"`
 	UpdatedAt         time.Time      `json:"updatedAt" gorm:"column:updated_at"`
-	DeletedAt         gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
 }
 
 type Notification struct {
@@ -183,7 +174,6 @@ type Notification struct {
 	Events    string         `json:"events" gorm:"column:events;type:text"`
 	CreatedAt time.Time      `json:"createdAt" gorm:"column:created_at"`
 	UpdatedAt time.Time      `json:"updatedAt" gorm:"column:updated_at"`
-	DeletedAt gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
 }
 
 type TaskLog struct {
@@ -203,7 +193,6 @@ type User struct {
 	LastLoginAt  *time.Time     `json:"lastLoginAt" gorm:"column:last_login_at"`
 	CreatedAt    time.Time      `json:"createdAt" gorm:"column:created_at"`
 	UpdatedAt    time.Time      `json:"updatedAt" gorm:"column:updated_at"`
-	DeletedAt    gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
 }
 
 type APIKey struct {
@@ -217,5 +206,4 @@ type APIKey struct {
 	LastUsedAt *time.Time     `json:"lastUsedAt" gorm:"column:last_used_at"`
 	CreatedAt  time.Time      `json:"createdAt" gorm:"column:created_at"`
 	UpdatedAt  time.Time      `json:"updatedAt" gorm:"column:updated_at"`
-	DeletedAt  gorm.DeletedAt `json:"-" gorm:"column:deleted_at;index"`
 }

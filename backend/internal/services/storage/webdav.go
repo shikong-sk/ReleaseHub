@@ -1,8 +1,8 @@
 package storage
 
 import (
-	"errors"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -236,8 +236,8 @@ func (s *WebDAVStorage) walkWebDAV(ctx context.Context, dirPath string, results 
 		relPath = filepath.ToSlash(filepath.Clean(relPath))
 
 		*results = append(*results, ListResult{
-			Path:  relPath,
-			Size:  f.Size(),
+			Path: relPath,
+			Size: f.Size(),
 		})
 	}
 	return nil
@@ -253,10 +253,17 @@ func (s *WebDAVStorage) removeEmptyDirs(objectPath string) {
 	for depth := len(parts) - 1; depth >= 2; depth-- {
 		dirPath := filepath.ToSlash(filepath.Join(s.basePath, filepath.Join(parts[:depth]...)))
 		if s.isRemoteDirEmpty(dirPath) {
-			// WebDAV 规范中目录资源以 / 结尾，某些服务器要求路径带尾部斜杠才能正确删除目录
-			dirPathSlash := dirPath + "/"
-			if err := s.client.Remove(dirPathSlash); err != nil {
-				// 目录非空或无权限，停止向上清理
+			removed := false
+			// 不同 WebDAV 服务器对删除目录的路径格式要求不同
+			// 先尝试不带斜杠，再尝试带斜杠
+			for _, p := range []string{dirPath, dirPath + "/"} {
+				if err := s.client.Remove(p); err == nil {
+					removed = true
+					break
+				}
+			}
+			if !removed {
+				// 删除失败可能是目录非空或无权限，停止向上清理
 				return
 			}
 		} else {

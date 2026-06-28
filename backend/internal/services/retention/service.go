@@ -122,17 +122,19 @@ func (s *Service) Cleanup(ctx context.Context, repository models.Repository) (*C
 	}
 
 	// 按仓库动态选择存储驱动
-	driver, err := s.storageDriver(ctx, repository)
-	if err != nil {
-		s.failTaskWithLog(ctx, &task, err, "获取仓库存储驱动失败")
-		return result, err
-	}
 
 	for _, asset := range assets {
 		if strings.TrimSpace(asset.StoragePath) == "" {
 			continue
 		}
-		if err := driver.Delete(ctx, asset.StoragePath); err != nil {
+		// 多存储场景：按每个 Asset 的 StorageID 选择对应的存储驱动
+		assetDriver, driverErr := s.storageDriverForAsset(ctx, asset, repository)
+		if driverErr != nil {
+			cleanupErr := fmt.Errorf("获取资产 %s 存储驱动失败: %w", asset.StoragePath, driverErr)
+			s.failTaskWithLog(ctx, &task, cleanupErr, "获取存储驱动失败")
+			return result, cleanupErr
+		}
+		if err := assetDriver.Delete(ctx, asset.StoragePath); err != nil {
 			cleanupErr := fmt.Errorf("删除资产文件 %s 失败: %w", asset.StoragePath, err)
 			s.failTaskWithLog(ctx, &task, cleanupErr, "删除存储文件失败")
 			return result, cleanupErr
@@ -143,30 +145,13 @@ func (s *Service) Cleanup(ctx context.Context, repository models.Repository) (*C
 	now := time.Now().UTC()
 	result.DeletedAssets = len(assets)
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 硬删除：先删资产，再删版本
 		if len(assets) > 0 {
-			if err := tx.Model(&models.Asset{}).
-				Where("release_id IN ?", releaseIDs).
-				Updates(map[string]any{
-					"status":       models.AssetStatusDeleted,
-					"storage_path": "",
-					"updated_at":   now,
-				}).Error; err != nil {
-				return err
-			}
 			if err := tx.Where("release_id IN ?", releaseIDs).Delete(&models.Asset{}).Error; err != nil {
 				return err
 			}
 		}
 
-		if err := tx.Model(&models.Release{}).
-			Where("id IN ?", releaseIDs).
-			Updates(map[string]any{
-				"is_latest":   false,
-				"sync_status": "deleted",
-				"updated_at":  now,
-			}).Error; err != nil {
-			return err
-		}
 		if err := tx.Where("id IN ?", releaseIDs).Delete(&models.Release{}).Error; err != nil {
 			return err
 		}
@@ -198,6 +183,17 @@ func (s *Service) storageDriver(ctx context.Context, repository models.Repositor
 		return s.storages.DriverForRepository(ctx, repository)
 	}
 	return s.storage, nil
+}
+
+// storageDriverForAsset 按 Asset 自身的 StorageID 确定存储驱动，回退到仓库配置
+func (s *Service) storageDriverForAsset(ctx context.Context, asset models.Asset, repository models.Repository) (storage.Driver, error) {
+	if asset.StorageID != nil && *asset.StorageID > 0 && s.storages != nil {
+		var storageModel models.Storage
+		if err := s.storages.DB().WithContext(ctx).First(&storageModel, *asset.StorageID).Error; err == nil {
+			return storage.NewDriverFromModel(storageModel)
+		}
+	}
+	return s.storageDriver(ctx, repository)
 }
 
 func (s *Service) failTask(ctx context.Context, task *models.Task, err error) {

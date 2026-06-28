@@ -89,25 +89,17 @@ func TestCleanupRepositoryKeepsLatestReleasesAndDeletesOldAssets(t *testing.T) {
 		t.Fatalf("保留的 Release 不符合预期: %+v", remainingReleases)
 	}
 
+	// 硬删除验证：旧 Release 和 Asset 应完全不存在
 	var deletedRelease models.Release
 	if err := db.WithContext(ctx).First(&deletedRelease, oldRelease.ID).Error; !errors.Is(err, gorm.ErrRecordNotFound) {
-		t.Fatalf("旧 Release 应被软删除，实际错误: %v", err)
-	}
-	if err := db.WithContext(ctx).Unscoped().First(&deletedRelease, oldRelease.ID).Error; err != nil {
-		t.Fatalf("查询软删除 Release 失败: %v", err)
-	}
-	if !deletedRelease.DeletedAt.Valid || deletedRelease.SyncStatus != "deleted" {
-		t.Fatalf("软删除 Release 状态不符合预期: %+v", deletedRelease)
+		t.Fatalf("旧 Release 应被硬删除，实际错误: %v", err)
 	}
 
 	var deletedAsset models.Asset
-	if err := db.WithContext(ctx).Unscoped().
+	if err := db.WithContext(ctx).
 		Where("release_id = ?", oldRelease.ID).
-		First(&deletedAsset).Error; err != nil {
-		t.Fatalf("查询软删除 Asset 失败: %v", err)
-	}
-	if !deletedAsset.DeletedAt.Valid || deletedAsset.Status != models.AssetStatusDeleted || deletedAsset.StoragePath != "" {
-		t.Fatalf("软删除 Asset 状态不符合预期: %+v", deletedAsset)
+		First(&deletedAsset).Error; !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("旧 Asset 应被硬删除，实际错误: %v", err)
 	}
 
 	var task models.Task

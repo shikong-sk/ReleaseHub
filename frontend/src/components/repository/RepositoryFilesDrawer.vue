@@ -106,6 +106,7 @@ async function loadTree() {
         :tree="fileTree"
         :loading="fileTreeLoading"
         :can-write="true"
+        :storage-id="activeStorageId"
         @refresh="loadTree"
       />
     </NDrawerContent>

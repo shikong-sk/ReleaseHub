@@ -40,6 +40,7 @@ export interface Asset {
   storagePath: string
   sha256: string
   status: AssetStatus
+  storageId: number | null
   errorMessage: string
   downloadedAt: string | null
   createdAt: string

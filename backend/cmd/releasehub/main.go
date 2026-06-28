@@ -62,6 +62,11 @@ func main() {
 		logger.Warn("回填资产 StorageID 失败", zap.Error(err))
 	}
 
+	// 清理软删除数据并迁移到硬删除（一次性迁移）
+	if err := database.MigrateDropDeletedAt(db); err != nil {
+		logger.Warn("清理软删除数据失败", zap.Error(err))
+	}
+
 	// 迁移 Asset 唯一索引（支持多存储）
 	if err := database.MigrateAssetUniqueIndex(db); err != nil {
 		logger.Warn("迁移 Asset 唯一索引失败", zap.Error(err))

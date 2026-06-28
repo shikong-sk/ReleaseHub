@@ -206,20 +206,18 @@ func (h *releaseHandler) deleteRelease(c *gin.Context) {
 		return
 	}
 
-	// 逐个删除资产（含存储文件）
+	// 逐个删除资产（含存储文件和数据库记录）
 	for _, asset := range assets {
-		if asset.Status == models.AssetStatusVerified || asset.Status == models.AssetStatusDownloaded {
+		if asset.Status == models.AssetStatusVerified || asset.Status == models.AssetStatusDownloaded || asset.Status == models.AssetStatusDeleted {
+			// 已下载的资产：删除存储文件 + 数据库记录
 			if err := h.assetService.Delete(ctx, asset.ID); err != nil {
 				h.db.WithContext(ctx).Model(&models.Asset{}).Where("id = ?", asset.ID).
 					Update("status", models.AssetStatusDeleted)
 			}
+		} else {
+			// pending/failed/skipped 等状态的资产：直接删除记录
+			h.db.WithContext(ctx).Delete(&asset)
 		}
-	}
-
-	// 删除数据库中的资产记录
-	if err := h.db.WithContext(ctx).Where("release_id = ?", release.ID).Delete(&models.Asset{}).Error; err != nil {
-		writeError(c, http.StatusInternalServerError, "删除资产记录失败")
-		return
 	}
 
 	// 删除 Release 记录
