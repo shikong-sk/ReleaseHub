@@ -6,7 +6,7 @@ import { FolderOpen, RefreshCw, Search, Database } from 'lucide-vue-next'
 import FileTreeModal from '@/components/file/FileTreeModal.vue'
 import { useFilesStore } from '@/stores/files'
 
-import { search as apiSearch, type SearchResult } from '@/api/search'
+import { search as apiSearch, type SearchParams, type SearchResult } from '@/api/search'
 import { runReconcile, type ReconcileItem, type ReconcileResult } from '@/api/reconcile'
 import { useAuthStore } from '@/stores/auth'
 
@@ -78,7 +78,7 @@ async function handleGlobalSearch() {
   globalLoading.value = true
   globalError.value = null
   try {
-    globalResult.value = await apiSearch(q, 30)
+    globalResult.value = await apiSearch({ q, limit: 30 })
   } catch (err) {
     globalError.value = err instanceof Error ? err.message : '搜索失败'
   } finally {
