@@ -8,14 +8,12 @@ COPY frontend/ ./
 RUN npm run build
 
 # ─────────────────────────────────────────────────────────────
-FROM golang:1.24-alpine AS backend-builder
+FROM golang:1.26-alpine AS backend-builder
 
-WORKDIR /src
+WORKDIR /src/backend
 RUN apk add --no-cache build-base
 
-COPY backend/go.mod backend/go.sum* ./backend/
-COPY go.work ./
-WORKDIR /src/backend
+COPY backend/go.mod backend/go.sum* ./
 RUN go mod download
 
 COPY backend/ ./
