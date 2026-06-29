@@ -32,7 +32,16 @@ const formType = shallowRef<NotificationType>('gotify')
 const formServerUrl = shallowRef('')
 const formToken = shallowRef('')
 const formEnabled = shallowRef(true)
-const formEvents = shallowRef('*')
+const formEvents = shallowRef<string[]>([])
+
+const eventOptions = [
+  { label: '全部事件', value: '*' },
+  { label: '发现新版本', value: 'new_release' },
+  { label: '同步完成', value: 'sync_success' },
+  { label: '同步失败', value: 'sync_failed' },
+  { label: '下载成功', value: 'download_ok' },
+  { label: '下载失败', value: 'download_err' }
+]
 
 const typeOptions = [
   { label: 'Gotify', value: 'gotify' },
@@ -123,7 +132,7 @@ function openCreateModal() {
   formServerUrl.value = ''
   formToken.value = ''
   formEnabled.value = true
-  formEvents.value = '*'
+  formEvents.value = ['*']
   showModal.value = true
 }
 
@@ -134,7 +143,7 @@ function handleEdit(row: NotificationItem) {
   formServerUrl.value = row.serverUrl
   formToken.value = ''
   formEnabled.value = row.enabled
-  formEvents.value = row.events
+  formEvents.value = row.events === '*' ? ['*'] : row.events.split(',').map((s: string) => s.trim()).filter(Boolean)
   showModal.value = true
 }
 
@@ -150,7 +159,7 @@ async function handleSubmit() {
       serverUrl: formServerUrl.value.trim() || undefined,
       token: formToken.value || undefined,
       enabled: formEnabled.value,
-      events: formEvents.value.trim() || undefined
+      events: formEvents.value.includes('*') ? '*' : formEvents.value.join(',')
     }
     if (editingId.value) {
       await notificationsStore.update(editingId.value, payload)
@@ -238,7 +247,12 @@ async function handleTest(id: number) {
           <NSwitch v-model:value="formEnabled" />
         </NFormItem>
         <NFormItem label="事件">
-          <NInput v-model:value="formEvents" placeholder="* 或 new_release,sync_failed" />
+          <NSelect
+            v-model:value="formEvents"
+            :options="eventOptions"
+            multiple
+            placeholder="选择要订阅的事件"
+          />
         </NFormItem>
       </NForm>
     </NModal>
