@@ -76,21 +76,98 @@ ReleaseHub 是面向 GitHub / GitLab / Gitea / Forgejo Releases 的 Artifact 管
 
 ## 快速开始
 
-### Docker Compose（推荐）
+### Docker 部署（推荐）
+
+使用预构建镜像一键部署：
+
+```bash
+# 拉取镜像
+docker pull ghcr.io/shikong-sk/releasehub:latest
+
+# 启动
+docker run -d \
+  --name releasehub \
+  -p 5180:80 \
+  -v releasehub-data:/data \
+  -e RELEASEHUB_APP_ENV=production \
+  releasehub
+```
+
+访问 `http://localhost:5180`，默认无需认证。
+
+#### Docker Compose 示例
+
+**基础部署**（无认证，适合内网）：
+
+```yaml
+services:
+  releasehub:
+    image: ghcr.io/shikong-sk/releasehub:latest
+    environment:
+      RELEASEHUB_APP_ENV: production
+      RELEASEHUB_HTTP_HOST: 0.0.0.0
+      RELEASEHUB_HTTP_PORT: 8080
+      RELEASEHUB_DATABASE_DSN: /data/releasehub.db
+      RELEASEHUB_STORAGE_DATA_DIR: /data/releases
+    volumes:
+      - data:/data
+    ports:
+      - "5180:80"
+    restart: unless-stopped
+
+volumes:
+  data:
+```
+
+**生产部署**（启用认证 + 自托管 GitHub 镜像源 + 绑定存储路径）：
+
+```yaml
+services:
+  releasehub:
+    # image: ghcr.io/shikong-sk/releasehub:latest
+    image: ghcr.nju.edu.cn/shikong-sk/releasehub:latest   # GitHub 镜像加速
+    environment:
+      RELEASEHUB_APP_ENV: production
+      RELEASEHUB_HTTP_HOST: 0.0.0.0
+      RELEASEHUB_HTTP_PORT: 8080
+      RELEASEHUB_DATABASE_DSN: /data/releasehub.db
+      RELEASEHUB_STORAGE_DATA_DIR: /data/releases
+      RELEASEHUB_GITHUB_API_BASE_URL: https://api.github.com
+      RELEASEHUB_SCHEDULER_ENABLED: "true"
+      RELEASEHUB_SCHEDULER_TICK_SECONDS: "60"
+      RELEASEHUB_SCHEDULER_MAX_CONCURRENT: "5"
+      RELEASEHUB_AUTH_ENABLED: "true"
+      RELEASEHUB_APP_JWT_SECRET: your-random-secret-key-here
+      RELEASEHUB_AUTH_DEFAULT_ADMIN: admin
+      RELEASEHUB_AUTH_DEFAULT_PASSWORD: admin
+    volumes:
+      - data:/data
+    ports:
+      - "5180:80"
+    restart: unless-stopped
+
+volumes:
+  data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/storage/release   # 替换为你的实际存储路径
+```
+
+> **提示**：
+> - 容器内 nginx 监听 **80** 端口，后端监听 **8080**（容器内部），对外只需映射 `80`
+> - `volumes.data.driver_opts` 可将数据直接绑定到宿主机目录，避免 Docker 卷管理开销
+> - 启用认证后务必修改 `RELEASEHUB_AUTH_DEFAULT_PASSWORD` 和 `RELEASEHUB_APP_JWT_SECRET`
+> - 如使用 GitHub 镜像站（如 `ghcr.nju.edu.cn`），替换 image 地址即可
+
+#### 从源码构建
 
 ```bash
 docker compose -f docker/compose.sqlite.yml up --build
 ```
 
-启动后访问 `http://localhost:8088`，数据持久化到 `./data`。
-
-如需启用认证：
-
-```bash
-RELEASEHUB_AUTH_ENABLED=true \
-RELEASEHUB_APP_JWT_SECRET=your-secret \
-docker compose -f docker/compose.sqlite.yml up --build
-```
+启动后访问 `http://localhost:8080`，数据持久化到 `./data`。
 
 ### 本地开发
 
@@ -200,10 +277,12 @@ ReleaseHub/
 │       ├── types/            # TypeScript 类型
 │       └── views/            # 页面
 ├── docker/                   # Docker 配置
+│   ├── Dockerfile            # 统一构建镜像（前端 + 后端 + nginx）
+│   ├── Dockerfile.backend    # 仅后端（开发用）
+│   ├── Dockerfile.frontend   # 仅前端（开发用）
 │   ├── compose.sqlite.yml
-│   ├── Dockerfile.backend
-│   ├── Dockerfile.frontend
-│   └── nginx.conf
+│   ├── nginx.conf
+│   └── start.sh              # 容器入口：nginx + backend
 └── docs/                     # 文档
     ├── getting-started.md
     ├── configuration.md
