@@ -1,8 +1,8 @@
 services:
-  backend:
+  releasehub:
     build:
       context: ..
-      dockerfile: docker/Dockerfile.backend
+      dockerfile: docker/Dockerfile
     environment:
       RELEASEHUB_APP_ENV: production
       RELEASEHUB_HTTP_HOST: 0.0.0.0
@@ -12,13 +12,4 @@ services:
     volumes:
       - ../data:/data
     ports:
-      - "8080:8080"
-
-  frontend:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.frontend
-    depends_on:
-      - backend
-    ports:
-      - "8088:80"
+      - "8080:80"
