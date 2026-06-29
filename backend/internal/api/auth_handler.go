@@ -44,7 +44,7 @@ type createUserInput struct {
 }
 
 type updatePasswordInput struct {
-	OldPassword string `json:"oldPassword" binding:"required,min=6"`
+	OldPassword string `json:"oldPassword" binding:"required,min=1"`
 	NewPassword string `json:"newPassword" binding:"required,min=6,max=128"`
 }
 
