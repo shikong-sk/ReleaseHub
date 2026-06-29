@@ -10,6 +10,7 @@ import {
   NSpace,
   useMessage
 } from 'naive-ui'
+import type { SelectOption } from 'naive-ui'
 import { RefreshCw } from 'lucide-vue-next'
 
 import FileTreePanel from '@/components/file/FileTreePanel.vue'
@@ -49,8 +50,8 @@ const modalTitle = computed(() => props.title ?? '文件浏览')
 const storagesStore = useStoragesStore()
 
 const storageOptions = computed(() => {
-  const options: { label: string; value: number | null }[] = [
-    { label: '全部存储', value: null }
+  const options: SelectOption[] = [
+    { label: '全部存储', value: null as unknown as number }
   ]
   for (const s of storagesStore.items) {
     options.push({ label: `${s.name} (${s.type.toUpperCase()})`, value: s.id })
@@ -58,7 +59,6 @@ const storageOptions = computed(() => {
   return options
 })
 
-// 实际传给 FileTreePanel 的 storageId
 // 如果外部指定了 storageId（如存储页面），优先使用外部的
 const effectiveStorageId = computed(() => {
   // 外部指定了 storageId 时优先使用

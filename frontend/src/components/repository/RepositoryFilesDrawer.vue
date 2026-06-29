@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, watch } from 'vue'
 import { NDrawer, NDrawerContent, NSelect, NSpace } from 'naive-ui'
+import type { SelectOption } from 'naive-ui'
 
 import FileTreePanel from '@/components/file/FileTreePanel.vue'
 import { getFileTree, getRepositoryFileTree } from '@/api/files'
@@ -26,8 +27,8 @@ const title = computed(() =>
 const storagesStore = useStoragesStore()
 
 const storageOptions = computed(() => {
-  const options: { label: string; value: number | null }[] = [
-    { label: '全部存储', value: null }
+  const options: SelectOption[] = [
+    { label: '全部存储', value: null as unknown as number }
   ]
   // 优先使用仓库配置的存储列表
   const repoStorages = props.repository?.storageIds ?? []

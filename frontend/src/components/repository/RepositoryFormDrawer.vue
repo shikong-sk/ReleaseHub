@@ -59,7 +59,8 @@ const selectedTokenId = computed<number>({
 const selectedStorageIds = computed<number[]>({
   get: () => {
     // 优先使用 storageIds，回退到 storageId
-    if (form.storageIds.length > 0) return form.storageIds
+    const ids = form.storageIds ?? []
+    if (ids.length > 0) return ids
     if (form.storageId != null) return [form.storageId]
     return []
   },
@@ -187,7 +188,7 @@ function submit() {
     repo: form.repo.trim(),
     githubTokenId: tokenId === 0 || tokenId === null ? null : tokenId,
     storageId: storageId === 0 || storageId === null ? null : storageId,
-    storageIds: form.storageIds.length > 0 ? form.storageIds : undefined,
+    storageIds: (form.storageIds ?? []).length > 0 ? form.storageIds : undefined,
     proxyId: proxyId === 0 || proxyId === null ? null : proxyId,
     providerApiBaseUrl: (form.providerApiBaseUrl ?? '').trim() || undefined,
     enabled: form.enabled,

@@ -29,7 +29,7 @@ export async function getJson<T>(path: string): Promise<T> {
 }
 
 interface RequestJsonOptions {
-  method: 'POST' | 'PATCH' | 'DELETE'
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   body?: unknown
 }
 
