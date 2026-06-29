@@ -52,18 +52,32 @@ func (h *statsHandler) dashboard(c *gin.Context) {
 	h.db.WithContext(c.Request.Context()).Model(&models.Repository{}).Where("enabled = ?", true).Count(&stats.EnabledRepositories)
 	h.db.WithContext(c.Request.Context()).Model(&models.Repository{}).Where("last_status = ?", "healthy").Count(&stats.HealthyRepositories)
 	h.db.WithContext(c.Request.Context()).Model(&models.Repository{}).Where("last_status = ?", "failed").Count(&stats.FailedRepositories)
-	h.db.WithContext(c.Request.Context()).Model(&models.Release{}).Count(&stats.TotalReleases)
-	h.db.WithContext(c.Request.Context()).Model(&models.Asset{}).Count(&stats.TotalAssets)
-	h.db.WithContext(c.Request.Context()).Model(&models.Asset{}).Where("status = ?", "verified").Count(&stats.DownloadedAssets)
-	h.db.WithContext(c.Request.Context()).Model(&models.Asset{}).Where("status = ?", "failed").Count(&stats.FailedAssets)
-	h.db.WithContext(c.Request.Context()).Model(&models.Task{}).Where("status = ?", "pending").Count(&stats.PendingTasks)
-	h.db.WithContext(c.Request.Context()).Model(&models.Task{}).Where("status = ?", "running").Count(&stats.RunningTasks)
-	h.db.WithContext(c.Request.Context()).Model(&models.Task{}).Where("status = ?", "failed").Count(&stats.FailedTasks)
+	h.db.WithContext(c.Request.Context()).Model(&models.Release{}).
+		Where("repository_id IN (?)", h.db.Model(&models.Repository{}).Select("id")).
+		Count(&stats.TotalReleases)
+	h.db.WithContext(c.Request.Context()).Model(&models.Asset{}).
+		Where("release_id IN (?)", h.db.Model(&models.Release{}).Select("id")).
+		Count(&stats.TotalAssets)
+	h.db.WithContext(c.Request.Context()).Model(&models.Asset{}).
+		Where("status = ? AND release_id IN (?)", "verified", h.db.Model(&models.Release{}).Select("id")).
+		Count(&stats.DownloadedAssets)
+	h.db.WithContext(c.Request.Context()).Model(&models.Asset{}).
+		Where("status = ? AND release_id IN (?)", "failed", h.db.Model(&models.Release{}).Select("id")).
+		Count(&stats.FailedAssets)
+	h.db.WithContext(c.Request.Context()).Model(&models.Task{}).
+		Where("status = ? AND (repository_id IS NULL OR repository_id IN (?))", "pending", h.db.Model(&models.Repository{}).Select("id")).
+		Count(&stats.PendingTasks)
+	h.db.WithContext(c.Request.Context()).Model(&models.Task{}).
+		Where("status = ? AND (repository_id IS NULL OR repository_id IN (?))", "running", h.db.Model(&models.Repository{}).Select("id")).
+		Count(&stats.RunningTasks)
+	h.db.WithContext(c.Request.Context()).Model(&models.Task{}).
+		Where("status = ? AND (repository_id IS NULL OR repository_id IN (?))", "failed", h.db.Model(&models.Repository{}).Select("id")).
+		Count(&stats.FailedTasks)
 
 	// 存储用量
 	var totalSize int64
 	h.db.WithContext(c.Request.Context()).Model(&models.Asset{}).
-		Where("status = ?", "verified").
+		Where("status = ? AND release_id IN (?)", "verified", h.db.Model(&models.Release{}).Select("id")).
 		Select("COALESCE(SUM(size), 0)").
 		Scan(&totalSize)
 	stats.TotalStorageBytes = totalSize

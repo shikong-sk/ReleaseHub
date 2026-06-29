@@ -45,6 +45,11 @@ type reconcileResult struct {
 	MissingInDB       []reconcileItem `json:"missingInDB"`
 	RepairedInDB      []reconcileItem `json:"repairedInDB"`
 	ResetToPending    []reconcileItem `json:"resetToPending"`
+	OrphanReleases    []reconcileItem `json:"orphanReleases"`
+	OrphanAssets      []reconcileItem `json:"orphanAssets"`
+	OrphanTasks       []reconcileItem `json:"orphanTasks"`
+	OrphanTaskLogs    int64           `json:"orphanTaskLogs"`
+	OrphanRepoStorages int64          `json:"orphanRepoStorages"`
 	StorageScanErrors []string        `json:"storageScanErrors"`
 	TotalStorageFiles int             `json:"totalStorageFiles"`
 	TotalDBAssets     int             `json:"totalDBAssets"`
@@ -71,6 +76,9 @@ func (h *reconcileHandler) reconcile(c *gin.Context) {
 		MissingInDB:       []reconcileItem{},
 		RepairedInDB:      []reconcileItem{},
 		ResetToPending:    []reconcileItem{},
+		OrphanReleases:    []reconcileItem{},
+		OrphanAssets:      []reconcileItem{},
+		OrphanTasks:       []reconcileItem{},
 		StorageScanErrors: []string{},
 	}
 	ctx := c.Request.Context()
@@ -318,6 +326,135 @@ func (h *reconcileHandler) reconcile(c *gin.Context) {
 				}
 			}
 		}
+	}
+
+	// ====== 阶段三：孤儿数据检测与清理 ======
+
+	// 收集所有有效仓库 ID
+	var repoIDs []uint
+	h.db.WithContext(ctx).Model(&models.Repository{}).Pluck("id", &repoIDs)
+	validRepoIDs := make(map[uint]bool, len(repoIDs))
+	for _, id := range repoIDs {
+	 validRepoIDs[id] = true
+	}
+
+	// 孤儿 Release：repository_id 指向不存在的仓库
+	var orphanReleases []models.Release
+	h.db.WithContext(ctx).Where("repository_id NOT IN ?", repoIDs).Find(&orphanReleases)
+	for _, rel := range orphanReleases {
+	 result.OrphanReleases = append(result.OrphanReleases, reconcileItem{
+	  Path:    fmt.Sprintf("Release #%d (repo_id=%d, tag=%s)", rel.ID, rel.RepositoryID, rel.Tag),
+	  AssetID: rel.ID,
+	 })
+	}
+
+	// 收集有效 Release ID
+	var releaseIDs []uint
+	h.db.WithContext(ctx).Model(&models.Release{}).Pluck("id", &releaseIDs)
+	validReleaseIDs := make(map[uint]bool, len(releaseIDs))
+	for _, id := range releaseIDs {
+	 validReleaseIDs[id] = true
+	}
+
+	// 孤儿 Asset：release_id 指向不存在的 release
+	var orphanAssets []models.Asset
+	h.db.WithContext(ctx).Where("release_id NOT IN ?", releaseIDs).Find(&orphanAssets)
+	for _, a := range orphanAssets {
+	 result.OrphanAssets = append(result.OrphanAssets, reconcileItem{
+	  Path:    a.StoragePath,
+	  AssetID: a.ID,
+	 })
+	}
+
+	// 孤儿 Task：repository_id 指向不存在的仓库
+	var orphanTasks []models.Task
+	h.db.WithContext(ctx).Where("repository_id IS NOT NULL AND repository_id NOT IN ?", repoIDs).Find(&orphanTasks)
+	for _, t := range orphanTasks {
+	 result.OrphanTasks = append(result.OrphanTasks, reconcileItem{
+	  Path:    fmt.Sprintf("Task #%d (type=%s, status=%s)", t.ID, t.Type, t.Status),
+	  AssetID: t.ID,
+	 })
+	}
+
+	// 孤儿 TaskLog 计数
+	var taskIDs []uint
+	h.db.WithContext(ctx).Model(&models.Task{}).Pluck("id", &taskIDs)
+	if len(taskIDs) > 0 {
+	 h.db.WithContext(ctx).Model(&models.TaskLog{}).Where("task_id NOT IN ?", taskIDs).Count(&result.OrphanTaskLogs)
+	} else {
+	 var total int64
+	 h.db.WithContext(ctx).Model(&models.TaskLog{}).Count(&total)
+	 result.OrphanTaskLogs = total
+	}
+
+	// 孤儿 RepositoryStorage 计数
+	h.db.WithContext(ctx).Model(&models.RepositoryStorage{}).Where("repository_id NOT IN ?", repoIDs).Count(&result.OrphanRepoStorages)
+
+	// 非 dryRun：清理孤儿数据
+	if !req.DryRun {
+	 if len(orphanReleases) > 0 || len(orphanAssets) > 0 || len(orphanTasks) > 0 || result.OrphanTaskLogs > 0 || result.OrphanRepoStorages > 0 {
+	  err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	   // TaskLog → orphan Task
+	   if len(orphanTasks) > 0 {
+	    orphanTaskIDs := make([]uint, len(orphanTasks))
+	    for i, t := range orphanTasks {
+	     orphanTaskIDs[i] = t.ID
+	    }
+	    if err := tx.Where("task_id IN ?", orphanTaskIDs).Delete(&models.TaskLog{}).Error; err != nil {
+	     return err
+	    }
+	   }
+	   // orphan TaskLog (task_id pointing to non-existent tasks)
+	   if len(taskIDs) > 0 {
+	    if err := tx.Where("task_id NOT IN ?", taskIDs).Delete(&models.TaskLog{}).Error; err != nil {
+	     return err
+	    }
+	   } else if result.OrphanTaskLogs > 0 {
+	    if err := tx.Where("1 = 1").Delete(&models.TaskLog{}).Error; err != nil {
+	     return err
+	    }
+	   }
+	   // orphan Asset
+	   if len(orphanAssets) > 0 {
+	    orphanAssetIDs := make([]uint, len(orphanAssets))
+	    for i, a := range orphanAssets {
+	     orphanAssetIDs[i] = a.ID
+	    }
+	    if err := tx.Where("id IN ?", orphanAssetIDs).Delete(&models.Asset{}).Error; err != nil {
+	     return err
+	    }
+	   }
+	   // orphan Release
+	   if len(orphanReleases) > 0 {
+	    orphanReleaseIDs := make([]uint, len(orphanReleases))
+	    for i, r := range orphanReleases {
+	     orphanReleaseIDs[i] = r.ID
+	    }
+	    if err := tx.Where("id IN ?", orphanReleaseIDs).Delete(&models.Release{}).Error; err != nil {
+	     return err
+	    }
+	   }
+	   // orphan Task
+	   if len(orphanTasks) > 0 {
+	    orphanTaskIDs := make([]uint, len(orphanTasks))
+	    for i, t := range orphanTasks {
+	     orphanTaskIDs[i] = t.ID
+	    }
+	    if err := tx.Where("id IN ?", orphanTaskIDs).Delete(&models.Task{}).Error; err != nil {
+	     return err
+	    }
+	   }
+	   // orphan RepositoryStorage
+	   if err := tx.Where("repository_id NOT IN ?", repoIDs).Delete(&models.RepositoryStorage{}).Error; err != nil {
+	    return err
+	   }
+	   return nil
+	  })
+	  if err != nil {
+	   h.logger.Error("清理孤儿数据失败", zap.Error(err))
+	   result.StorageScanErrors = append(result.StorageScanErrors, fmt.Sprintf("清理孤儿数据失败: %v", err))
+	  }
+	 }
 	}
 
 	c.JSON(http.StatusOK, result)

@@ -4,6 +4,7 @@ import {
   NAlert,
   NButton,
   NCard,
+  NCheckbox,
   NDataTable,
   NForm,
   NFormItem,
@@ -15,11 +16,12 @@ import {
   NTag,
   useMessage
 } from 'naive-ui'
-import { FolderOpen, Plus, RefreshCw } from 'lucide-vue-next'
+import { FolderOpen, Plus, RefreshCw, Wrench } from 'lucide-vue-next'
 import type { DataTableColumns } from 'naive-ui'
 
 import FileTreeModal from '@/components/file/FileTreeModal.vue'
 import { getAppConfig } from '@/api/settings'
+import { runReconcile, type ReconcileResult, type ReconcileItem } from '@/api/reconcile'
 import { useStoragesStore } from '@/stores/storages'
 import type { StorageItem, StorageType } from '@/types/storage'
 
@@ -46,6 +48,12 @@ const defaultDataDir = shallowRef('data/releases')
 const showFileTreeModal = shallowRef(false)
 const fileTreeStorageId = shallowRef<number | null>(null)
 const fileTreeTitle = shallowRef('文件浏览')
+
+// 存储修复
+const showReconcileModal = shallowRef(false)
+const reconcileLoading = shallowRef(false)
+const reconcileDryRun = shallowRef(true)
+const reconcileResult = shallowRef<ReconcileResult | null>(null)
 
 const typeOptions = [
   { label: '本地存储', value: 'local' },
@@ -260,6 +268,29 @@ async function handleTest(id: number) {
     message.error(err instanceof Error ? err.message : '连接测试失败')
   }
 }
+
+async function handleReconcile() {
+  reconcileLoading.value = true
+  reconcileResult.value = null
+  try {
+    const result = await runReconcile(reconcileDryRun.value)
+    reconcileResult.value = result
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '存储校验失败')
+  } finally {
+    reconcileLoading.value = false
+  }
+}
+
+const reconcileItemColumns = computed<DataTableColumns<ReconcileItem>>(() => [
+  { title: '存储', key: 'storageName', width: 120 },
+  { title: '路径', key: 'path', ellipsis: { tooltip: true } },
+  { title: 'Owner', key: 'owner', width: 100 },
+  { title: 'Repo', key: 'repo', width: 120 },
+  { title: 'Tag', key: 'tag', width: 100 },
+  { title: '文件', key: 'filename', ellipsis: { tooltip: true } },
+  { title: '资产ID', key: 'assetId', width: 80 }
+])
 </script>
 
 <template>
@@ -275,6 +306,10 @@ async function handleTest(id: number) {
           <NButton secondary :loading="storagesStore.loading" @click="storagesStore.refresh">
             <template #icon><RefreshCw /></template>
             刷新
+          </NButton>
+          <NButton secondary @click="showReconcileModal = true; reconcileResult = null">
+            <template #icon><Wrench /></template>
+            修复存储
           </NButton>
           <NButton type="primary" @click="openCreateModal">
             <template #icon><Plus /></template>
@@ -301,6 +336,83 @@ async function handleTest(id: number) {
       :storage-id="fileTreeStorageId"
       :title="fileTreeTitle"
     />
+
+    <!-- 存储修复弹窗 -->
+    <NModal v-model:show="showReconcileModal" preset="card" title="存储校验与修复" style="width: 90vw; max-width: 1200px">
+      <NSpace vertical :size="16">
+        <NAlert type="info" :bordered="false">
+          校验存储与数据库的一致性：检测存储中存在但 DB 缺失的文件、DB 中存在但存储缺失的资产、以及状态异常的记录。
+        </NAlert>
+
+        <NSpace align="center">
+          <NCheckbox v-model:checked="reconcileDryRun">安全预检模式（不实际修改）</NCheckbox>
+          <NButton type="primary" :loading="reconcileLoading" @click="handleReconcile">
+            开始校验
+          </NButton>
+        </NSpace>
+
+        <template v-if="reconcileResult">
+          <NSpace vertical :size="8">
+            <NTag :type="reconcileResult.dryRun ? 'warning' : 'success'" size="small">
+              {{ reconcileResult.dryRun ? '预检模式' : '修复模式' }}
+            </NTag>
+            <span>存储文件: {{ reconcileResult.totalStorageFiles }} | DB 资产: {{ reconcileResult.totalDBAssets }}</span>
+          </NSpace>
+
+          <template v-if="reconcileResult.missingInStorage.length > 0">
+            <h4 style="margin: 0; color: #e65100">DB 有记录但存储缺失 ({{ reconcileResult.missingInStorage.length }})</h4>
+            <NDataTable :columns="reconcileItemColumns" :data="reconcileResult.missingInStorage" :pagination="{ pageSize: 5 }" size="small" />
+          </template>
+
+          <template v-if="reconcileResult.missingInDB.length > 0">
+            <h4 style="margin: 0; color: #1565c0">存储有文件但 DB 缺失 ({{ reconcileResult.missingInDB.length }})</h4>
+            <NDataTable :columns="reconcileItemColumns" :data="reconcileResult.missingInDB" :pagination="{ pageSize: 5 }" size="small" />
+          </template>
+
+          <template v-if="reconcileResult.repairedInDB.length > 0">
+            <h4 style="margin: 0; color: #2e7d32">已修复 DB 记录 ({{ reconcileResult.repairedInDB.length }})</h4>
+            <NDataTable :columns="reconcileItemColumns" :data="reconcileResult.repairedInDB" :pagination="{ pageSize: 5 }" size="small" />
+          </template>
+
+          <template v-if="reconcileResult.resetToPending.length > 0">
+            <h4 style="margin: 0; color: #f57c00">已重置为待下载 ({{ reconcileResult.resetToPending.length }})</h4>
+            <NDataTable :columns="reconcileItemColumns" :data="reconcileResult.resetToPending" :pagination="{ pageSize: 5 }" size="small" />
+          </template>
+
+          <template v-if="reconcileResult.orphanReleases.length > 0">
+            <h4 style="margin: 0; color: #c62828">孤儿 Release ({{ reconcileResult.orphanReleases.length }})</h4>
+            <NDataTable :columns="reconcileItemColumns" :data="reconcileResult.orphanReleases" :pagination="{ pageSize: 5 }" size="small" />
+          </template>
+
+          <template v-if="reconcileResult.orphanAssets.length > 0">
+            <h4 style="margin: 0; color: #c62828">孤儿 Asset ({{ reconcileResult.orphanAssets.length }})</h4>
+            <NDataTable :columns="reconcileItemColumns" :data="reconcileResult.orphanAssets" :pagination="{ pageSize: 5 }" size="small" />
+          </template>
+
+          <template v-if="reconcileResult.orphanTasks.length > 0">
+            <h4 style="margin: 0; color: #c62828">孤儿 Task ({{ reconcileResult.orphanTasks.length }})</h4>
+            <NDataTable :columns="reconcileItemColumns" :data="reconcileResult.orphanTasks" :pagination="{ pageSize: 5 }" size="small" />
+          </template>
+
+          <template v-if="reconcileResult.orphanTaskLogs > 0 || reconcileResult.orphanRepoStorages > 0">
+            <h4 style="margin: 0; color: #c62828">其他孤儿记录</h4>
+            <NSpace>
+              <NTag v-if="reconcileResult.orphanTaskLogs > 0" type="error" size="small">TaskLog: {{ reconcileResult.orphanTaskLogs }}</NTag>
+              <NTag v-if="reconcileResult.orphanRepoStorages > 0" type="error" size="small">RepositoryStorage: {{ reconcileResult.orphanRepoStorages }}</NTag>
+            </NSpace>
+          </template>
+
+          <template v-if="reconcileResult.storageScanErrors.length > 0">
+            <h4 style="margin: 0; color: #c62828">存储扫描错误</h4>
+            <NAlert v-for="(err, i) in reconcileResult.storageScanErrors" :key="i" type="error" :bordered="false" style="margin-bottom: 4px">{{ err }}</NAlert>
+          </template>
+
+          <NAlert v-if="reconcileResult.missingInStorage.length === 0 && reconcileResult.missingInDB.length === 0 && reconcileResult.resetToPending.length === 0 && reconcileResult.repairedInDB.length === 0" type="success" :bordered="false">
+            所有存储数据一致，无异常 ✅
+          </NAlert>
+        </template>
+      </NSpace>
+    </NModal>
 
     <NModal v-model:show="showModal" preset="dialog" :title="editingId ? '编辑存储' : '添加存储'" :positive-text="editingId ? '保存' : '添加'" negative-text="取消" @positive-click="handleSubmit">
       <NForm label-placement="left" label-width="auto">

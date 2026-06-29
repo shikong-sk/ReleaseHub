@@ -7,8 +7,10 @@ import (
 	"regexp"
 	"strings"
 
+	"releasehub/backend/internal/config"
 	"releasehub/backend/internal/models"
 	"releasehub/backend/internal/services/provider"
+	"releasehub/backend/internal/services/storage"
 
 	"gorm.io/gorm"
 )
@@ -29,7 +31,8 @@ var (
 )
 
 type Service struct {
-	db *gorm.DB
+	db       *gorm.DB
+	storages *storage.DriverFactory
 }
 
 type CreateInput struct {
@@ -63,8 +66,11 @@ type UpdateInput struct {
 	RetentionKeepLatest  *int    `json:"retentionKeepLatest"`
 }
 
-func NewService(db *gorm.DB) *Service {
-	return &Service{db: db}
+func NewService(db *gorm.DB, storageConfig config.StorageConfig) *Service {
+	return &Service{
+		db:       db,
+		storages: storage.NewDriverFactory(db, storageConfig),
+	}
 }
 
 func (s *Service) DB() *gorm.DB {
@@ -233,8 +239,68 @@ func (s *Service) Delete(ctx context.Context, id uint) error {
 		return err
 	}
 
-	return s.db.WithContext(ctx).Delete(repository).Error
-}
+	// 1. 查找该仓库所有已下载资产的存储路径，用于删除物理文件
+	var assets []models.Asset
+	if err := s.db.WithContext(ctx).
+		Joins("JOIN releases ON releases.id = assets.release_id").
+		Where("releases.repository_id = ?", id).
+		Where("assets.storage_path != ''").
+		Find(&assets).Error; err != nil {
+		// 查找失败不阻断删除，但记录错误以便排查孤儿文件
+		assets = nil
+		_ = err
+	}
+
+	// 2. 删除物理文件（尽力而为，不阻断 DB 删除）
+	for _, asset := range assets {
+		if asset.StoragePath == "" {
+			continue
+		}
+		// ponytail: 用 Asset 的 StorageID 构造临时 Repository 传给 DriverAndStorageID，
+		// 复用已有的多存储解析逻辑，不另写 driverForAsset
+		tmpRepo := models.Repository{StorageID: asset.StorageID}
+		driver, _, err := s.storages.DriverAndStorageID(ctx, tmpRepo)
+		if err != nil {
+			continue
+		}
+		_ = driver.Delete(ctx, asset.StoragePath)
+	}
+
+	// 3. 事务级联删除 DB 记录
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// TaskLog → Task (by repository_id)
+		if err := tx.Where("task_id IN (?)",
+			tx.Model(&models.Task{}).Select("id").Where("repository_id = ?", id),
+		).Delete(&models.TaskLog{}).Error; err != nil {
+			return err
+		}
+
+		// Task
+		if err := tx.Where("repository_id = ?", id).Delete(&models.Task{}).Error; err != nil {
+			return err
+		}
+
+		// Asset → Release (by repository_id)
+		if err := tx.Where("release_id IN (?)",
+			tx.Model(&models.Release{}).Select("id").Where("repository_id = ?", id),
+		).Delete(&models.Asset{}).Error; err != nil {
+			return err
+		}
+
+		// Release
+		if err := tx.Where("repository_id = ?", id).Delete(&models.Release{}).Error; err != nil {
+			return err
+		}
+
+		// RepositoryStorage
+		if err := tx.Where("repository_id = ?", id).Delete(&models.RepositoryStorage{}).Error; err != nil {
+			return err
+		}
+
+		// Repository
+		  return tx.Delete(repository).Error
+		 })
+	}
 
 func buildRepository(input CreateInput) (*models.Repository, error) {
 	providerName := strings.ToLower(strings.TrimSpace(input.Provider))

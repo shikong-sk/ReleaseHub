@@ -18,6 +18,11 @@ export interface ReconcileResult {
   missingInDB: ReconcileItem[]
   repairedInDB: ReconcileItem[]
   resetToPending: ReconcileItem[]
+  orphanReleases: ReconcileItem[]
+  orphanAssets: ReconcileItem[]
+  orphanTasks: ReconcileItem[]
+  orphanTaskLogs: number
+  orphanRepoStorages: number
   storageScanErrors: string[]
   totalStorageFiles: number
   totalDBAssets: number

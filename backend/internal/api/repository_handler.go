@@ -38,7 +38,7 @@ func registerRepositoryRoutes(router *gin.Engine, db *gorm.DB, storageConfig con
 	syncService, syncServiceErr := syncersvc.NewService(db, checkService, storageConfig)
 
 	handler := &repositoryHandler{
-		service:         repositorysvc.NewService(db),
+		service:         repositorysvc.NewService(db, storageConfig),
 		checkService:    checkService,
 		syncService:     syncService,
 		syncServiceErr:  syncServiceErr,

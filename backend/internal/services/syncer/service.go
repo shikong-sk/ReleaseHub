@@ -28,6 +28,7 @@ type Service struct {
 	notifier               *notifysvc.Service
 	logService             *tasklogsvc.Service
 	maxConcurrentDownloads int
+	storageConfig          config.StorageConfig
 }
 
 type Result struct {
@@ -59,6 +60,7 @@ func NewService(db *gorm.DB, checker *releasesvc.CheckService, storageConfig con
 		notifier:               notifysvc.NewService(db),
 		logService:             tasklogsvc.NewService(db),
 		maxConcurrentDownloads: defaultMaxConcurrentDownloads,
+		storageConfig:          storageConfig,
 	}, nil
 }
 
@@ -167,7 +169,7 @@ func (s *Service) executeRetryAsset(ctx context.Context, assetID uint, task mode
 	if asset.StorageID != nil && *asset.StorageID > 0 {
 		targetStorageID = asset.StorageID
 	} else {
-		repoSvc := repositorysvc.NewService(s.db)
+		repoSvc := repositorysvc.NewService(s.db, s.storageConfig)
 		storageIDs, err := repoSvc.GetRepositoryStorages(ctx, release.RepositoryID)
 		if err != nil || len(storageIDs) == 0 {
 			s.failTaskWithLog(ctx, &task, fmt.Errorf("无法确定存储目标"), "获取仓库存储配置失败")
@@ -218,7 +220,7 @@ func (s *Service) executeSyncRepository(ctx context.Context, repositoryID uint, 
 		len(assetsToDownload), len(checkResult.Assets)-len(assetsToDownload)))
 
 	// 为每个配置的存储目标分别下载
-	repoSvc := repositorysvc.NewService(s.db)
+	repoSvc := repositorysvc.NewService(s.db, s.storageConfig)
 	storageIDs, err := repoSvc.GetRepositoryStorages(ctx, repositoryID)
 	if err != nil {
 		s.failTaskWithLog(ctx, &task, err, "获取仓库存储配置失败")
@@ -287,7 +289,7 @@ func (s *Service) executeSyncByTag(ctx context.Context, repositoryID uint, tag s
 		len(assetsToDownload), len(checkResult.Assets)-len(assetsToDownload)))
 
 	// 为每个配置的存储目标分别下载
-	repoSvc := repositorysvc.NewService(s.db)
+	repoSvc := repositorysvc.NewService(s.db, s.storageConfig)
 	storageIDs, err := repoSvc.GetRepositoryStorages(ctx, repositoryID)
 	if err != nil {
 		s.failTaskWithLog(ctx, &task, err, "获取仓库存储配置失败")
