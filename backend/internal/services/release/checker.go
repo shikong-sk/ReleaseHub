@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"releasehub/backend/internal/models"
@@ -459,6 +462,7 @@ func (s *CheckService) persistProviderReleaseWithIsLatest(ctx context.Context, r
 		}
 
 		assets := make([]models.Asset, 0, len(pRelease.Assets))
+		sha256Map := parseSHA256Map(pRelease.Body)
 		for _, pAsset := range pRelease.Assets {
 			matched, err := matcher.Match(pAsset.Name)
 			if err != nil {
@@ -489,6 +493,7 @@ func (s *CheckService) persistProviderReleaseWithIsLatest(ctx context.Context, r
 							"content_type":         pAsset.ContentType,
 							"download_url":         pAsset.URL,
 							"browser_download_url": pAsset.BrowserDownloadURL,
+							"expected_sha256":      sha256Map[pAsset.Name],
 							"updated_at":           now,
 						}
 
@@ -526,6 +531,7 @@ func (s *CheckService) persistProviderReleaseWithIsLatest(ctx context.Context, r
 					ContentType:        pAsset.ContentType,
 					DownloadURL:        pAsset.URL,
 					BrowserDownloadURL: pAsset.BrowserDownloadURL,
+					ExpectedSHA256:     sha256Map[pAsset.Name],
 					Status:             status,
 				}
 				if err := tx.Create(&asset).Error; err != nil {
@@ -617,6 +623,7 @@ func (s *CheckService) persistProviderReleaseWithLatest(ctx context.Context, rep
 			return err
 		}
 
+		sha256Map := parseSHA256Map(pRelease.Body)
 		for _, pAsset := range pRelease.Assets {
 			matched, matchErr := matcher.Match(pAsset.Name)
 			if matchErr != nil {
@@ -646,6 +653,7 @@ func (s *CheckService) persistProviderReleaseWithLatest(ctx context.Context, rep
 							"content_type":         pAsset.ContentType,
 							"download_url":         pAsset.URL,
 							"browser_download_url": pAsset.BrowserDownloadURL,
+							"expected_sha256":      sha256Map[pAsset.Name],
 							"updated_at":           now,
 						}
 
@@ -682,6 +690,7 @@ func (s *CheckService) persistProviderReleaseWithLatest(ctx context.Context, rep
 					ContentType:        pAsset.ContentType,
 					DownloadURL:        pAsset.URL,
 					BrowserDownloadURL: pAsset.BrowserDownloadURL,
+					ExpectedSHA256:     sha256Map[pAsset.Name],
 					Status:             status,
 				}
 				if err := tx.Create(&asset).Error; err != nil {
@@ -790,6 +799,28 @@ func (s *CheckService) markRepositoryFailed(ctx context.Context, repositoryID ui
 			"last_check_at": now,
 			"last_status":   models.RepositoryStatusFailed,
 		}).Error
+}
+
+// parseSHA256Map 从 release body 解析 sha256 校验和映射
+// 支持格式: "sha256:abc123  filename" 或 "SHA256 (file) = hash" 或 "<filename>.sha256" 行
+// ponytail: 正则覆盖常见格式，不追求100%覆盖，漏匹配时 expected_sha256 留空不影响下载
+func parseSHA256Map(body string) map[string]string {
+	m := map[string]string{}
+	// 格式1: sha256:hash  filename  或  hash  filename
+	re := regexp.MustCompile(`(?m)(?:sha256:)?([0-9a-fA-F]{64})\s+(\S+)`)
+	for _, match := range re.FindAllStringSubmatch(body, -1) {
+		hash := strings.ToLower(match[1])
+		filename := filepath.Base(match[2])
+		m[filename] = hash
+	}
+	// 格式2: SHA256 (filename) = hash
+	re2 := regexp.MustCompile(`(?m)SHA256\s*\((\S+)\)\s*=\s*([0-9a-fA-F]{64})`)
+	for _, match := range re2.FindAllStringSubmatch(body, -1) {
+		hash := strings.ToLower(match[2])
+		filename := filepath.Base(match[1])
+		m[filename] = hash
+	}
+	return m
 }
 
 func ptrTime(t time.Time) *time.Time {

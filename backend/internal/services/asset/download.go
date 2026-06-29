@@ -291,10 +291,36 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 	asset.StoragePath = storedObject.Path
 	asset.Size = downloadResult.Size
 	asset.SHA256 = downloadResult.SHA256
-	asset.Status = models.AssetStatusVerified
 	asset.StorageID = &storageID
 	asset.ErrorMessage = ""
 	asset.DownloadedAt = &now
+
+	// SHA256 远程比对：expected_sha256 存在时与实际校验和比对
+	if asset.ExpectedSHA256 != "" && asset.SHA256 != asset.ExpectedSHA256 {
+		asset.Status = models.AssetStatusFailed
+		asset.ErrorMessage = fmt.Sprintf("SHA256 不匹配: 实际=%s 期望=%s", shortSHA256(asset.SHA256), shortSHA256(asset.ExpectedSHA256))
+		task.Status = models.TaskStatusFailed
+		task.FinishedAt = &now
+		task.ErrorMessage = asset.ErrorMessage
+
+		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Save(&asset).Error; err != nil {
+				return err
+			}
+			if err := tx.Save(&task).Error; err != nil {
+				return err
+			}
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+
+		_ = s.logService.Append(ctx, task.ID, "error", asset.ErrorMessage)
+		s.notifyDownloadFailed(ctx, repository, release, asset, fmt.Errorf("%s", asset.ErrorMessage))
+		return nil, fmt.Errorf("%s", asset.ErrorMessage)
+	}
+
+	asset.Status = models.AssetStatusVerified
 
 	task.Status = models.TaskStatusSucceeded
 	task.FinishedAt = &now

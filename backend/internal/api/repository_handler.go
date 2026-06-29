@@ -62,6 +62,7 @@ func registerRepositoryRoutes(router *gin.Engine, db *gorm.DB, storageConfig con
 	group.GET("/:id/releases", handler.listReleases)
 	group.GET("/:id/remote-tags", handler.remoteTags)
 	group.GET("/:id/retention-preview", handler.retentionPreview)
+	group.POST("/:id/cleanup", handler.cleanup)
 }
 
 func (h *repositoryHandler) list(c *gin.Context) {
@@ -162,6 +163,32 @@ func (h *repositoryHandler) retentionPreview(c *gin.Context) {
 	result, err := h.retentionSvc.Preview(c.Request.Context(), *repository)
 	if err != nil {
 		writeError(c, http.StatusInternalServerError, "预览保留策略失败")
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *repositoryHandler) cleanup(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+
+	if h.retentionSvc == nil {
+		writeError(c, http.StatusServiceUnavailable, "保留策略服务未初始化")
+		return
+	}
+
+	repository, err := h.service.Get(c.Request.Context(), id)
+	if err != nil {
+		writeServiceError(c, err, "查询仓库失败")
+		return
+	}
+
+	result, err := h.retentionSvc.Cleanup(c.Request.Context(), *repository)
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "清理失败")
 		return
 	}
 

@@ -65,7 +65,7 @@
 | v0.2 | ✅ 已完成 | 多存储 + 代理 + 通知 |
 | v0.3 | ✅ 已完成 | 认证 + RBAC + API Key scope + 任务日志 + Token 健康 |
 | v0.4 | ✅ 已完成 | 多存储分发、失败重试、硬删除迁移、文件树浏览、存储对账、置顶/固定版本、按 Tag 同步、级联删除、孤儿数据清理、Docker 统一镜像、CI 自动发布 |
-| v0.5 | 🔧 进行中 | 断点续传 + SHA256 远程比对 + 保留策略增强 + Dashboard 趋势图 |
+| v0.5 | ✅ 已完成 | 断点续传、SHA256 远程比对与自动填充、保留策略增强（手动清理 API）、Dashboard 趋势图、429/5xx 自动退避 |
 | v0.6 | 📋 规划中 | GitLab/Gitea/Forgejo Provider 完整接入 + 搜索增强 |
 | v0.7 | 📋 规划中 | 下载速度限制 + aria2 RPC 接入 |
 | v1.0 | 📋 规划中 | PostgreSQL + OpenAPI + 插件系统 + Prometheus |
