@@ -53,9 +53,13 @@ watch(
 
     // 确保 source 始终是数组，避免 null/undefined 导致 mergeIncoming 报错
     const treeArr = rawTree ?? []
+    // 只在顶层节点携带 storageId 时做前端过滤（全局树：顶层=存储节点）
+    // 仓库级树（顶层=Release 节点）已由后端按 storageId 过滤，无需前端再筛
     const source = storageId == null
       ? treeArr
-      : treeArr.filter((n) => n.storageId === storageId)
+      : treeArr.some(n => n.storageId != null)
+        ? treeArr.filter((n) => n.storageId === storageId)
+        : treeArr
     localTree.value = mergeIncoming(source, localTree.value)
   },
   { immediate: true }

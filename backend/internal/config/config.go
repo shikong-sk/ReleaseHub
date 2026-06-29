@@ -13,6 +13,7 @@ type Config struct {
 	HTTP      HTTPConfig
 	Database  DatabaseConfig
 	Storage   StorageConfig
+	Download  DownloadConfig
 	GitHub    GitHubConfig
 	Scheduler SchedulerConfig
 	Auth      AuthConfig
@@ -40,6 +41,13 @@ type DatabaseConfig struct {
 
 type StorageConfig struct {
 	DataDir string
+}
+
+type DownloadConfig struct {
+	MaxSpeedBytes int64  // 下载速度限制（字节/秒），0=不限
+	Aria2RPC      string // aria2 JSON-RPC 端点，空=不使用 aria2
+	Aria2Secret   string // aria2 RPC 密钥
+	Aria2HTTP     string // aria2 文件服务地址
 }
 
 type GitHubConfig struct {
@@ -72,6 +80,10 @@ func Load() (*Config, error) {
 	v.SetDefault("database.driver", "sqlite")
 	v.SetDefault("database.dsn", "data/releasehub.db")
 	v.SetDefault("storage.data_dir", "data/releases")
+	v.SetDefault("download.max_speed_bytes", 0)
+	v.SetDefault("download.aria2_rpc", "")
+	v.SetDefault("download.aria2_secret", "")
+	v.SetDefault("download.aria2_http", "")
 	v.SetDefault("github.api_base_url", "https://api.github.com")
 	v.SetDefault("scheduler.enabled", true)
 	v.SetDefault("scheduler.tick_seconds", 60)
@@ -96,6 +108,12 @@ func Load() (*Config, error) {
 		},
 		Storage: StorageConfig{
 			DataDir: v.GetString("storage.data_dir"),
+		},
+		Download: DownloadConfig{
+			MaxSpeedBytes: v.GetInt64("download.max_speed_bytes"),
+			Aria2RPC:      v.GetString("download.aria2_rpc"),
+			Aria2Secret:   v.GetString("download.aria2_secret"),
+			Aria2HTTP:     v.GetString("download.aria2_http"),
 		},
 		GitHub: GitHubConfig{
 			APIBaseURL: v.GetString("github.api_base_url"),

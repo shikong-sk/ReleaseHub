@@ -184,9 +184,23 @@ func (s *LocalStorage) List(ctx context.Context, prefix string) ([]ListResult, e
 		}
 
 		name := d.Name()
-		// 跳过临时/元数据文件
-		if strings.HasSuffix(name, ".partial") || name == "latest.json" {
+		// 跳过临时文件
+		if strings.HasSuffix(name, ".partial") {
 			return nil
+		}
+
+		// 跳过仓库根目录的 latest.json 元数据文件（github/owner/repo/latest.json）
+		// 但不跳过 tag 目录下的同名资产文件（github/owner/repo/TAG/latest.json）
+		if name == "latest.json" {
+			rel, relErr := filepath.Rel(s.baseDir, path)
+			if relErr == nil {
+				parts := strings.Split(filepath.ToSlash(filepath.Clean(rel)), "/")
+				// provider/owner/repo/latest.json = 4 segments → 元数据，跳过
+				// provider/owner/repo/TAG/latest.json = 5+ segments → 资产，保留
+				if len(parts) == 4 {
+					return nil
+				}
+			}
 		}
 
 		// 跳过符号链接（latest 指向目录）

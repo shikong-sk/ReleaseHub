@@ -308,10 +308,18 @@ func (s *S3Storage) List(ctx context.Context, prefix string) ([]ListResult, erro
 			relPath = strings.TrimPrefix(obj.Key, s.prefix)
 		}
 		relPath = filepath.ToSlash(filepath.Clean(relPath))
-		// 跳过目录标记和元数据文件
-		if strings.HasSuffix(relPath, "/") || filepath.Base(relPath) == "latest.json" {
-			continue
-		}
+		 // 跳过目录标记
+		 if strings.HasSuffix(relPath, "/") {
+		  continue
+		 }
+		 // 跳过仓库根目录的 latest.json 元数据文件（provider/owner/repo/latest.json = 4 segments）
+		 // 但不跳过 tag 目录下的同名资产文件（provider/owner/repo/TAG/latest.json = 5+ segments）
+		 if filepath.Base(relPath) == "latest.json" {
+		  parts := strings.Split(relPath, "/")
+		  if len(parts) == 4 {
+		   continue
+		  }
+		 }
 		results = append(results, ListResult{
 			Path:  relPath,
 			Size:  obj.Size,

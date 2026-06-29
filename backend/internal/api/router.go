@@ -9,6 +9,10 @@ import (
 	"releasehub/backend/internal/services/health"
 
 	"github.com/gin-gonic/gin"
+	_ "releasehub/backend/internal/api/docs" // swag init 生成的文档
+	ginSwagger "github.com/swaggo/gin-swagger"
+	"github.com/swaggo/files"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -35,6 +39,12 @@ func NewRouter(deps Dependencies) http.Handler {
 		c.JSON(http.StatusOK, healthService.Check(c.Request.Context()))
 	})
 	router.GET("/api/metrics", metricsHandler(deps.DB))
+
+	// Prometheus 指标端点
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
+	// Swagger UI
+	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// 认证路由
 	registerAuthRoutes(router, deps.DB)

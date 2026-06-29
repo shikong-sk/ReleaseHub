@@ -10,30 +10,38 @@ import (
 	"releasehub/backend/internal/models"
 
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
-	if cfg.Driver != "sqlite" {
-		return nil, fmt.Errorf("暂不支持数据库类型: %s", cfg.Driver)
-	}
-
-	dsn := filepath.Clean(cfg.DSN)
-	if shouldCreateSQLiteDir(dsn) {
-		if err := os.MkdirAll(filepath.Dir(dsn), 0o755); err != nil {
+	switch cfg.Driver {
+	case "postgres":
+		db, err := gorm.Open(postgres.Open(cfg.DSN), &gorm.Config{
+			TranslateError: true,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("连接 PostgreSQL 失败: %w", err)
+		}
+		return db, nil
+	case "sqlite", "":
+		dsn := filepath.Clean(cfg.DSN)
+		if shouldCreateSQLiteDir(dsn) {
+			if err := os.MkdirAll(filepath.Dir(dsn), 0o755); err != nil {
+				return nil, err
+			}
+		}
+		db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
+			TranslateError: true,
+		})
+		if err != nil {
 			return nil, err
 		}
+		return db, nil
+	default:
+		return nil, fmt.Errorf("不支持的数据库类型: %s", cfg.Driver)
 	}
-
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
-		TranslateError: true,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return db, nil
 }
 
 func shouldCreateSQLiteDir(dsn string) bool {

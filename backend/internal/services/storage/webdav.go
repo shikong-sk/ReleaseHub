@@ -222,11 +222,20 @@ func (s *WebDAVStorage) walkWebDAV(ctx context.Context, dirPath string, results 
 			continue
 		}
 
-		// 跳过元数据文件
-		name := f.Name()
-		if name == "latest.json" {
-			continue
-		}
+		// 跳过仓库根目录的 latest.json 元数据文件
+		 // provider/owner/repo/latest.json = 元数据，跳过
+		 // provider/owner/repo/TAG/latest.json = 资产，保留
+		 name := f.Name()
+		 if name == "latest.json" {
+		  relPath := strings.TrimPrefix(remotePath, s.basePath+"/")
+		  if relPath == remotePath {
+		   relPath = strings.TrimPrefix(remotePath, s.basePath)
+		  }
+		  parts := strings.Split(filepath.ToSlash(filepath.Clean(relPath)), "/")
+		  if len(parts) == 4 {
+		   continue
+		  }
+		 }
 
 		// 去掉 basePath 前缀，返回相对路径
 		relPath := strings.TrimPrefix(remotePath, s.basePath+"/")
