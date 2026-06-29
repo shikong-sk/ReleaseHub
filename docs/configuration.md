@@ -116,12 +116,14 @@ Scheduler 在每个 tick 周期中：
 
 ## 运行时配置更新
 
-以下配置可通过 `PATCH /api/config` 在运行时更新，无需重启：
+以下配置可通过 `PUT /api/config` 在运行时更新，无需重启：
 
 - `schedulerEnabled`
 - `schedulerTickSeconds`
 - `schedulerMaxConcurrent`
 - `githubApiBaseUrl`
+
+更新 scheduler 相关配置后会触发 Scheduler 热重载（tick 间隔和并发数即时生效）。
 
 ## Docker Compose 配置示例
 

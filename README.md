@@ -21,7 +21,8 @@ ReleaseHub 是面向 GitHub / GitLab / Gitea / Forgejo Releases 的 Artifact 管
 - 本地存储：`provider/owner/repo/tag/` 目录结构 + `latest` 映射
 - S3 存储（兼容 MinIO 等 S3 协议存储）
 - WebDAV 存储
-- 每个仓库可独立配置存储目标
+- 多存储支持：每个仓库可关联多个存储目标，资产会分发到所选的每个存储
+- 启动时自动创建默认本地存储并回填存量资产的 `storageId`
 
 **保留与清理**
 - 保留最近 N 个版本，自动清理旧版本
@@ -51,7 +52,8 @@ ReleaseHub 是面向 GitHub / GitLab / Gitea / Forgejo Releases 的 Artifact 管
 
 **文件管理**
 - Web 浏览、搜索、下载已同步文件
-- 存储对账（Reconcile）：检测存储与数据库的不一致
+- 文件树懒加载浏览（后端分层 + 前端 NTree）
+- 存储对账（Reconcile）：默认 dry-run 安全预检，可双向检测存储与数据库的不一致并支持安全修复模式
 - 手动上传资产
 - 文件删除
 
@@ -158,7 +160,7 @@ npm run dev
 | 过滤预览 | `POST /api/filter/preview` |
 | 上传 | `POST /api/upload` |
 | 对账 | `POST /api/reconcile` |
-| 配置 | `GET /api/config`、`PATCH /api/config` |
+| 配置 | `GET /api/config`、`PUT /api/config` |
 
 ## 项目结构
 
@@ -219,7 +221,10 @@ ReleaseHub/
 - [完整配置参考](docs/configuration.md)
 - [API 文档](docs/api-reference.md)
 - [架构设计](docs/architecture.md)
+- [部署指南](docs/deployment/deployment.md)
+- [用户指南](docs/user-guide/user-guide.md)
 - [开发规划](docs/DEVELOPMENT_PLAN.md)
+- [功能审查清单](docs/FUNCTIONAL_REVIEW_TODO.md)
 - [架构决策记录](docs/adr/0001-architecture.md)
 
 ## 路线图
@@ -231,9 +236,9 @@ ReleaseHub/
 | v0.1 | ✅ 已完成 | 仓库管理、Release 检查与全量拉取、资产过滤与下载、本地存储、SHA256、保留策略、Scheduler、Web 管理、Docker 部署 |
 | v0.2 | ✅ 已完成 | 多存储（S3/WebDAV）、代理、通知（Gotify/Webhook/Email/Telegram） |
 | v0.3 | ✅ 已完成 | 认证、RBAC、API Key scope、任务日志、Token 健康检查、过滤预览 |
-| v0.4 | 🔧 进行中 | 流式下载优化、断点续传、SHA256 远程比对、重试退避 |
-| v0.5 | 📋 规划中 | 双向同步、搜索增强、Dashboard 趋势图 |
-| v0.6 | 📋 规划中 | GitLab/Gitea/Forgejo Provider 完整接入 |
+| v0.4 | ✅ 已完成 | 多存储分发、资产重复记录修复、失败自动重试、从软删除迁移到硬删除、文件树浏览、存储对账双向检测与安全修复、置顶/固定版本、按 Tag 同步 |
+| v0.5 | 📋 规划中 | 断点续传、SHA256 远程比对、双向同步增强、搜索增强、Dashboard 趋势图 |
+| v0.6 | 📋 规划中 | GitLab/Gitea/Forgejo Provider 完整接入、aria2 RPC 接入调度 |
 | v1.0 | 📋 规划中 | PostgreSQL 支持、OpenAPI 文档、插件系统、Prometheus 指标 |
 
 ## 许可证

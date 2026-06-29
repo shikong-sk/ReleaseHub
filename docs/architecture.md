@@ -73,9 +73,10 @@ Proxy                                       │
                                             │
 Notification ──── events                    │
                                             │
-Repository ──── Provider + Owner + Repo (UK) │
+Repository ──── Provider + Owner + Repo (UK)  │
             ├── GitHubTokenID (FK)          │
-            ├── StorageID (FK)              │
+            ├── StorageID (FK，主存储)       │
+            ├── RepositoryStorage (多对多)   │ —— 一个仓库可关联多个存储，资产分发到每个存储
             └── ProxyID (FK)                │
                                             │
 Release ──── RepositoryID + Tag (UK)        │
@@ -128,11 +129,14 @@ Syncer.SyncRepository(repo)
 
 ### 存储驱动选择
 
-每个仓库可指定存储目标。存储驱动选择逻辑：
+每个仓库可关联一个或多个存储目标（通过 `RepositoryStorage` 多对多关系）。存储驱动选择逻辑：
 
-1. 如果仓库配置了 `storageId`，查找对应 Storage 记录创建驱动
-2. 如果存在标记 `isDefault` 的 Storage，使用默认存储
-3. 回退到本地存储（`storage.data_dir`）
+1. 如果仓库关联了多个存储（`storageIds` 非空），资产会分发写入到每个存储目标
+2. 如果仓库配置了单个 `storageId`，使用该存储
+3. 如果存在标记 `isDefault` 的 Storage，使用默认存储
+4. 回退到本地存储（`storage.data_dir`）
+
+启动时会自动创建默认本地存储并回填存量资产的 `storageId`（幂等迁移）。
 
 ### 代理选择
 
@@ -199,11 +203,12 @@ Syncer.SyncRepository(repo)
 | 项目 | 说明 | 规划版本 |
 | --- | --- | --- |
 | SQLite 写并发 | 单写锁，高并发同步需排队 | v1.0（PostgreSQL） |
-| S3 简化签名 | 当前为 HTTP Basic Auth，非 AWS V4 | v0.2 收尾 |
-| WebDAV/S3 全量上传 | 内部读取完整内容再上传 | v0.4（分片） |
+| S3 简化签名 | 当前为 HTTP Basic Auth，非 AWS V4 | v0.5 收尾 |
+| WebDAV/S3 全量上传 | 内部读取完整内容再上传 | v0.5（分片） |
 | 无 OpenAPI 文档 | API 较多但无自动生成文档 | v1.0 |
 | 前端趋势图未集成 | 后端 API 已就绪，前端未调用 | v0.5 |
-| aria2 可选后端 | 代码存在但未接入调度 | v0.4 |
+| aria2 可选后端 | 代码存在但未接入调度 | v0.6 |
+| 软删除已迁移 | v0.4 已完成硬删除迁移，`DeletedAt` 字段已清理 | 已完成 |
 
 ## 相关文档
 
