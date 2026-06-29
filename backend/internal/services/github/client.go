@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -74,6 +75,48 @@ func NewClientWithTransport(apiBaseURL string, transport *http.Transport) (*Clie
 	}, nil
 }
 
+// doWithRetry 执行 HTTP 请求，遇到 429/5xx 自动退避重试（最多 3 次）
+func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
+	const maxAttempts = 3
+	baseDelay := 2 * time.Second
+
+	for attempt := 0; ; attempt++ {
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		// 需要重试的状态码
+		if (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500) && attempt < maxAttempts-1 {
+			resp.Body.Close()
+
+			delay := baseDelay * time.Duration(1<<attempt) // 2s, 4s, 8s
+			const maxDelay = 60 * time.Second
+			// 429 时优先用 Retry-After 头，但限制上界防止长时间阻塞
+			if resp.StatusCode == http.StatusTooManyRequests {
+				if ra := resp.Header.Get("Retry-After"); ra != "" {
+					if secs, err := strconv.Atoi(ra); err == nil && secs > 0 {
+						raDelay := time.Duration(secs) * time.Second
+						if raDelay < maxDelay {
+							delay = raDelay
+						} else {
+							delay = maxDelay
+						}
+					}
+				}
+			}
+			select {
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			case <-time.After(delay):
+			}
+			continue
+		}
+
+		return resp, nil
+	}
+}
+
 // GetLatestRelease 获取仓库最新的 Release
 func (c *Client) GetLatestRelease(ctx context.Context, owner string, repo string, token string) (*Release, error) {
 	endpoint := *c.baseURL
@@ -89,7 +132,7 @@ func (c *Client) GetLatestRelease(ctx context.Context, owner string, repo string
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doWithRetry(req)
 	if err != nil {
 		return nil, fmt.Errorf("请求 GitHub Release 失败: %w", err)
 	}
@@ -145,7 +188,7 @@ func (c *Client) ListReleases(ctx context.Context, owner string, repo string, to
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doWithRetry(req)
 	if err != nil {
 		return nil, fmt.Errorf("请求 GitHub Releases 列表失败: %w", err)
 	}
@@ -213,7 +256,7 @@ func (c *Client) GetReleaseByTag(ctx context.Context, owner string, repo string,
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doWithRetry(req)
 	if err != nil {
 		return nil, fmt.Errorf("请求 GitHub Release (tag: %s) 失败: %w", tag, err)
 	}

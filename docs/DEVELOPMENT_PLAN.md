@@ -64,95 +64,60 @@
 | v0.1 | ✅ 已完成 | MVP 主体 + 收尾 |
 | v0.2 | ✅ 已完成 | 多存储 + 代理 + 通知 |
 | v0.3 | ✅ 已完成 | 认证 + RBAC + API Key scope + 任务日志 + Token 健康 |
-| v0.4 | 🔧 进行中 | 流式下载已优化，断点续传/SHA256 远程比对/重试退避待完善 |
-| v0.5 | 📋 规划中 | 双向同步 + 搜索增强 + Dashboard 趋势图 |
-| v0.6 | 📋 规划中 | GitLab/Gitea/Forgejo Provider 完整接入 |
+| v0.4 | ✅ 已完成 | 多存储分发、失败重试、硬删除迁移、文件树浏览、存储对账、置顶/固定版本、按 Tag 同步、级联删除、孤儿数据清理、Docker 统一镜像、CI 自动发布 |
+| v0.5 | 🔧 进行中 | 断点续传 + SHA256 远程比对 + 保留策略增强 + Dashboard 趋势图 |
+| v0.6 | 📋 规划中 | GitLab/Gitea/Forgejo Provider 完整接入 + 搜索增强 |
+| v0.7 | 📋 规划中 | 下载速度限制 + aria2 RPC 接入 |
 | v1.0 | 📋 规划中 | PostgreSQL + OpenAPI + 插件系统 + Prometheus |
 
 ---
 
-## 二、v0.4 任务清单 — 下载增强 + 校验 + 保留策略增强 + 重试
+## 二、v0.5 任务清单 — 断点续传 + SHA256 远程比对 + 保留策略增强 + Dashboard 趋势图
 
-**目标：完善下载可靠性，支持断点续传和远程校验和比对。**
+**目标：提升下载可靠性和校验能力，增强 Dashboard 可视化。**
 
-### 4.1 断点续传
+### 5.1 断点续传
 
-1. Asset 模型增加 `downloadBytes` 字段，记录已下载字节数
+1. Asset 模型增加 `download_bytes` 字段，记录已下载字节数
 2. 下载中断后恢复时使用 HTTP Range 请求
 3. 下载进度实时推送（WebSocket 或 SSE）
 
-### 4.2 SHA256 校验增强
+### 5.2 SHA256 校验增强
 
 4. 下载前查询 GitHub Release 的 asset checksum（如果 release body 或 `.sha256` 文件存在）
-5. Asset 模型增加 `expectedSha256` 字段
+5. Asset 模型增加 `expected_sha256` 字段
 6. 自动比对本地计算 vs 远程校验和
 7. 校验不匹配时标记资产为 `failed`，自动重试
 
-### 4.3 保留策略增强
+### 5.3 保留策略增强
 
 8. 按时间保留（保留最近 N 天的 Release）
 9. 按数量 + 时间混合策略
 10. 保留策略预览 API（dry-run，返回将被删除的 Release 列表）
 11. 手动触发清理 API
 
-### 4.4 失败重试完善
+### 5.4 Dashboard 趋势图
 
-12. 下载失败自动重试（可配置重试次数和间隔）
-13. 重试计数和退避策略完善
-14. GitHub API 429/5xx 自动退避
-15. RetryDownload 主动 sleep 或调度延迟任务
+12. 前端调用 `getTrendStats` API（后端已就绪）
+13. 引入轻量图表库（Chart.js 或 Apache ECharts）
+14. 展示 Release 检查趋势和下载量趋势
 
-### 4.5 下载速度限制
+### 5.5 429/5xx 自动退避
 
-16. 下载速度限制（Rate Limit）
+15. GitHub API 429 响应自动退避
+16. 5xx 响应重试策略
 
-### 4.6 aria2 RPC 可选后端
+### 5.6 验收标准
 
-17. aria2 RPC 接入调度（代码已存在，需接入 Syncer）
-
-### 4.7 验收标准
-
-- [ ] 大文件不占用内存
 - [ ] 下载中断后可续传
 - [ ] SHA256 与远程校验和比对
 - [ ] 保留策略可预览
-- [ ] 下载失败自动重试 3 次
+- [ ] Dashboard 展示趋势图
 - [ ] 429 响应自动退避
 
 ---
 
-## 三、v0.5 任务清单 — 双向同步 + 搜索增强 + 统计
-
-### 5.1 双向同步
-
-1. 检测本地存储中已有但数据库未记录的资产（reconcile 增强）
-2. 手动上传资产到指定仓库/Release
-3. 存储容量统计与告警
-
-### 5.2 搜索增强
-
-4. 全文搜索 Release body
-5. 按仓库/Tag/日期/状态组合筛选
-6. 前端高级搜索面板
-
-### 5.3 统计面板
-
-7. 前端调用 `getTrendStats` API
-8. 引入 ECharts 或轻量图表库
-9. 展示 Release 检查趋势和下载量趋势
-10. 仓库健康度总览
-11. Dashboard 增强
-
-### 5.4 验收标准
-
-- [ ] 本地存储与数据库可一键对账
-- [ ] 可手动上传资产
-- [ ] 可搜索 Release body
-- [ ] Dashboard 展示趋势图
-
----
-
-## 四、v0.6 任务清单 — 多平台 Provider 完整接入
+## 三、v0.6 任务清单 — 多平台 Provider + 搜索增强
 
 ### 6.1 Provider 接入业务
 
@@ -173,12 +138,36 @@
 9. 支持 Gitea Token
 10. 兼容 Forgejo API
 
-### 6.4 验收标准
+### 6.4 搜索增强
+
+11. 全文搜索 Release body
+12. 按仓库/Tag/日期/状态组合筛选
+13. 前端高级搜索面板
+
+### 6.5 验收标准
 
 - [ ] 仓库可选 GitLab/Gitea/Forgejo 作为 Provider
 - [ ] GitLab Release 可自动同步
 - [ ] Gitea/Forgejo Release 可自动同步
 - [ ] 自托管实例可配置 API Base URL
+- [ ] 可搜索 Release body
+
+---
+
+## 四、v0.7 任务清单 — 下载速度限制 + aria2 RPC
+
+### 7.1 下载速度限制
+
+1. 下载速度限制（Rate Limit）
+
+### 7.2 aria2 RPC 可选后端
+
+2. aria2 RPC 接入调度（代码已存在，需接入 Syncer）
+
+### 7.3 验收标准
+
+- [ ] 下载速度可配置限制
+- [ ] aria2 可作为下载后端
 
 ---
 
@@ -240,8 +229,7 @@
 
 | 版本 | 新增/变更 |
 |------|----------|
-| v0.4 | `Asset` 增加 `download_bytes`/`expected_sha256`/`retry_count` |
-| v0.5 | `Asset` 增加索引 |
+| v0.5 | `Asset` 增加 `download_bytes`/`expected_sha256` |
 | v0.6 | `Repository.provider` 字段从默认 github 变为可配置（已完成） |
 | v1.0 | PostgreSQL 支持 |
 
@@ -254,14 +242,14 @@
 | 债项 | 来源 | 建议处理版本 |
 |------|------|-------------|
 | S3 简化 HTTP Basic Auth 实现 | MVP 快速闭环 | v0.2 收尾 |
-| WebDAV/S3 全量上传 | MVP 快速闭环 | v0.4 |
+| WebDAV/S3 全量上传 | MVP 快速闭环 | v0.5 |
 | GitHub Client 手写 HTTP 而非用 go-github SDK | MVP 快速闭环 | v0.3 |
 | 无 OpenAPI/Swagger 文档 | 优先级低 | v1.0 |
-| 无国际化（i18n） | 暂时只有中文 | v0.5+ |
+| 无国际化（i18n） | 暂时只有中文 | v0.6+ |
 | 测试覆盖不够全面 | 持续改进 | 每个版本 |
-| 无优雅关闭时的任务中断处理 | 非紧急 | v0.4 |
+| 无优雅关闭时的任务中断处理 | 非紧急 | v0.5 |
 | 前端趋势图未集成 | API 已就绪 | v0.5 |
-| aria2 RPC 未接入调度 | 代码已存在 | v0.4 |
+| aria2 RPC 未接入调度 | 代码已存在 | v0.7 |
 
 ---
 

@@ -315,9 +315,10 @@ ReleaseHub/
 | v0.1 | ✅ 已完成 | 仓库管理、Release 检查与全量拉取、资产过滤与下载、本地存储、SHA256、保留策略、Scheduler、Web 管理、Docker 部署 |
 | v0.2 | ✅ 已完成 | 多存储（S3/WebDAV）、代理、通知（Gotify/Webhook/Email/Telegram） |
 | v0.3 | ✅ 已完成 | 认证、RBAC、API Key scope、任务日志、Token 健康检查、过滤预览 |
-| v0.4 | ✅ 已完成 | 多存储分发、资产重复记录修复、失败自动重试、从软删除迁移到硬删除、文件树浏览、存储对账双向检测与安全修复、置顶/固定版本、按 Tag 同步 |
-| v0.5 | 📋 规划中 | 断点续传、SHA256 远程比对、双向同步增强、搜索增强、Dashboard 趋势图 |
-| v0.6 | 📋 规划中 | GitLab/Gitea/Forgejo Provider 完整接入、aria2 RPC 接入调度 |
+| v0.4 | ✅ 已完成 | 多存储分发、失败重试、硬删除迁移、文件树浏览、存储对账、置顶/固定版本、按 Tag 同步、级联删除、孤儿数据清理、Docker 统一镜像、CI 自动发布 |
+| v0.5 | 🔧 进行中 | 断点续传、SHA256 远程比对、保留策略增强、Dashboard 趋势图、429 退避 |
+| v0.6 | 📋 规划中 | GitLab/Gitea/Forgejo Provider 完整接入、搜索增强 |
+| v0.7 | 📋 规划中 | 下载速度限制、aria2 RPC 接入调度 |
 | v1.0 | 📋 规划中 | PostgreSQL 支持、OpenAPI 文档、插件系统、Prometheus 指标 |
 
 ## 许可证

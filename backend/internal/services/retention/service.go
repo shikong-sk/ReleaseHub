@@ -55,6 +55,94 @@ func NewServiceWithDriver(db *gorm.DB, driver storage.Driver) *Service {
 	}
 }
 
+// PreviewResult 保留策略预览结果（dry-run，不实际删除）
+type PreviewResult struct {
+	KeepLatest       int              `json:"keepLatest"`
+	TotalReleases    int              `json:"totalReleases"`
+	PinnedCount      int              `json:"pinnedCount"`
+	WillDelete       []PreviewRelease `json:"willDelete"`
+}
+
+type PreviewRelease struct {
+	ID          uint       `json:"id"`
+	Tag         string     `json:"tag"`
+	PublishedAt *time.Time `json:"publishedAt"`
+	AssetCount  int        `json:"assetCount"`
+}
+
+// Preview 返回将被保留策略清理的 Release 列表，不实际删除
+func (s *Service) Preview(ctx context.Context, repository models.Repository) (*PreviewResult, error) {
+	keepLatest := repository.RetentionKeepLatest
+	if keepLatest < 1 {
+		keepLatest = 1
+	}
+
+	var releases []models.Release
+	if err := s.db.WithContext(ctx).
+		Where("repository_id = ?", repository.ID).
+		Order("published_at DESC, created_at DESC").
+		Find(&releases).Error; err != nil {
+		return nil, err
+	}
+
+	var pinnedCount int
+	var unpinnedReleases []models.Release
+	for _, r := range releases {
+		if r.IsPinned {
+			pinnedCount++
+		} else {
+			unpinnedReleases = append(unpinnedReleases, r)
+		}
+	}
+
+	result := &PreviewResult{
+		KeepLatest:    keepLatest,
+		TotalReleases: len(releases),
+		PinnedCount:   pinnedCount,
+		WillDelete:    []PreviewRelease{},
+	}
+
+	if len(unpinnedReleases) <= keepLatest {
+		return result, nil
+	}
+
+	outdated := unpinnedReleases[keepLatest:]
+	outdatedIDs := make([]uint, len(outdated))
+	for i, r := range outdated {
+		outdatedIDs[i] = r.ID
+	}
+
+	// 单次分组查询获取每个 release 的资产数，避免 N+1
+	type releaseAssetCount struct {
+		ReleaseID uint `gorm:"column:release_id"`
+		Cnt       int  `gorm:"column:cnt"`
+	}
+	var counts []releaseAssetCount
+	if err := s.db.WithContext(ctx).
+		Model(&models.Asset{}).
+		Select("release_id, COUNT(*) AS cnt").
+		Where("release_id IN ?", outdatedIDs).
+		Group("release_id").
+		Scan(&counts).Error; err != nil {
+		return nil, fmt.Errorf("查询资产数量失败: %w", err)
+	}
+	countMap := make(map[uint]int, len(counts))
+	for _, c := range counts {
+		countMap[c.ReleaseID] = c.Cnt
+	}
+
+	for _, r := range outdated {
+		result.WillDelete = append(result.WillDelete, PreviewRelease{
+			ID:          r.ID,
+			Tag:         r.Tag,
+			PublishedAt: r.PublishedAt,
+			AssetCount:  countMap[r.ID],
+		})
+	}
+
+	return result, nil
+}
+
 func (s *Service) CleanupRepository(ctx context.Context, repository models.Repository) error {
 	_, err := s.Cleanup(ctx, repository)
 	return err

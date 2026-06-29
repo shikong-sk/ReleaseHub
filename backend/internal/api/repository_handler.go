@@ -25,6 +25,7 @@ type repositoryHandler struct {
 	syncService     *syncersvc.Service
 	syncServiceErr  error
 	githubClientErr error
+	retentionSvc    *retentionsvc.Service
 }
 
 func registerRepositoryRoutes(router *gin.Engine, db *gorm.DB, storageConfig config.StorageConfig, githubAPIBaseURL string, githubClient *githubsvc.Client, githubClientErr error) {
@@ -32,8 +33,10 @@ func registerRepositoryRoutes(router *gin.Engine, db *gorm.DB, storageConfig con
 	checkService := releasesvc.NewCheckService(db, githubClient).
 		WithGitHubFactory(githubsvc.NewClientFactory(githubAPIBaseURL, db)).
 		WithProviderRegistry(providerRegistry)
-	if retentionService, err := retentionsvc.NewService(db, storageConfig); err == nil {
-		checkService.WithRetention(retentionService)
+	var retentionService *retentionsvc.Service
+	if rs, err := retentionsvc.NewService(db, storageConfig); err == nil {
+		retentionService = rs
+		checkService.WithRetention(rs)
 	}
 	syncService, syncServiceErr := syncersvc.NewService(db, checkService, storageConfig)
 
@@ -43,6 +46,7 @@ func registerRepositoryRoutes(router *gin.Engine, db *gorm.DB, storageConfig con
 		syncService:     syncService,
 		syncServiceErr:  syncServiceErr,
 		githubClientErr: githubClientErr,
+		retentionSvc:    retentionService,
 	}
 
 	group := router.Group("/api/repositories")
@@ -57,6 +61,7 @@ func registerRepositoryRoutes(router *gin.Engine, db *gorm.DB, storageConfig con
 	group.POST("/:id/sync-tag", handler.syncByTag)
 	group.GET("/:id/releases", handler.listReleases)
 	group.GET("/:id/remote-tags", handler.remoteTags)
+	group.GET("/:id/retention-preview", handler.retentionPreview)
 }
 
 func (h *repositoryHandler) list(c *gin.Context) {
@@ -137,6 +142,31 @@ func (h *repositoryHandler) delete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+func (h *repositoryHandler) retentionPreview(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+
+	if h.retentionSvc == nil {
+		writeError(c, http.StatusServiceUnavailable, "保留策略服务未初始化")
+		return
+	}
+
+	repository, err := h.service.Get(c.Request.Context(), id)
+	if err != nil {
+		writeServiceError(c, err, "查询仓库失败")
+		return
+	}
+
+	result, err := h.retentionSvc.Preview(c.Request.Context(), *repository)
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "预览保留策略失败")
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
 func (h *repositoryHandler) checkLatest(c *gin.Context) {
 	if h.githubClientErr != nil {
 		writeError(c, http.StatusInternalServerError, h.githubClientErr.Error())

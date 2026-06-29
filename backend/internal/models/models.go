@@ -121,6 +121,8 @@ type Asset struct {
 	BrowserDownloadURL string         `json:"browserDownloadUrl" gorm:"column:browser_download_url;size:1024"`
 	StoragePath        string         `json:"storagePath" gorm:"column:storage_path;size:1024"`
 	SHA256             string         `json:"sha256" gorm:"column:sha256;size:64"`
+	ExpectedSHA256     string         `json:"expectedSha256" gorm:"column:expected_sha256;size:64"`
+	DownloadBytes      int64          `json:"downloadBytes" gorm:"column:download_bytes;not null;default:0"`
 	Status             AssetStatus    `json:"status" gorm:"column:status;size:40;not null;default:pending"`
 	StorageID          *uint          `json:"storageId" gorm:"column:storage_id;uniqueIndex:idx_release_asset_storage"`
 	ErrorMessage       string         `json:"errorMessage" gorm:"column:error_message;type:text"`

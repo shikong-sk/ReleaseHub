@@ -1,13 +1,25 @@
 <script setup lang="ts">
-import { onMounted, shallowRef } from 'vue'
+import { computed, onMounted, shallowRef } from 'vue'
 import { NGrid, NGi, NCard, NStatistic, NSpin, NAlert } from 'naive-ui'
+import { Bar } from 'vue-chartjs'
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend
+} from 'chart.js'
 
 import HealthSummary from '@/components/health/HealthSummary.vue'
 import { useHealthStore } from '@/stores/health'
 import { useRepositoriesStore } from '@/stores/repositories'
 import { useTasksStore } from '@/stores/tasks'
 import { useFilesStore } from '@/stores/files'
-import { getDashboardStats, type DashboardStats } from '@/api/stats'
+import { getDashboardStats, getTrendStats, type DashboardStats, type TrendStats } from '@/api/stats'
+
+ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
 
 const healthStore = useHealthStore()
 const repositoryStore = useRepositoriesStore()
@@ -17,6 +29,46 @@ const filesStore = useFilesStore()
 const stats = shallowRef<DashboardStats | null>(null)
 const statsLoading = shallowRef(false)
 const statsError = shallowRef<string | null>(null)
+
+const trend = shallowRef<TrendStats | null>(null)
+
+const releaseChart = computed(() => {
+  const t = trend.value
+  if (!t) return null
+  return {
+    labels: t.releases.map(p => p.date.slice(5)),
+    datasets: [{
+      label: '新增 Release',
+      data: t.releases.map(p => p.count),
+      backgroundColor: 'rgba(59, 130, 246, 0.6)',
+      borderRadius: 3
+    }]
+  }
+})
+
+const assetChart = computed(() => {
+  const t = trend.value
+  if (!t) return null
+  return {
+    labels: t.assets.map(p => p.date.slice(5)),
+    datasets: [{
+      label: '下载资产',
+      data: t.assets.map(p => p.count),
+      backgroundColor: 'rgba(16, 185, 129, 0.6)',
+      borderRadius: 3
+    }]
+  }
+})
+
+const chartOpts = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { display: false } },
+  scales: {
+    y: { beginAtZero: true, ticks: { precision: 0 } },
+    x: { ticks: { maxRotation: 45 } }
+  }
+}
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -36,7 +88,12 @@ onMounted(async () => {
   ])
   statsLoading.value = true
   try {
-    stats.value = await getDashboardStats()
+    const [s, t] = await Promise.all([
+      getDashboardStats(),
+      getTrendStats(30)
+    ])
+    stats.value = s
+    trend.value = t
   } catch (err) {
     statsError.value = err instanceof Error ? err.message : '加载统计失败'
   } finally {
@@ -98,6 +155,24 @@ onMounted(async () => {
     </NSpin>
 
     <NAlert v-if="statsError" type="error" closable>{{ statsError }}</NAlert>
+
+    <!-- 趋势图 -->
+    <NGrid v-if="trend" cols="1 l:2" responsive="screen" :x-gap="16" :y-gap="16">
+      <NGi>
+        <NCard :bordered="false" title="Release 趋势（近 30 天）">
+          <div style="height: 220px">
+            <Bar v-if="releaseChart" :data="releaseChart" :options="chartOpts" />
+          </div>
+        </NCard>
+      </NGi>
+      <NGi>
+        <NCard :bordered="false" title="下载趋势（近 30 天）">
+          <div style="height: 220px">
+            <Bar v-if="assetChart" :data="assetChart" :options="chartOpts" />
+          </div>
+        </NCard>
+      </NGi>
+    </NGrid>
 
     <NCard v-if="tasksStore.failedCount > 0" :bordered="false" title="最近失败任务">
       <NAlert type="warning" :show-icon="false">
