@@ -19,12 +19,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Extract version
+      - name: Extract version and image name
         id: meta
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "version_without_v=${VERSION#v}" >> "$GITHUB_OUTPUT"
+          # Docker repository names must be lowercase
+          IMAGE="${{ env.REGISTRY }}/${GITHUB_REPOSITORY,,}"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
       # ── Docker Login ──────────────────────────────────────────────
       - name: Log in to GitHub Container Registry
@@ -46,9 +49,9 @@ jobs:
           file: docker/Dockerfile
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ github.repository }}:${{ steps.meta.outputs.version_without_v }}
-            ${{ env.REGISTRY }}/${{ github.repository }}:${{ steps.meta.outputs.version }}
-            ${{ env.REGISTRY }}/${{ github.repository }}:latest
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version_without_v }}
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.image }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -65,14 +68,14 @@ jobs:
             Pull the unified image from GitHub Container Registry:
 
             ```bash
-            docker pull ${{ env.REGISTRY }}/${{ github.repository }}:${{ steps.meta.outputs.version_without_v }}
+            docker pull ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version_without_v }}
             ```
 
             ### Quick Start
 
             ```bash
             TAG=${{ steps.meta.outputs.version_without_v }}
-            IMAGE=${{ env.REGISTRY }}/${{ github.repository }}:$TAG
+            IMAGE=${{ steps.meta.outputs.image }}:$TAG
 
             docker run -d \
               --name releasehub \
