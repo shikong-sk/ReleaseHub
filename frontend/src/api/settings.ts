@@ -20,6 +20,7 @@ export interface AppConfigUpdate {
   schedulerTickSeconds?: number
   schedulerMaxConcurrent?: number
   githubApiBaseUrl?: string
+  authEnabled?: boolean
 }
 
 export function updateAppConfig(update: AppConfigUpdate): Promise<AppConfig> {

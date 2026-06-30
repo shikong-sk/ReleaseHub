@@ -46,6 +46,7 @@ const editSchedulerEnabled = shallowRef(false)
 const editSchedulerTickSeconds = shallowRef(60)
 const editSchedulerMaxConcurrent = shallowRef(5)
 const editGithubApiBaseUrl = shallowRef('')
+const editAuthEnabled = shallowRef(false)
 
 const showModal = shallowRef(false)
 const formName = shallowRef('')
@@ -130,6 +131,7 @@ function resetEditForm() {
   editSchedulerTickSeconds.value = schedulerTickSeconds.value
   editSchedulerMaxConcurrent.value = schedulerMaxConcurrent.value
   editGithubApiBaseUrl.value = githubApiBaseUrl.value
+  editAuthEnabled.value = authEnabled.value
 }
 
 function startEditConfig() {
@@ -157,6 +159,9 @@ async function saveConfig() {
     }
     if (editGithubApiBaseUrl.value !== githubApiBaseUrl.value) {
       update.githubApiBaseUrl = editGithubApiBaseUrl.value
+    }
+    if (editAuthEnabled.value !== authEnabled.value) {
+      update.authEnabled = editAuthEnabled.value
     }
 
     // 没有变更则直接退出编辑
@@ -307,6 +312,9 @@ async function handleDelete(id: number) {
 
       <!-- 编辑模式 -->
       <NForm v-else label-placement="left" label-width="120">
+        <NFormItem label="认证">
+          <NSwitch v-model:value="editAuthEnabled" />
+        </NFormItem>
         <NFormItem label="Scheduler">
           <NSwitch v-model:value="editSchedulerEnabled" />
         </NFormItem>
@@ -321,7 +329,7 @@ async function handleDelete(id: number) {
           <NInput v-model:value="editGithubApiBaseUrl" placeholder="https://api.github.com" />
         </NFormItem>
         <NAlert type="info" style="margin-top: 8px">
-          认证开关和存储目录为环境变量配置，需重启服务生效，暂不支持在线修改。
+          存储目录为环境变量配置，需重启服务生效，暂不支持在线修改。
         </NAlert>
       </NForm>
     </NCard>

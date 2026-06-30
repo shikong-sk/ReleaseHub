@@ -37,8 +37,13 @@ func ValidateAPIKey(db *gorm.DB, key string) (*models.APIKey, error) {
 }
 
 // APIKeyOrAuth 支持 API Key 或 JWT Token 认证
-func APIKeyOrAuth(db *gorm.DB) gin.HandlerFunc {
+// 当 authEnabled 返回 false 时直接放行（认证关闭模式）
+func APIKeyOrAuth(db *gorm.DB, authEnabled func() bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if !authEnabled() {
+			c.Next()
+			return
+		}
 		// 1. 尝试 API Key
 		apiKeyHeader := c.GetHeader("X-API-Key")
 		if apiKeyHeader == "" {

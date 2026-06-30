@@ -53,6 +53,7 @@ type configUpdateRequest struct {
 	SchedulerTickSeconds   *int    `json:"schedulerTickSeconds,omitempty"`
 	SchedulerMaxConcurrent *int    `json:"schedulerMaxConcurrent,omitempty"`
 	GitHubAPIBaseURL       *string `json:"githubApiBaseUrl,omitempty"`
+	AuthEnabled            *bool   `json:"authEnabled,omitempty"`
 }
 
 func (h *configHandler) update(c *gin.Context) {
@@ -67,6 +68,7 @@ func (h *configHandler) update(c *gin.Context) {
 		SchedulerTickSeconds:   req.SchedulerTickSeconds,
 		SchedulerMaxConcurrent: req.SchedulerMaxConcurrent,
 		GitHubAPIBaseURL:       req.GitHubAPIBaseURL,
+		AuthEnabled:            req.AuthEnabled,
 	}
 
 	changed, err := h.config.ApplyUpdate(update)

@@ -20,8 +20,12 @@ type permissionRule struct {
 	Resource string
 }
 
-func AuthorizeRequest() gin.HandlerFunc {
+func AuthorizeRequest(authEnabled func() bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if !authEnabled() {
+			c.Next()
+			return
+		}
 		rule := classifyRequest(c)
 		if authType, _ := c.Get("authType"); authType == "apikey" {
 			scope, _ := c.Get("apiKeyScope")

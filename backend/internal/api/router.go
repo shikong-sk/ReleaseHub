@@ -50,10 +50,10 @@ func NewRouter(deps Dependencies) http.Handler {
 	registerAuthRoutes(router, deps.DB)
 	registerConfigRoutes(router, deps.Config, deps.Scheduler)
 
-	if deps.Config.Auth.Enabled {
-		router.Use(middleware.APIKeyOrAuth(deps.DB))
-		router.Use(middleware.AuthorizeRequest())
-	}
+	// 认证中间件始终注册，运行时通过 config.Auth.Enabled 动态判断
+	authEnabled := func() bool { return deps.Config.Auth.Enabled }
+	router.Use(middleware.APIKeyOrAuth(deps.DB, authEnabled))
+	router.Use(middleware.AuthorizeRequest(authEnabled))
 
 	// 核心 API
 	githubClient, githubClientErr := githubsvc.NewClient(deps.Config.GitHub.APIBaseURL)

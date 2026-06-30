@@ -149,6 +149,7 @@ type UpdateConfig struct {
 	SchedulerTickSeconds   *int    `json:"schedulerTickSeconds,omitempty"`
 	SchedulerMaxConcurrent *int    `json:"schedulerMaxConcurrent,omitempty"`
 	GitHubAPIBaseURL       *string `json:"githubApiBaseUrl,omitempty"`
+	AuthEnabled            *bool   `json:"authEnabled,omitempty"`
 }
 
 // ApplyUpdate 应用运行时配置更新，返回实际被修改的字段名列表
@@ -180,6 +181,10 @@ func (c *Config) ApplyUpdate(update UpdateConfig) ([]string, error) {
 	if update.GitHubAPIBaseURL != nil && *update.GitHubAPIBaseURL != c.GitHub.APIBaseURL {
 		c.GitHub.APIBaseURL = *update.GitHubAPIBaseURL
 		changed = append(changed, "githubApiBaseUrl")
+	}
+	if update.AuthEnabled != nil && *update.AuthEnabled != c.Auth.Enabled {
+		c.Auth.Enabled = *update.AuthEnabled
+		changed = append(changed, "authEnabled")
 	}
 
 	return changed, nil
