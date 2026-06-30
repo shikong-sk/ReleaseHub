@@ -68,6 +68,7 @@ func Migrate(db *gorm.DB) error {
 		&models.TaskLog{},
 		&models.User{},
 		&models.APIKey{},
+		&models.AppSetting{},
 	)
 }
 
@@ -276,11 +277,18 @@ func BackfillAssetStorageID(db *gorm.DB) error {
 // MigrateDropDeletedAt 清理软删除列：删除已被软删除的记录，然后删除 deleted_at 列
 // 此函数仅在从软删除迁移到硬删除时需要执行一次
 func MigrateDropDeletedAt(db *gorm.DB) error {
+	// 已迁移过的标记，避免每次启动重复执行
+	var marker models.AppSetting
+	if err := db.Where("key = ?", "migrate.drop_deleted_at_done").First(&marker).Error; err == nil {
+		return nil
+	}
+
 	// 检查 assets 表是否有 deleted_at 列
 	var colCount int64
 	db.Raw("SELECT COUNT(*) FROM pragma_table_info('assets') WHERE name='deleted_at'").Scan(&colCount)
 	if colCount == 0 {
-		// 没有 deleted_at 列，无需迁移
+		// 没有 deleted_at 列，标记已完成
+		db.Save(&models.AppSetting{Key: "migrate.drop_deleted_at_done", Value: "true"})
 		return nil
 	}
 
@@ -319,6 +327,9 @@ func MigrateDropDeletedAt(db *gorm.DB) error {
 			return fmt.Errorf("创建新索引失败: %w", err)
 		}
 	}
+
+	// 标记迁移完成
+	db.Save(&models.AppSetting{Key: "migrate.drop_deleted_at_done", Value: "true"})
 
 	fmt.Println("[MigrateDropDeletedAt] 迁移完成")
 	return nil

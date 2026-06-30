@@ -39,7 +39,7 @@ ReleaseHub 是面向 GitHub / GitLab / Gitea / Forgejo Releases 的 Artifact 管
 - 通知渠道可启用/禁用
 
 **认证与权限**
-- JWT 认证，支持启停（`RELEASEHUB_AUTH_ENABLED`）
+- JWT 认证，支持运行时动态启停（设置页面 → 全局配置）
 - 默认管理员账号
 - RBAC：admin / operator / viewer 三级角色
 - API Key 认证，支持 scope 权限控制（`*` / `read` / `write` / `admin` / 细粒度 scope）
@@ -97,7 +97,7 @@ docker run -d \
 
 #### Docker Compose 示例
 
-**基础部署**（无认证，适合内网）：
+**基础部署**（适合内网，认证可在设置页面按需开启）：
 
 ```yaml
 services:
@@ -119,7 +119,7 @@ volumes:
   data:
 ```
 
-**生产部署**（启用认证 + 自托管 GitHub 镜像源 + 绑定存储路径）：
+**生产部署**（自托管 GitHub 镜像源 + 绑定存储路径，认证在设置页面开启）：
 
 ```yaml
 services:
@@ -136,7 +136,6 @@ services:
       RELEASEHUB_SCHEDULER_ENABLED: "true"
       RELEASEHUB_SCHEDULER_TICK_SECONDS: "60"
       RELEASEHUB_SCHEDULER_MAX_CONCURRENT: "5"
-      RELEASEHUB_AUTH_ENABLED: "true"
       RELEASEHUB_APP_JWT_SECRET: your-random-secret-key-here
       RELEASEHUB_AUTH_DEFAULT_ADMIN: admin
       RELEASEHUB_AUTH_DEFAULT_PASSWORD: admin
@@ -158,7 +157,7 @@ volumes:
 > **提示**：
 > - 容器内 nginx 监听 **80** 端口，后端监听 **8080**（容器内部），对外只需映射 `80`
 > - `volumes.data.driver_opts` 可将数据直接绑定到宿主机目录，避免 Docker 卷管理开销
-> - 启用认证后务必修改 `RELEASEHUB_AUTH_DEFAULT_PASSWORD` 和 `RELEASEHUB_APP_JWT_SECRET`
+> - 启用认证后务必修改默认管理员密码和 `RELEASEHUB_APP_JWT_SECRET`
 > - 如使用 GitHub 镜像站（如 `ghcr.nju.edu.cn`），替换 image 地址即可
 
 #### 从源码构建
@@ -208,7 +207,6 @@ npm run dev
 | `RELEASEHUB_SCHEDULER_ENABLED` | `true` | 是否启用定时检查 |
 | `RELEASEHUB_SCHEDULER_TICK_SECONDS` | `60` | Scheduler 扫描间隔（最小 10 秒） |
 | `RELEASEHUB_SCHEDULER_MAX_CONCURRENT` | `5` | Scheduler 最大并发同步数 |
-| `RELEASEHUB_AUTH_ENABLED` | `false` | 是否启用认证 |
 | `RELEASEHUB_APP_JWT_SECRET` | `""` | JWT 签名密钥（启用认证时必须设置） |
 | `RELEASEHUB_AUTH_DEFAULT_ADMIN` | `admin` | 默认管理员用户名 |
 | `RELEASEHUB_AUTH_DEFAULT_PASSWORD` | `admin` | 默认管理员密码 |

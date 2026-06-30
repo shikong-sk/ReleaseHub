@@ -41,23 +41,21 @@ docker compose -f docker/compose.sqlite.yml up --build -d
 
 ### 启用认证
 
-生产环境务必启用认证。编辑 `docker/compose.sqlite.yml` 的 backend 环境变量：
+生产环境务必启用认证。启动后在 Web 管理界面的「设置 → 全局配置」中开启认证开关，或通过 API：
+
+```bash
+curl -X PUT http://localhost:8080/api/config \
+  -H 'Content-Type: application/json' \
+  -d '{"authEnabled": true}'
+```
+
+同时设置 JWT 密钥环境变量：
 
 ```yaml
 services:
   backend:
     environment:
-      RELEASEHUB_APP_ENV: production
-      RELEASEHUB_HTTP_HOST: 0.0.0.0
-      RELEASEHUB_HTTP_PORT: 8080
-      RELEASEHUB_DATABASE_DSN: /data/releasehub.db
-      RELEASEHUB_STORAGE_DATA_DIR: /data/releases
-      RELEASEHUB_AUTH_ENABLED: "true"
       RELEASEHUB_APP_JWT_SECRET: your-strong-random-secret
-      RELEASEHUB_AUTH_DEFAULT_ADMIN: admin
-      RELEASEHUB_AUTH_DEFAULT_PASSWORD: changeme-now
-    volumes:
-      - ./data:/data
 ```
 
 > 启用认证后请立即登录修改默认管理员密码。

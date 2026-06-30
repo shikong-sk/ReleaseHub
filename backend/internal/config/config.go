@@ -88,7 +88,7 @@ func Load() (*Config, error) {
 	v.SetDefault("scheduler.enabled", true)
 	v.SetDefault("scheduler.tick_seconds", 60)
 	v.SetDefault("scheduler.max_concurrent", 5)
-	v.SetDefault("auth.enabled", false)
+	// auth.enabled 不从环境变量读取，仅通过运行时 API 动态切换
 	v.SetDefault("auth.default_admin", "admin")
 	v.SetDefault("auth.default_password", "admin")
 
@@ -124,7 +124,7 @@ func Load() (*Config, error) {
 			MaxConcurrent: v.GetInt("scheduler.max_concurrent"),
 		},
 		Auth: AuthConfig{
-			Enabled:         v.GetBool("auth.enabled"),
+			Enabled:         false, // 仅通过运行时 API 动态切换，不从环境变量读取
 			DefaultAdmin:    v.GetString("auth.default_admin"),
 			DefaultPassword: v.GetString("auth.default_password"),
 		},

@@ -6,7 +6,7 @@
 
 ### 默认账号
 
-启用认证后（环境变量 `RELEASEHUB_AUTH_ENABLED=true`），使用默认账号登录：
+启用认证后（在「设置 → 全局配置」中开启），使用默认账号登录：
 
 - 用户名：`admin`（可通过 `RELEASEHUB_AUTH_DEFAULT_ADMIN` 配置）
 - 密码：`admin`（可通过 `RELEASEHUB_AUTH_DEFAULT_PASSWORD` 配置）

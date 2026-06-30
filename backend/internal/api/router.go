@@ -48,7 +48,9 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	// 认证路由
 	registerAuthRoutes(router, deps.DB)
-	registerConfigRoutes(router, deps.Config, deps.Scheduler)
+	// 启动时加载持久化的配置（如 auth.enabled）
+	LoadPersistedSettings(deps.DB, deps.Config)
+	registerConfigRoutes(router, deps.Config, deps.Scheduler, deps.DB)
 
 	// 认证中间件始终注册，运行时通过 config.Auth.Enabled 动态判断
 	authEnabled := func() bool { return deps.Config.Auth.Enabled }

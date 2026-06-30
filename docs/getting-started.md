@@ -43,10 +43,10 @@ npm run dev
 
 默认不启用认证，适合内网部署。如需启用：
 
-1. 设置环境变量：
+1. 在 Web 管理界面的「设置 → 全局配置」中开启认证开关
+2. 设置 JWT 密钥环境变量：
 
 ```bash
-export RELEASEHUB_AUTH_ENABLED=true
 export RELEASEHUB_APP_JWT_SECRET=your-random-secret
 ```
 

@@ -225,3 +225,9 @@ type NotificationLog struct {
 	Error          string    `json:"error" gorm:"column:error;type:text"`
 	CreatedAt      time.Time `json:"createdAt" gorm:"column:created_at;index"`
 }
+
+// AppSetting 应用配置键值表（持久化运行时可修改的配置）
+type AppSetting struct {
+	Key   string `json:"key" gorm:"primaryKey;size:64"`
+	Value string `json:"value" gorm:"column:value;size:512;not null;default:''"`
+}

@@ -71,9 +71,10 @@ Scheduler 在每个 tick 周期中：
 
 ## 认证
 
+认证开关支持运行时动态切换，在 Web 管理界面的「设置 → 全局配置」中开启或关闭，无需重启服务。
+
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `RELEASEHUB_AUTH_ENABLED` | `false` | 是否启用认证 |
 | `RELEASEHUB_AUTH_DEFAULT_ADMIN` | `admin` | 初始管理员用户名 |
 | `RELEASEHUB_AUTH_DEFAULT_PASSWORD` | `admin` | 初始管理员密码 |
 
@@ -136,7 +137,6 @@ services:
       RELEASEHUB_HTTP_PORT: 8080
       RELEASEHUB_DATABASE_DSN: /data/releasehub.db
       RELEASEHUB_STORAGE_DATA_DIR: /data/releases
-      RELEASEHUB_AUTH_ENABLED: "true"
       RELEASEHUB_APP_JWT_SECRET: your-secret-here
       RELEASEHUB_AUTH_DEFAULT_ADMIN: admin
       RELEASEHUB_AUTH_DEFAULT_PASSWORD: changeme

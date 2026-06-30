@@ -5,13 +5,16 @@ import (
 	"time"
 
 	"releasehub/backend/internal/config"
+	"releasehub/backend/internal/models"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type configHandler struct {
 	config    *config.Config
 	scheduler SchedulerUpdater
+	db        *gorm.DB
 }
 
 // SchedulerUpdater 调度器运行时配置更新接口
@@ -29,12 +32,20 @@ type configResponse struct {
 	AuthEnabled            bool   `json:"authEnabled"`
 }
 
-func registerConfigRoutes(router *gin.Engine, cfg *config.Config, scheduler SchedulerUpdater) {
-	handler := &configHandler{config: cfg, scheduler: scheduler}
+func registerConfigRoutes(router *gin.Engine, cfg *config.Config, scheduler SchedulerUpdater, db *gorm.DB) {
+	handler := &configHandler{config: cfg, scheduler: scheduler, db: db}
 
 	group := router.Group("/api/config")
 	group.GET("", handler.get)
 	group.PUT("", handler.update)
+}
+
+// LoadPersistedSettings 从数据库加载持久化的配置到 Config
+func LoadPersistedSettings(db *gorm.DB, cfg *config.Config) {
+	var setting models.AppSetting
+	if err := db.Where("key = ?", "auth.enabled").First(&setting).Error; err == nil {
+		cfg.Auth.Enabled = setting.Value == "true"
+	}
 }
 
 func (h *configHandler) get(c *gin.Context) {
@@ -86,6 +97,17 @@ func (h *configHandler) update(c *gin.Context) {
 			case "schedulerMaxConcurrent":
 				h.scheduler.UpdateMaxConcurrent(h.config.Scheduler.MaxConcurrent)
 			}
+		}
+	}
+
+	// 持久化 authEnabled 到数据库
+	for _, field := range changed {
+		if field == "authEnabled" {
+			val := "false"
+			if h.config.Auth.Enabled {
+				val = "true"
+			}
+			h.db.Save(&models.AppSetting{Key: "auth.enabled", Value: val})
 		}
 	}
 
