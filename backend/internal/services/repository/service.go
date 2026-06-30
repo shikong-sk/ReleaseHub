@@ -49,6 +49,9 @@ type CreateInput struct {
 	FilterMode           string `json:"filterMode"`
 	AssetIncludePatterns string `json:"assetIncludePatterns"`
 	AssetExcludePatterns string `json:"assetExcludePatterns"`
+	TagFilterMode        string `json:"tagFilterMode"`
+	TagIncludePattern    string `json:"tagIncludePattern"`
+	TagExcludePattern    string `json:"tagExcludePattern"`
 	RetentionKeepLatest  int    `json:"retentionKeepLatest"`
 }
 
@@ -63,6 +66,9 @@ type UpdateInput struct {
 	FilterMode           *string `json:"filterMode"`
 	AssetIncludePatterns *string `json:"assetIncludePatterns"`
 	AssetExcludePatterns *string `json:"assetExcludePatterns"`
+	TagFilterMode        *string `json:"tagFilterMode"`
+	TagIncludePattern    *string `json:"tagIncludePattern"`
+	TagExcludePattern    *string `json:"tagExcludePattern"`
 	RetentionKeepLatest  *int    `json:"retentionKeepLatest"`
 }
 
@@ -216,6 +222,21 @@ func (s *Service) Update(ctx context.Context, id uint, input UpdateInput) (*mode
 	if input.AssetExcludePatterns != nil {
 		repository.AssetExcludePatterns = strings.TrimSpace(*input.AssetExcludePatterns)
 	}
+	if input.TagFilterMode != nil {
+		tagFilterMode := normalizeFilterMode(*input.TagFilterMode)
+		if tagFilterMode != "" {
+			if err := validateFilterMode(tagFilterMode); err != nil {
+				return nil, err
+			}
+		}
+		repository.TagFilterMode = tagFilterMode
+	}
+	if input.TagIncludePattern != nil {
+		repository.TagIncludePattern = strings.TrimSpace(*input.TagIncludePattern)
+	}
+	if input.TagExcludePattern != nil {
+		repository.TagExcludePattern = strings.TrimSpace(*input.TagExcludePattern)
+	}
 	if input.RetentionKeepLatest != nil {
 		if err := validateRetention(*input.RetentionKeepLatest); err != nil {
 			return nil, err
@@ -339,6 +360,13 @@ func buildRepository(input CreateInput) (*models.Repository, error) {
 		return nil, err
 	}
 
+	tagFilterMode := normalizeFilterMode(input.TagFilterMode)
+	if tagFilterMode != "" {
+		if err := validateFilterMode(tagFilterMode); err != nil {
+			return nil, err
+		}
+	}
+
 	retention := input.RetentionKeepLatest
 	if retention == 0 {
 		retention = defaultRetention
@@ -359,6 +387,9 @@ func buildRepository(input CreateInput) (*models.Repository, error) {
 		FilterMode:           filterMode,
 		AssetIncludePatterns: strings.TrimSpace(input.AssetIncludePatterns),
 		AssetExcludePatterns: strings.TrimSpace(input.AssetExcludePatterns),
+		TagFilterMode:        tagFilterMode,
+		TagIncludePattern:    strings.TrimSpace(input.TagIncludePattern),
+		TagExcludePattern:    strings.TrimSpace(input.TagExcludePattern),
 		RetentionKeepLatest:  retention,
 		LastStatus:           models.RepositoryStatusUnknown,
 	}, nil

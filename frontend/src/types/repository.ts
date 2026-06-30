@@ -16,6 +16,9 @@ export interface Repository {
   filterMode: RepositoryFilterMode
   assetIncludePatterns: string
   assetExcludePatterns: string
+  tagFilterMode: string
+  tagIncludePattern: string
+  tagExcludePattern: string
   retentionKeepLatest: number
   lastCheckAt: string | null
   lastReleaseTag: string
@@ -42,6 +45,9 @@ export interface RepositoryPayload {
   filterMode: RepositoryFilterMode
   assetIncludePatterns: string
   assetExcludePatterns: string
+  tagFilterMode?: string
+  tagIncludePattern?: string
+  tagExcludePattern?: string
   retentionKeepLatest: number
 }
 

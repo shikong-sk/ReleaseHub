@@ -1,5 +1,5 @@
 import { getJson, requestJson } from './http'
-import type { NotificationItem, NotificationListResponse, NotificationPayload } from '@/types/notification'
+import type { NotificationItem, NotificationListResponse, NotificationPayload, NotificationLog, NotificationLogListResponse } from '@/types/notification'
 
 export function listNotifications(): Promise<NotificationListResponse> {
   return getJson<NotificationListResponse>('/api/notifications')
@@ -33,4 +33,16 @@ export function testNotification(id: number): Promise<{ status: string; message:
   return requestJson<{ status: string; message: string }>(`/api/notifications/${id}/test`, {
     method: 'POST'
   })
+}
+
+export function listNotificationLogs(notificationId: number, limit = 50): Promise<NotificationLogListResponse> {
+  return getJson<NotificationLogListResponse>(`/api/notifications/${notificationId}/logs?limit=${limit}`)
+}
+
+export function listAllNotificationLogs(params?: { limit?: number; event?: string }): Promise<NotificationLogListResponse> {
+  const sp = new URLSearchParams()
+  if (params?.limit) sp.set('limit', String(params.limit))
+  if (params?.event) sp.set('event', params.event)
+  const qs = sp.toString()
+  return getJson<NotificationLogListResponse>(`/api/notification-logs${qs ? '?' + qs : ''}`)
 }

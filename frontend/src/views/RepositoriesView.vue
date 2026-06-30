@@ -116,6 +116,9 @@ async function submitRepository(payload: RepositoryPayload) {
         filterMode: payload.filterMode,
         assetIncludePatterns: payload.assetIncludePatterns,
         assetExcludePatterns: payload.assetExcludePatterns,
+        tagFilterMode: payload.tagFilterMode,
+        tagIncludePattern: payload.tagIncludePattern,
+        tagExcludePattern: payload.tagExcludePattern,
         retentionKeepLatest: payload.retentionKeepLatest
       })
       message.success('仓库已更新')

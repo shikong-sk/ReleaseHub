@@ -137,6 +137,20 @@ func (s *CheckService) CheckByTag(ctx context.Context, repositoryID uint, tag st
 
 	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("发现 Release %s，资产数 %d", providerRelease.TagName, len(providerRelease.Assets)))
 
+	// Tag 过滤
+	if tagFiltered, err := s.isTagFiltered(ctx, repository, providerRelease.TagName); err != nil {
+		s.failTaskWithLog(ctx, &task, err, "Tag 过滤规则无效")
+		return nil, err
+	} else if tagFiltered {
+		s.appendLog(ctx, task.ID, "info", fmt.Sprintf("Tag %s 被 Tag 过滤规则排除，跳过同步", providerRelease.TagName))
+		now := time.Now().UTC()
+		task.Status = models.TaskStatusSucceeded
+		task.FinishedAt = &now
+		_ = s.db.WithContext(ctx).Save(&task).Error
+		s.markRepositoryHealthy(ctx, repository.ID, repository.LastReleaseTag)
+		return &CheckResult{Repository: repository, Task: task}, nil
+	}
+
 	matcher, err := filter.NewMatcher(repository.FilterMode, repository.AssetIncludePatterns, repository.AssetExcludePatterns)
 	if err != nil {
 		s.markRepositoryFailed(ctx, repository.ID)
@@ -208,6 +222,20 @@ func (s *CheckService) CheckLatest(ctx context.Context, repositoryID uint) (*Che
 	}
 
 	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("发现 Release %s，资产数 %d", providerRelease.TagName, len(providerRelease.Assets)))
+
+	// Tag 过滤：如果最新 tag 不匹配规则，跳过同步
+	if tagFiltered, err := s.isTagFiltered(ctx, repository, providerRelease.TagName); err != nil {
+		s.failTaskWithLog(ctx, &task, err, "Tag 过滤规则无效")
+		return nil, err
+	} else if tagFiltered {
+		s.appendLog(ctx, task.ID, "info", fmt.Sprintf("Tag %s 被 Tag 过滤规则排除，跳过同步", providerRelease.TagName))
+		now := time.Now().UTC()
+		task.Status = models.TaskStatusSucceeded
+		task.FinishedAt = &now
+		_ = s.db.WithContext(ctx).Save(&task).Error
+		s.markRepositoryHealthy(ctx, repository.ID, repository.LastReleaseTag)
+		return &CheckResult{Repository: repository, Task: task}, nil
+	}
 
 	isNewRelease, err := s.releaseMissing(ctx, repository.ID, providerRelease.TagName)
 	if err != nil {
@@ -312,6 +340,17 @@ func (s *CheckService) CheckAll(ctx context.Context, repositoryID uint) (*CheckA
 	skippedAssets := 0
 
 	for i, providerRelease := range providerReleases {
+		// Tag 过滤：跳过不匹配的 release
+		if tagFiltered, err := s.isTagFiltered(ctx, repository, providerRelease.TagName); err != nil {
+			s.logger.Warn("Tag 过滤匹配失败",
+				zap.String("tag", providerRelease.TagName),
+				zap.Error(err))
+			continue
+		} else if tagFiltered {
+			skippedAssets += len(providerRelease.Assets)
+			continue
+		}
+
 		isLatest := i == 0
 		persistResult, err := s.persistProviderReleaseWithLatest(ctx, repository, &providerRelease, matcher, isLatest)
 		if err != nil {
@@ -825,4 +864,21 @@ func parseSHA256Map(body string) map[string]string {
 
 func ptrTime(t time.Time) *time.Time {
 	return &t
+}
+
+// isTagFiltered 检查 tag 是否被仓库的 Tag 过滤规则排除
+// 返回 true 表示该 tag 应被跳过
+func (s *CheckService) isTagFiltered(ctx context.Context, repository models.Repository, tag string) (bool, error) {
+	if repository.TagFilterMode == "" {
+		return false, nil
+	}
+	tagMatcher, err := filter.NewMatcher(repository.TagFilterMode, repository.TagIncludePattern, repository.TagExcludePattern)
+	if err != nil {
+		return false, fmt.Errorf("Tag 过滤规则无效: %w", err)
+	}
+	matched, err := tagMatcher.Match(tag)
+	if err != nil {
+		return false, fmt.Errorf("Tag 过滤匹配失败: %w", err)
+	}
+	return !matched, nil
 }

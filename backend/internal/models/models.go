@@ -75,6 +75,9 @@ type Repository struct {
 	FilterMode           string           `json:"filterMode" gorm:"column:filter_mode;size:20;not null;default:glob"`
 	AssetIncludePatterns string           `json:"assetIncludePatterns" gorm:"column:asset_include_patterns;type:text"`
 	AssetExcludePatterns string           `json:"assetExcludePatterns" gorm:"column:asset_exclude_patterns;type:text"`
+	TagFilterMode        string           `json:"tagFilterMode" gorm:"column:tag_filter_mode;size:20;not null;default:''"`
+	TagIncludePattern    string           `json:"tagIncludePattern" gorm:"column:tag_include_pattern;type:text"`
+	TagExcludePattern    string           `json:"tagExcludePattern" gorm:"column:tag_exclude_pattern;type:text"`
 	RetentionKeepLatest  int              `json:"retentionKeepLatest" gorm:"column:retention_keep_latest;not null;default:5"`
 	LastCheckAt          *time.Time       `json:"lastCheckAt" gorm:"column:last_check_at"`
 	LastReleaseTag       string           `json:"lastReleaseTag" gorm:"column:last_release_tag;size:255"`
@@ -208,4 +211,17 @@ type APIKey struct {
 	LastUsedAt *time.Time     `json:"lastUsedAt" gorm:"column:last_used_at"`
 	CreatedAt  time.Time      `json:"createdAt" gorm:"column:created_at"`
 	UpdatedAt  time.Time      `json:"updatedAt" gorm:"column:updated_at"`
+}
+
+// NotificationLog 通知推送历史记录
+type NotificationLog struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	NotificationID uint      `json:"notificationId" gorm:"column:notification_id;not null;index"`
+	NotificationName string  `json:"notificationName" gorm:"column:notification_name;size:120"`
+	Event          string    `json:"event" gorm:"column:event;size:40;not null"`
+	Title          string    `json:"title" gorm:"column:title;size:512"`
+	Message        string    `json:"message" gorm:"column:message;type:text"`
+	Success        bool      `json:"success" gorm:"column:success;not null;default:false"`
+	Error          string    `json:"error" gorm:"column:error;type:text"`
+	CreatedAt      time.Time `json:"createdAt" gorm:"column:created_at;index"`
 }

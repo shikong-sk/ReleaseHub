@@ -4,6 +4,8 @@ import {
   NButton,
   NCard,
   NDataTable,
+  NDrawer,
+  NDrawerContent,
   NForm,
   NFormItem,
   NInput,
@@ -15,12 +17,13 @@ import {
   NTag,
   useMessage
 } from 'naive-ui'
-import { Plus, RefreshCw } from 'lucide-vue-next'
+import { Plus, RefreshCw, History } from 'lucide-vue-next'
 import type { DataTableColumns } from 'naive-ui'
 import { computed } from 'vue'
 
 import { useNotificationsStore } from '@/stores/notifications'
-import type { NotificationItem, NotificationType } from '@/types/notification'
+import { listAllNotificationLogs, listNotificationLogs } from '@/api/notifications'
+import type { NotificationItem, NotificationType, NotificationLog } from '@/types/notification'
 
 const notificationsStore = useNotificationsStore()
 const message = useMessage()
@@ -33,6 +36,11 @@ const formServerUrl = shallowRef('')
 const formToken = shallowRef('')
 const formEnabled = shallowRef(true)
 const formEvents = shallowRef<string[]>([])
+
+// 推送历史
+const showLogDrawer = shallowRef(false)
+const logLoading = shallowRef(false)
+const logItems = shallowRef<NotificationLog[]>([])
 
 const eventOptions = [
   { label: '全部事件', value: '*' },
@@ -94,7 +102,7 @@ const notificationColumns = computed<DataTableColumns<NotificationItem>>(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 240,
+    width: 300,
     render: (row) =>
       h(NSpace, null, {
         default: () => [
@@ -102,6 +110,11 @@ const notificationColumns = computed<DataTableColumns<NotificationItem>>(() => [
             NButton,
             { size: 'small', type: 'info', secondary: true, onClick: () => handleTest(row.id) },
             { default: () => '测试' }
+          ),
+          h(
+            NButton,
+            { size: 'small', secondary: true, onClick: () => handleViewLogs(row.id) },
+            { default: () => '历史' }
           ),
           h(
             NButton,
@@ -119,6 +132,23 @@ const notificationColumns = computed<DataTableColumns<NotificationItem>>(() => [
         ]
       })
   }
+])
+
+const logColumns = computed<DataTableColumns<NotificationLog>>(() => [
+  { title: '时间', key: 'createdAt', width: 180 },
+  { title: '渠道', key: 'notificationName', width: 120 },
+  { title: '事件', key: 'event', width: 120 },
+  { title: '标题', key: 'title', ellipsis: { tooltip: true } },
+  {
+    title: '结果',
+    key: 'success',
+    width: 80,
+    render: (row) =>
+      row.success
+        ? h(NTag, { type: 'success', size: 'small' }, { default: () => '成功' })
+        : h(NTag, { type: 'error', size: 'small' }, { default: () => '失败' })
+  },
+  { title: '错误', key: 'error', ellipsis: { tooltip: true } }
 ])
 
 onMounted(() => {
@@ -191,6 +221,21 @@ async function handleTest(id: number) {
     message.error(err instanceof Error ? err.message : '测试通知发送失败')
   }
 }
+
+async function handleViewLogs(notificationId?: number) {
+  showLogDrawer.value = true
+  logLoading.value = true
+  try {
+    const resp = notificationId
+      ? await listNotificationLogs(notificationId, 100)
+      : await listAllNotificationLogs({ limit: 100 })
+    logItems.value = resp.items
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '加载推送历史失败')
+  } finally {
+    logLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -206,6 +251,10 @@ async function handleTest(id: number) {
           <NButton secondary :loading="notificationsStore.loading" @click="notificationsStore.refresh">
             <template #icon><RefreshCw /></template>
             刷新
+          </NButton>
+          <NButton secondary @click="handleViewLogs()">
+            <template #icon><History /></template>
+            推送历史
           </NButton>
           <NButton type="primary" @click="openCreateModal">
             <template #icon><Plus /></template>
@@ -256,6 +305,18 @@ async function handleTest(id: number) {
         </NFormItem>
       </NForm>
     </NModal>
+
+    <NDrawer v-model:show="showLogDrawer" :width="720" placement="right">
+      <NDrawerContent title="推送历史" closable>
+        <NDataTable
+          :columns="logColumns"
+          :data="logItems"
+          :loading="logLoading"
+          :row-key="(row: NotificationLog) => row.id"
+          :pagination="{ pageSize: 10 }"
+        />
+      </NDrawerContent>
+    </NDrawer>
   </main>
 </template>
 

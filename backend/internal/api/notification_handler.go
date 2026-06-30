@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"releasehub/backend/internal/models"
 
@@ -44,6 +45,10 @@ func registerNotificationRoutes(router *gin.Engine, db *gorm.DB) {
 	group.PATCH("/:id", handler.update)
 	group.DELETE("/:id", handler.delete)
 	group.POST("/:id/test", handler.testSend)
+	group.GET("/:id/logs", handler.logs)
+
+	// 全局推送历史
+	router.GET("/api/notification-logs", handler.allLogs)
 }
 
 func (h notificationHandler) list(c *gin.Context) {
@@ -200,5 +205,77 @@ func toNotificationResponse(n models.Notification) notificationResponse {
 		Events:    n.Events,
 		CreatedAt: n.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 		UpdatedAt: n.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+	}
+}
+
+type notificationLogResponse struct {
+	ID               uint   `json:"id"`
+	NotificationID   uint   `json:"notificationId"`
+	NotificationName string `json:"notificationName"`
+	Event            string `json:"event"`
+	Title            string `json:"title"`
+	Message          string `json:"message"`
+	Success          bool   `json:"success"`
+	Error            string `json:"error"`
+	CreatedAt        string `json:"createdAt"`
+}
+
+func (h notificationHandler) logs(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	limit := 50
+	if l, err := strconv.Atoi(c.Query("limit")); err == nil && l > 0 && l <= 200 {
+		limit = l
+	}
+	var logs []models.NotificationLog
+	if err := h.db.WithContext(c.Request.Context()).
+		Where("notification_id = ?", id).
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&logs).Error; err != nil {
+		writeError(c, http.StatusInternalServerError, "查询推送历史失败")
+		return
+	}
+	items := make([]notificationLogResponse, 0, len(logs))
+	for _, l := range logs {
+		items = append(items, toNotificationLogResponse(l))
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+func (h notificationHandler) allLogs(c *gin.Context) {
+	limit := 50
+	if l, err := strconv.Atoi(c.Query("limit")); err == nil && l > 0 && l <= 200 {
+		limit = l
+	}
+	var logs []models.NotificationLog
+	q := h.db.WithContext(c.Request.Context()).Order("created_at DESC").Limit(limit)
+	if event := c.Query("event"); event != "" {
+		q = q.Where("event = ?", event)
+	}
+	if err := q.Find(&logs).Error; err != nil {
+		writeError(c, http.StatusInternalServerError, "查询推送历史失败")
+		return
+	}
+	items := make([]notificationLogResponse, 0, len(logs))
+	for _, l := range logs {
+		items = append(items, toNotificationLogResponse(l))
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+func toNotificationLogResponse(l models.NotificationLog) notificationLogResponse {
+	return notificationLogResponse{
+		ID:               l.ID,
+		NotificationID:   l.NotificationID,
+		NotificationName: l.NotificationName,
+		Event:            l.Event,
+		Title:            l.Title,
+		Message:          l.Message,
+		Success:          l.Success,
+		Error:            l.Error,
+		CreatedAt:        l.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 	}
 }

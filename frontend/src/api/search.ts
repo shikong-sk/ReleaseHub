@@ -12,10 +12,18 @@ export interface SearchParams {
   dateTo?: string
 }
 
+// SearchAsset 资产搜索结果，带仓库/Release/存储上下文
+export interface SearchAsset extends Asset {
+  owner: string
+  repo: string
+  tag: string
+  storageName: string
+}
+
 export interface SearchResult {
   repositories: Repository[]
   releases: Release[]
-  assets: Asset[]
+  assets: SearchAsset[]
   total: number
 }
 

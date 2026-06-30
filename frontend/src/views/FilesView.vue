@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { onMounted, shallowRef } from 'vue'
 import { NAlert, NButton, NCard, NCollapse, NCollapseItem, NGrid, NGi, NInput, NSpace, NStatistic, NSwitch, NTag, useMessage } from 'naive-ui'
-import { FolderOpen, RefreshCw, Search, Database } from 'lucide-vue-next'
+import { FolderOpen, RefreshCw, Search, Database, Download } from 'lucide-vue-next'
 
 import FileTreeModal from '@/components/file/FileTreeModal.vue'
 import { useFilesStore } from '@/stores/files'
 
-import { search as apiSearch, type SearchParams, type SearchResult } from '@/api/search'
+import { search as apiSearch, type SearchParams, type SearchResult, type SearchAsset } from '@/api/search'
 import { runReconcile, type ReconcileItem, type ReconcileResult } from '@/api/reconcile'
 import { useAuthStore } from '@/stores/auth'
 
@@ -45,6 +45,10 @@ function formatItemPath(item: ReconcileItem): string {
     return `${item.owner}/${item.repo}/${item.tag}/${item.filename}`
   }
   return item.path
+}
+
+function assetDownloadUrl(assetId: number): string {
+  return `/api/files/download?assetId=${assetId}`
 }
 
 async function handleReconcile() {
@@ -159,9 +163,21 @@ async function handleGlobalSearch() {
             </div>
           </NCollapseItem>
           <NCollapseItem :title="`资产 (${globalResult.assets.length})`" v-if="globalResult.assets.length">
-            <div v-for="asset in globalResult.assets" :key="asset.id" class="search-item">
+            <div v-for="asset in globalResult.assets" :key="asset.id" class="search-item search-item-asset">
               <NTag size="small" :type="asset.status === 'verified' ? 'success' : 'default'">{{ asset.status }}</NTag>
-              <span>{{ asset.name }}</span>
+              <span class="search-asset-path">{{ asset.owner }}/{{ asset.repo }}/{{ asset.tag }}/<strong>{{ asset.name }}</strong></span>
+              <NTag v-if="asset.storageName" size="small" :bordered="false">{{ asset.storageName }}</NTag>
+              <span v-if="asset.size" class="search-asset-size">{{ formatBytes(asset.size) }}</span>
+              <a
+                v-if="asset.status === 'verified' || asset.status === 'downloaded'"
+                :href="assetDownloadUrl(asset.id)"
+                class="search-asset-download"
+                title="下载"
+              >
+                <NButton size="tiny" type="primary" secondary>
+                  <template #icon><Download :size="14" /></template>
+                </NButton>
+              </a>
             </div>
           </NCollapseItem>
         </NCollapse>
@@ -320,6 +336,30 @@ async function handleGlobalSearch() {
   padding: 4px 0;
   font-size: 13px;
   color: #344054;
+}
+
+.search-item-asset {
+  flex-wrap: wrap;
+}
+
+.search-asset-path {
+  font-family: monospace;
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-asset-size {
+  font-size: 12px;
+  color: #8c8c8c;
+  white-space: nowrap;
+}
+
+.search-asset-download {
+  margin-left: auto;
+  text-decoration: none;
 }
 
 .no-result {

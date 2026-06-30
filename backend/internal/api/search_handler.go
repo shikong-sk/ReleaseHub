@@ -16,10 +16,19 @@ type searchHandler struct {
 }
 
 type searchResult struct {
-	Repositories []models.Repository `json:"repositories"`
-	Releases     []models.Release    `json:"releases"`
-	Assets       []models.Asset      `json:"assets"`
-	Total        int64               `json:"total"`
+	Repositories []models.Repository   `json:"repositories"`
+	Releases     []models.Release      `json:"releases"`
+	Assets       []searchAssetResult   `json:"assets"`
+	Total        int64                 `json:"total"`
+}
+
+// searchAssetResult 资产搜索结果，带仓库/Release/存储上下文
+type searchAssetResult struct {
+	models.Asset
+	Owner       string `json:"owner"`
+	Repo        string `json:"repo"`
+	Tag         string `json:"tag"`
+	StorageName string `json:"storageName"`
 }
 
 func registerSearchRoutes(router *gin.Engine, db *gorm.DB) {
@@ -71,19 +80,27 @@ func (h *searchHandler) search(c *gin.Context) {
 	}
 	releaseQ.Order("published_at DESC").Limit(limit).Find(&result.Releases)
 
-	// 搜索 Asset：文本 + 状态 + 仓库筛选
-	assetQ := h.db.WithContext(ctx).Model(&models.Asset{})
+	// 搜索 Asset：文本 + 状态 + 仓库筛选，JOIN Release/Repository/Storage 提供上下文
+	assetQ := h.db.WithContext(ctx).
+		Model(&models.Asset{}).
+		Select(`assets.*,
+			repositories.owner AS owner,
+			repositories.repo AS repo,
+			releases.tag AS tag,
+			storages.name AS storage_name`).
+		Joins("LEFT JOIN releases ON releases.id = assets.release_id").
+		Joins("LEFT JOIN repositories ON repositories.id = releases.repository_id").
+		Joins("LEFT JOIN storages ON storages.id = assets.storage_id")
 	if query != "" {
-		assetQ = assetQ.Where("name LIKE ?", "%"+query+"%")
+		assetQ = assetQ.Where("assets.name LIKE ?", "%"+query+"%")
 	}
 	if status != "" {
-		assetQ = assetQ.Where("status = ?", status)
+		assetQ = assetQ.Where("assets.status = ?", status)
 	}
 	if repositoryID > 0 {
-		assetQ = assetQ.Where("release_id IN (?)",
-			h.db.Model(&models.Release{}).Select("id").Where("repository_id = ?", repositoryID))
+		assetQ = assetQ.Where("releases.repository_id = ?", repositoryID)
 	}
-	assetQ.Order("created_at DESC").Limit(limit).Find(&result.Assets)
+	assetQ.Order("assets.created_at DESC").Limit(limit).Find(&result.Assets)
 
 	result.Total = int64(len(result.Repositories) + len(result.Releases) + len(result.Assets))
 

@@ -24,3 +24,19 @@ export interface NotificationPayload {
   enabled?: boolean
   events?: string
 }
+
+export interface NotificationLog {
+  id: number
+  notificationId: number
+  notificationName: string
+  event: string
+  title: string
+  message: string
+  success: boolean
+  error: string
+  createdAt: string
+}
+
+export interface NotificationLogListResponse {
+  items: NotificationLog[]
+}

@@ -7,6 +7,7 @@ import {
   NDrawerContent,
   NForm,
   NFormItem,
+  NButtonGroup,
   NInput,
   NInputNumber,
   NModal,
@@ -91,6 +92,9 @@ const form = reactive<RepositoryPayload>({
   filterMode: 'glob',
   assetIncludePatterns: '',
   assetExcludePatterns: '',
+  tagFilterMode: '',
+  tagIncludePattern: '',
+  tagExcludePattern: '',
   retentionKeepLatest: 5
 })
 
@@ -125,6 +129,38 @@ const filterPresetOptions = computed<SelectOption[]>(() => [
   { label: '校验文件', value: 'checksums' },
   { label: '排除调试/源码/签名', value: 'exclude-debug-source' }
 ])
+
+const intervalPresets = [
+  { label: '5分钟', value: 300 },
+  { label: '15分钟', value: 900 },
+  { label: '30分钟', value: 1800 },
+  { label: '1小时', value: 3600 },
+  { label: '2小时', value: 7200 },
+  { label: '4小时', value: 14400 },
+  { label: '8小时', value: 28800 },
+  { label: '12小时', value: 43200 }
+]
+
+const tagFilterPresetOptions = computed<SelectOption[]>(() => [
+  { label: '只同步 v* 版本', value: 'v-only' },
+  { label: '排除预发布 alpha/beta/rc', value: 'exclude-pre' },
+  { label: '只同步正式版本（无后缀）', value: 'stable-only' }
+])
+
+function applyTagFilterPreset(values: string[]) {
+  for (const value of values) {
+    if (value === 'v-only') {
+      form.tagFilterMode = 'glob'
+      form.tagIncludePattern = mergePatternLines(form.tagIncludePattern ?? '', 'v*')
+    } else if (value === 'exclude-pre') {
+      form.tagFilterMode = form.tagFilterMode === '' ? 'glob' : form.tagFilterMode
+      form.tagExcludePattern = mergePatternLines(form.tagExcludePattern ?? '', '*-alpha*\n*-beta*\n*-rc*\n*-pre*')
+    } else if (value === 'stable-only') {
+      form.tagFilterMode = 'regex'
+      form.tagIncludePattern = mergePatternLines(form.tagIncludePattern ?? '', '^v?\\d+\\.\\d+\\.\\d+$')
+    }
+  }
+}
 
 const storageOptions = computed<SelectOption[]>(() => {
   const options: SelectOption[] = []
@@ -174,6 +210,9 @@ function resetForm() {
   form.filterMode = (props.repository?.filterMode ?? 'glob') as RepositoryFilterMode
   form.assetIncludePatterns = props.repository?.assetIncludePatterns ?? ''
   form.assetExcludePatterns = props.repository?.assetExcludePatterns ?? ''
+  form.tagFilterMode = props.repository?.tagFilterMode ?? ''
+  form.tagIncludePattern = props.repository?.tagIncludePattern ?? ''
+  form.tagExcludePattern = props.repository?.tagExcludePattern ?? ''
   form.retentionKeepLatest = props.repository?.retentionKeepLatest ?? 5
   selectedFilterPresets.value = []
 }
@@ -196,6 +235,9 @@ function submit() {
     filterMode: form.filterMode,
     assetIncludePatterns: form.assetIncludePatterns.trim(),
     assetExcludePatterns: form.assetExcludePatterns.trim(),
+    tagFilterMode: form.tagFilterMode || undefined,
+    tagIncludePattern: (form.tagIncludePattern ?? '').trim() || undefined,
+    tagExcludePattern: (form.tagExcludePattern ?? '').trim() || undefined,
     retentionKeepLatest: form.retentionKeepLatest
   })
 }
@@ -352,8 +394,56 @@ function sampleAssetNames(): string[] {
         </NFormItem>
 
         <NFormItem label="检查间隔（秒）">
-          <NInputNumber v-model:value="form.intervalSeconds" :min="300" :step="300" />
+          <div style="display: flex; flex-direction: column; gap: 8px; width: 100%">
+            <NButtonGroup>
+              <NButton
+                v-for="preset in intervalPresets"
+                :key="preset.value"
+                size="small"
+                :type="form.intervalSeconds === preset.value ? 'primary' : 'default'"
+                @click="form.intervalSeconds = preset.value"
+              >
+                {{ preset.label }}
+              </NButton>
+            </NButtonGroup>
+            <NInputNumber v-model:value="form.intervalSeconds" :min="300" :step="300" style="width: 100%" />
+          </div>
         </NFormItem>
+
+        <NFormItem label="Tag 过滤模式">
+          <NRadioGroup v-model:value="form.tagFilterMode">
+            <NRadioButton value="">不过滤</NRadioButton>
+            <NRadioButton value="glob">Glob</NRadioButton>
+            <NRadioButton value="regex">Regex</NRadioButton>
+          </NRadioGroup>
+        </NFormItem>
+
+        <NFormItem v-if="form.tagFilterMode !== ''" label="Tag 快捷预设">
+          <NSelect
+            :value="[]"
+            multiple
+            placeholder="点击应用常见 Tag 规则"
+            :options="tagFilterPresetOptions"
+            @update:value="(value) => applyTagFilterPreset((value as string[]) ?? [])"
+          />
+        </NFormItem>
+
+        <template v-if="form.tagFilterMode !== ''">
+          <NFormItem label="Tag Include 规则">
+            <NInput
+              v-model:value="form.tagIncludePattern"
+              type="textarea"
+              placeholder="每行一条，例如：v*&#10;只同步匹配的 tag"
+            />
+          </NFormItem>
+          <NFormItem label="Tag Exclude 规则">
+            <NInput
+              v-model:value="form.tagExcludePattern"
+              type="textarea"
+              placeholder="每行一条，例如：*-alpha&#10;排除匹配的 tag"
+            />
+          </NFormItem>
+        </template>
 
         <NFormItem label="资产过滤模式">
           <NRadioGroup v-model:value="form.filterMode">
@@ -362,7 +452,7 @@ function sampleAssetNames(): string[] {
           </NRadioGroup>
         </NFormItem>
 
-        <NFormItem label="常见规则预设">
+        <NFormItem label="资产快捷预设">
           <NSelect
             v-model:value="selectedFilterPresets"
             multiple
