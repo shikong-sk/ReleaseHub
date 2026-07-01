@@ -235,7 +235,7 @@ func (s *Service) executeSyncRepository(ctx context.Context, repositoryID uint, 
 		task.Status = models.TaskStatusSucceeded
 		_ = s.db.WithContext(ctx).Save(&task).Error
 		s.appendLog(ctx, task.ID, "info", "同步完成: 无待下载资产")
-		s.notifySyncSuccess(ctx, checkResult.Repository, checkResult.Release, 0)
+		// 无变化不发通知
 		return
 	}
 
@@ -271,7 +271,10 @@ func (s *Service) executeSyncRepository(ctx context.Context, repositoryID uint, 
 
 	task.Status = models.TaskStatusSucceeded
 	_ = s.db.WithContext(ctx).Save(&task).Error
-	s.notifySyncSuccess(ctx, checkResult.Repository, checkResult.Release, len(downloadResults))
+	// 有变化才通知：新版本 或 成功下载了资产
+	if checkResult.IsNewRelease || len(downloadResults) > 0 {
+		s.notifySyncSuccess(ctx, checkResult.Repository, checkResult.Release, len(downloadResults))
+	}
 
 	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("同步完成: %s/%s 版本 %s，下载 %d 个资产",
 		checkResult.Repository.Owner, checkResult.Repository.Repo, checkResult.Release.Tag, len(downloadResults)))
@@ -340,7 +343,10 @@ func (s *Service) executeSyncByTag(ctx context.Context, repositoryID uint, tag s
 
 	task.Status = models.TaskStatusSucceeded
 	_ = s.db.WithContext(ctx).Save(&task).Error
-	s.notifySyncSuccess(ctx, checkResult.Repository, checkResult.Release, len(downloadResults))
+	// 有变化才通知：新版本 或 成功下载了资产
+	if checkResult.IsNewRelease || len(downloadResults) > 0 {
+		s.notifySyncSuccess(ctx, checkResult.Repository, checkResult.Release, len(downloadResults))
+	}
 
 	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("同步完成: %s/%s 版本 %s，下载 %d 个资产",
 		checkResult.Repository.Owner, checkResult.Repository.Repo, checkResult.Release.Tag, len(downloadResults)))

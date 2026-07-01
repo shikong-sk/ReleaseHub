@@ -39,10 +39,11 @@ type CheckService struct {
 }
 
 type CheckResult struct {
-	Repository models.Repository `json:"repository"`
-	Release    models.Release    `json:"release"`
-	Assets     []models.Asset    `json:"assets"`
-	Task       models.Task       `json:"task"`
+	Repository  models.Repository `json:"repository"`
+	Release     models.Release    `json:"release"`
+	Assets      []models.Asset    `json:"assets"`
+	IsNewRelease bool             `json:"isNewRelease"`
+	Task        models.Task       `json:"task"`
 }
 
 type CheckAllResult struct {
@@ -158,6 +159,12 @@ func (s *CheckService) CheckByTag(ctx context.Context, repositoryID uint, tag st
 		return nil, fmt.Errorf("资产过滤规则无效: %w", err)
 	}
 
+	isNewRelease, err := s.releaseMissing(ctx, repository.ID, providerRelease.TagName)
+	if err != nil {
+		s.failTaskWithLog(ctx, &task, err, "检查 Release 是否已存在失败")
+		return nil, err
+	}
+
 	result, err := s.persistProviderReleaseWithIsLatest(ctx, repository, task, providerRelease, matcher, false)
 	if err != nil {
 		s.failTaskWithLog(ctx, &task, err, "持久化 Release 数据失败")
@@ -175,6 +182,7 @@ func (s *CheckService) CheckByTag(ctx context.Context, repositoryID uint, tag st
 
 	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("检查完成: %s/%s 版本 %s", repository.Owner, repository.Repo, tag))
 	result.Task = task
+	result.IsNewRelease = isNewRelease
 	return result, nil
 }
 
@@ -279,6 +287,7 @@ func (s *CheckService) CheckLatest(ctx context.Context, repositoryID uint) (*Che
 
 	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("检查完成: %s/%s 最新版本 %s", repository.Owner, repository.Repo, providerRelease.TagName))
 	result.Task = task
+	result.IsNewRelease = isNewRelease
 	return result, nil
 }
 
