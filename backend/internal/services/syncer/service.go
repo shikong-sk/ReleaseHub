@@ -194,6 +194,7 @@ func (s *Service) executeRetryAsset(ctx context.Context, assetID uint, task mode
 }
 
 // executeSyncRepository 后台执行同步最新版本
+// 流程：检查最新版本 → 持久化新资产为 pending → 下载 pending 资产
 func (s *Service) executeSyncRepository(ctx context.Context, repositoryID uint, task models.Task) {
 	task.Status = models.TaskStatusRunning
 	task.StartedAt = ptrTime(time.Now().UTC())
@@ -201,6 +202,7 @@ func (s *Service) executeSyncRepository(ctx context.Context, repositoryID uint, 
 
 	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("开始同步仓库 (ID: %d)", repositoryID))
 
+	// 步骤1：检查最新版本并持久化资产元数据
 	checkResult, err := s.checker.CheckLatest(ctx, repositoryID)
 	if err != nil {
 		s.failTaskWithLog(ctx, &task, err, "检查最新 Release 失败")
@@ -214,28 +216,40 @@ func (s *Service) executeSyncRepository(ctx context.Context, repositoryID uint, 
 	task.ReleaseID = &checkResult.Release.ID
 	_ = s.db.WithContext(ctx).Save(&task).Error
 
-	assetsToDownload := downloadableAssets(checkResult.Assets)
-
-	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("待下载资产 %d 个（跳过 %d 个）",
-		len(assetsToDownload), len(checkResult.Assets)-len(assetsToDownload)))
-
-	// 为每个配置的存储目标分别下载
-	repoSvc := repositorysvc.NewService(s.db, s.storageConfig)
-	storageIDs, err := repoSvc.GetRepositoryStorages(ctx, repositoryID)
-	if err != nil {
-		s.failTaskWithLog(ctx, &task, err, "获取仓库存储配置失败")
-		s.notifySyncFailed(ctx, repositoryID, err)
+	// 步骤2：从数据库重新查询该 release 下所有 pending/failed 资产
+	// CheckLatest 已把新资产设为 pending，这里查询确保拿到最新状态
+	var assetsToDownload []models.Asset
+	if err := s.db.WithContext(ctx).
+		Where("release_id = ? AND status IN ?", checkResult.Release.ID,
+			[]models.AssetStatus{models.AssetStatusPending, models.AssetStatusFailed}).
+		Find(&assetsToDownload).Error; err != nil {
+		s.failTaskWithLog(ctx, &task, err, "查询待下载资产失败")
 		return
 	}
-	if len(storageIDs) == 0 {
-		s.failTaskWithLog(ctx, &task, fmt.Errorf("仓库没有配置存储目标"), "仓库没有配置存储目标")
-		s.notifySyncFailed(ctx, repositoryID, fmt.Errorf("仓库没有配置存储目标"))
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("待下载资产 %d 个", len(assetsToDownload)))
+
+	if len(assetsToDownload) == 0 {
+		now := time.Now().UTC()
+		task.FinishedAt = &now
+		task.Status = models.TaskStatusSucceeded
+		_ = s.db.WithContext(ctx).Save(&task).Error
+		s.appendLog(ctx, task.ID, "info", "同步完成: 无待下载资产")
+		s.notifySyncSuccess(ctx, checkResult.Repository, checkResult.Release, 0)
+		return
+	}
+
+	// 步骤3：获取存储配置并下载
+	repoSvc := repositorysvc.NewService(s.db, s.storageConfig)
+	storageIDs, err := repoSvc.GetRepositoryStorages(ctx, repositoryID)
+	if err != nil || len(storageIDs) == 0 {
+		errMsg := fmt.Errorf("仓库没有配置存储目标")
+		s.failTaskWithLog(ctx, &task, errMsg, "获取仓库存储配置失败")
+		s.notifySyncFailed(ctx, repositoryID, errMsg)
 		return
 	}
 
 	downloadResults, failedAssets := s.downloadAssetsToStorages(ctx, assetsToDownload, storageIDs)
-
-	// 清理 checker 创建的 StorageID=NULL 模板记录，避免多存储场景下文件树重复
 	s.cleanupOrphanTemplateAssets(ctx, checkResult.Release.ID)
 
 	if len(downloadResults) > 0 {

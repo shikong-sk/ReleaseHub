@@ -315,11 +315,26 @@ func (s *CheckService) CheckAll(ctx context.Context, repositoryID uint) (*CheckA
 		return nil, err
 	}
 
-	providerReleases, err := releaseProvider.ListAllReleases(ctx, repository.Owner, repository.Repo, token, 10)
+	// 只拉取保留范围内的版本数量，避免把所有历史版本都加进来
+	maxReleases := repository.RetentionKeepLatest
+	if maxReleases < 1 {
+		maxReleases = 1
+	}
+	// 每页 100，计算需要的页数（向上取整）
+	maxPages := (maxReleases + 99) / 100
+	if maxPages < 1 {
+		maxPages = 1
+	}
+	providerReleases, err := releaseProvider.ListAllReleases(ctx, repository.Owner, repository.Repo, token, maxPages)
 	if err != nil {
 		s.markRepositoryFailed(ctx, repository.ID)
 		s.failTask(ctx, &task, err)
 		return nil, err
+	}
+
+	// 按 published_at 降序排序后截取保留范围内的版本
+	if len(providerReleases) > maxReleases {
+		providerReleases = providerReleases[:maxReleases]
 	}
 
 	matcher, err := filter.NewMatcher(repository.FilterMode, repository.AssetIncludePatterns, repository.AssetExcludePatterns)
