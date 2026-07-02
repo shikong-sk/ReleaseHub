@@ -86,6 +86,7 @@ type Repository struct {
 	UpdatedAt            time.Time        `json:"updatedAt" gorm:"column:updated_at"`
 	// 非数据库字段，API 响应时填充
 	StorageIDs           []uint           `json:"storageIds" gorm:"-"`
+	TotalStorageBytes    int64            `json:"totalStorageBytes" gorm:"-"`
 }
 
 // RepositoryStorage 仓库-存储多对多关联

@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"releasehub/backend/internal/config"
@@ -14,6 +15,7 @@ import (
 type configHandler struct {
 	config    *config.Config
 	scheduler SchedulerUpdater
+	syncer    SyncerUpdater
 	db        *gorm.DB
 }
 
@@ -23,17 +25,25 @@ type SchedulerUpdater interface {
 	UpdateMaxConcurrent(maxConcurrent int)
 }
 
-type configResponse struct {
-	SchedulerEnabled       bool   `json:"schedulerEnabled"`
-	SchedulerTickSeconds   int    `json:"schedulerTickSeconds"`
-	SchedulerMaxConcurrent int    `json:"schedulerMaxConcurrent"`
-	StorageDataDir         string `json:"storageDataDir"`
-	GitHubAPIBaseURL       string `json:"githubApiBaseUrl"`
-	AuthEnabled            bool   `json:"authEnabled"`
+// SyncerUpdater 同步器运行时配置更新接口
+type SyncerUpdater interface {
+	UpdateMaxConcurrentTasks(n int)
+	UpdateMaxConcurrentDownloads(n int)
 }
 
-func registerConfigRoutes(router *gin.Engine, cfg *config.Config, scheduler SchedulerUpdater, db *gorm.DB) {
-	handler := &configHandler{config: cfg, scheduler: scheduler, db: db}
+type configResponse struct {
+	SchedulerEnabled             bool   `json:"schedulerEnabled"`
+	SchedulerTickSeconds         int    `json:"schedulerTickSeconds"`
+	SchedulerMaxConcurrent       int    `json:"schedulerMaxConcurrent"`
+	StorageDataDir               string `json:"storageDataDir"`
+	GitHubAPIBaseURL             string `json:"githubApiBaseUrl"`
+	AuthEnabled                  bool   `json:"authEnabled"`
+	SyncerMaxConcurrentTasks     int    `json:"syncerMaxConcurrentTasks"`
+	SyncerMaxConcurrentDownloads int    `json:"syncerMaxConcurrentDownloads"`
+}
+
+func registerConfigRoutes(router *gin.Engine, cfg *config.Config, scheduler SchedulerUpdater, syncer SyncerUpdater, db *gorm.DB) {
+	handler := &configHandler{config: cfg, scheduler: scheduler, syncer: syncer, db: db}
 
 	group := router.Group("/api/config")
 	group.GET("", handler.get)
@@ -46,25 +56,39 @@ func LoadPersistedSettings(db *gorm.DB, cfg *config.Config) {
 	if err := db.Where("key = ?", "auth.enabled").First(&setting).Error; err == nil {
 		cfg.Auth.Enabled = setting.Value == "true"
 	}
+	if err := db.Where("key = ?", "syncer.max_concurrent_tasks").First(&setting).Error; err == nil {
+		if n, perr := strconv.Atoi(setting.Value); perr == nil && n >= 1 {
+			cfg.Syncer.MaxConcurrentTasks = n
+		}
+	}
+	if err := db.Where("key = ?", "syncer.max_concurrent_downloads").First(&setting).Error; err == nil {
+		if n, perr := strconv.Atoi(setting.Value); perr == nil && n >= 1 {
+			cfg.Syncer.MaxConcurrentDownloads = n
+		}
+	}
 }
 
 func (h *configHandler) get(c *gin.Context) {
 	c.JSON(http.StatusOK, configResponse{
-		SchedulerEnabled:       h.config.Scheduler.Enabled,
-		SchedulerTickSeconds:   h.config.Scheduler.TickSeconds,
-		SchedulerMaxConcurrent: h.config.Scheduler.MaxConcurrent,
-		StorageDataDir:         h.config.Storage.DataDir,
-		GitHubAPIBaseURL:       h.config.GitHub.APIBaseURL,
-		AuthEnabled:            h.config.Auth.Enabled,
+		SchedulerEnabled:             h.config.Scheduler.Enabled,
+		SchedulerTickSeconds:         h.config.Scheduler.TickSeconds,
+		SchedulerMaxConcurrent:       h.config.Scheduler.MaxConcurrent,
+		StorageDataDir:               h.config.Storage.DataDir,
+		GitHubAPIBaseURL:             h.config.GitHub.APIBaseURL,
+		AuthEnabled:                  h.config.Auth.Enabled,
+		SyncerMaxConcurrentTasks:     h.config.Syncer.MaxConcurrentTasks,
+		SyncerMaxConcurrentDownloads: h.config.Syncer.MaxConcurrentDownloads,
 	})
 }
 
 type configUpdateRequest struct {
-	SchedulerEnabled       *bool   `json:"schedulerEnabled,omitempty"`
-	SchedulerTickSeconds   *int    `json:"schedulerTickSeconds,omitempty"`
-	SchedulerMaxConcurrent *int    `json:"schedulerMaxConcurrent,omitempty"`
-	GitHubAPIBaseURL       *string `json:"githubApiBaseUrl,omitempty"`
-	AuthEnabled            *bool   `json:"authEnabled,omitempty"`
+	SchedulerEnabled             *bool   `json:"schedulerEnabled,omitempty"`
+	SchedulerTickSeconds         *int    `json:"schedulerTickSeconds,omitempty"`
+	SchedulerMaxConcurrent       *int    `json:"schedulerMaxConcurrent,omitempty"`
+	GitHubAPIBaseURL             *string `json:"githubApiBaseUrl,omitempty"`
+	AuthEnabled                  *bool   `json:"authEnabled,omitempty"`
+	SyncerMaxConcurrentTasks     *int    `json:"syncerMaxConcurrentTasks,omitempty"`
+	SyncerMaxConcurrentDownloads *int    `json:"syncerMaxConcurrentDownloads,omitempty"`
 }
 
 func (h *configHandler) update(c *gin.Context) {
@@ -75,11 +99,13 @@ func (h *configHandler) update(c *gin.Context) {
 	}
 
 	update := config.UpdateConfig{
-		SchedulerEnabled:       req.SchedulerEnabled,
-		SchedulerTickSeconds:   req.SchedulerTickSeconds,
-		SchedulerMaxConcurrent: req.SchedulerMaxConcurrent,
-		GitHubAPIBaseURL:       req.GitHubAPIBaseURL,
-		AuthEnabled:            req.AuthEnabled,
+		SchedulerEnabled:             req.SchedulerEnabled,
+		SchedulerTickSeconds:         req.SchedulerTickSeconds,
+		SchedulerMaxConcurrent:       req.SchedulerMaxConcurrent,
+		GitHubAPIBaseURL:             req.GitHubAPIBaseURL,
+		AuthEnabled:                  req.AuthEnabled,
+		SyncerMaxConcurrentTasks:     req.SyncerMaxConcurrentTasks,
+		SyncerMaxConcurrentDownloads: req.SyncerMaxConcurrentDownloads,
 	}
 
 	changed, err := h.config.ApplyUpdate(update)
@@ -100,24 +126,43 @@ func (h *configHandler) update(c *gin.Context) {
 		}
 	}
 
-	// 持久化 authEnabled 到数据库
+	// 同步更新同步器运行时参数
+	if h.syncer != nil {
+		for _, field := range changed {
+			switch field {
+			case "syncerMaxConcurrentTasks":
+				h.syncer.UpdateMaxConcurrentTasks(h.config.Syncer.MaxConcurrentTasks)
+			case "syncerMaxConcurrentDownloads":
+				h.syncer.UpdateMaxConcurrentDownloads(h.config.Syncer.MaxConcurrentDownloads)
+			}
+		}
+	}
+
+	// 持久化到数据库
 	for _, field := range changed {
-		if field == "authEnabled" {
+		switch field {
+		case "authEnabled":
 			val := "false"
 			if h.config.Auth.Enabled {
 				val = "true"
 			}
 			h.db.Save(&models.AppSetting{Key: "auth.enabled", Value: val})
+		case "syncerMaxConcurrentTasks":
+			h.db.Save(&models.AppSetting{Key: "syncer.max_concurrent_tasks", Value: strconv.Itoa(h.config.Syncer.MaxConcurrentTasks)})
+		case "syncerMaxConcurrentDownloads":
+			h.db.Save(&models.AppSetting{Key: "syncer.max_concurrent_downloads", Value: strconv.Itoa(h.config.Syncer.MaxConcurrentDownloads)})
 		}
 	}
 
 	// 返回更新后的完整配置
 	c.JSON(http.StatusOK, configResponse{
-		SchedulerEnabled:       h.config.Scheduler.Enabled,
-		SchedulerTickSeconds:   h.config.Scheduler.TickSeconds,
-		SchedulerMaxConcurrent: h.config.Scheduler.MaxConcurrent,
-		StorageDataDir:         h.config.Storage.DataDir,
-		GitHubAPIBaseURL:       h.config.GitHub.APIBaseURL,
-		AuthEnabled:            h.config.Auth.Enabled,
+		SchedulerEnabled:             h.config.Scheduler.Enabled,
+		SchedulerTickSeconds:         h.config.Scheduler.TickSeconds,
+		SchedulerMaxConcurrent:       h.config.Scheduler.MaxConcurrent,
+		StorageDataDir:               h.config.Storage.DataDir,
+		GitHubAPIBaseURL:             h.config.GitHub.APIBaseURL,
+		AuthEnabled:                  h.config.Auth.Enabled,
+		SyncerMaxConcurrentTasks:     h.config.Syncer.MaxConcurrentTasks,
+		SyncerMaxConcurrentDownloads: h.config.Syncer.MaxConcurrentDownloads,
 	})
 }

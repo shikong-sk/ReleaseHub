@@ -56,6 +56,12 @@ const columns = computed<DataTableColumns<Repository>>(() => [
     render: (row) => row.lastReleaseTag || '-'
   },
   {
+    title: '占用存储',
+    key: 'totalStorageBytes',
+    width: 120,
+    render: (row) => formatBytes(row.totalStorageBytes)
+  },
+  {
     title: '状态',
     key: 'lastStatus',
     width: 120,
@@ -184,6 +190,23 @@ function statusTagType(status: string) {
   }
   return 'default'
 }
+
+function formatBytes(bytes: number | null | undefined): string {
+  if (!bytes || bytes <= 0) {
+    return '0 B'
+  }
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex++
+  }
+  // 小于 1KB 显示整数，否则保留 2 位小数
+  return unitIndex === 0
+    ? `${value} ${units[unitIndex]}`
+    : `${value.toFixed(2)} ${units[unitIndex]}`
+}
 </script>
 
 <template>
@@ -193,7 +216,7 @@ function statusTagType(status: string) {
     :loading="loading"
     :row-key="(row) => row.id"
     :pagination="{ pageSize: 10 }"
-    :scroll-x="1180"
+    :scroll-x="1300"
   />
 </template>
 

@@ -6,7 +6,7 @@ import { ScrollText } from 'lucide-vue-next'
 
 import type { Task } from '@/types/task'
 
-defineProps<{
+const props = defineProps<{
   tasks: Task[]
   loading: boolean
 }>()
@@ -14,6 +14,16 @@ defineProps<{
 const emit = defineEmits<{
   viewLogs: [task: Task]
 }>()
+
+// 计算排队中任务的位置（按创建时间升序，即先入队的在前）
+const pendingPosition = computed(() => {
+  const map = new Map<number, number>()
+  const pending = props.tasks
+    .filter((t) => t.status === 'pending')
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+  pending.forEach((t, idx) => map.set(t.id, idx + 1))
+  return map
+})
 
 const columns = computed<DataTableColumns<Task>>(() => [
   {
@@ -37,8 +47,18 @@ const columns = computed<DataTableColumns<Task>>(() => [
         {
           type: statusTagType(row.status)
         },
-        { default: () => row.status }
+        { default: () => statusLabel(row.status) }
       )
+  },
+  {
+    title: '队列位置',
+    key: 'queuePosition',
+    width: 110,
+    render: (row) => {
+      if (row.status !== 'pending') return '-'
+      const pos = pendingPosition.value.get(row.id)
+      return pos ? `第 ${pos} 位` : '-'
+    }
   },
   {
     title: '仓库',
@@ -111,7 +131,21 @@ function statusTagType(status: string) {
   if (status === 'running') {
     return 'warning'
   }
+  if (status === 'pending') {
+    return 'info'
+  }
   return 'default'
+}
+
+function statusLabel(status: string) {
+  const labels: Record<string, string> = {
+    pending: '排队中',
+    running: '运行中',
+    succeeded: '成功',
+    failed: '失败',
+    canceled: '已取消'
+  }
+  return labels[status] ?? status
 }
 
 function taskTypeLabel(type: string) {
@@ -144,7 +178,7 @@ function formatTime(value: string | null) {
     :loading="loading"
     :row-key="(row) => row.id"
     :pagination="{ pageSize: 12 }"
-    :scroll-x="1560"
+    :scroll-x="1670"
   />
 </template>
 

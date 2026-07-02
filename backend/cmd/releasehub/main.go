@@ -72,10 +72,16 @@ func main() {
 		logger.Warn("迁移 Asset 唯一索引失败", zap.Error(err))
 	}
 
+	// 回填存量资产的 download_bytes（已下载但 download_bytes=0 的用 size 补上，一次性）
+	if err := database.MigrateBackfillDownloadBytes(db); err != nil {
+		logger.Warn("回填 download_bytes 失败", zap.Error(err))
+	}
+
 	appCtx, stopApp := context.WithCancel(context.Background())
 	defer stopApp()
 
 	var scheduler *schedulersvc.Service
+	var syncService *syncersvc.Service
 	if cfg.Scheduler.Enabled {
 		githubClient, err := githubsvc.NewClient(cfg.GitHub.APIBaseURL)
 		if err != nil {
@@ -87,7 +93,7 @@ func main() {
 		retentionService := retentionsvc.NewServiceWithFactory(db, cfg.Storage)
 		checkService.WithRetention(retentionService)
 
-		syncService, err := syncersvc.NewService(db, checkService, cfg.Storage)
+		syncService, err = syncersvc.NewService(db, checkService, cfg.Storage)
 		if err != nil {
 			logger.Fatal("同步服务初始化失败", zap.Error(err))
 		}
@@ -104,11 +110,19 @@ func main() {
 		scheduler.Start(appCtx)
 	}
 
+	// 应用 syncer 持久化的并发配置（在 LoadPersistedSettings 之后由 config_handler 调用，
+	// 但此处需在 syncService 创建后立即应用初始值）
+	if syncService != nil {
+		syncService.UpdateMaxConcurrentTasks(cfg.Syncer.MaxConcurrentTasks)
+		syncService.UpdateMaxConcurrentDownloads(cfg.Syncer.MaxConcurrentDownloads)
+	}
+
 	router := api.NewRouter(api.Dependencies{
 		Config:    cfg,
 		DB:        db,
 		Logger:    logger,
 		Scheduler: scheduler,
+		Syncer:    syncService,
 	})
 
 	server := &http.Server{

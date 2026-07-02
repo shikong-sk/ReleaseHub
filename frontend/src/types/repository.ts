@@ -23,6 +23,7 @@ export interface Repository {
   lastCheckAt: string | null
   lastReleaseTag: string
   lastStatus: RepositoryStatus
+  totalStorageBytes: number
   createdAt: string
   updatedAt: string
 }

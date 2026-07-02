@@ -11,6 +11,7 @@ export const useTasksStore = defineStore('tasks', () => {
 
   const failedCount = computed(() => items.value.filter((item) => item.status === 'failed').length)
   const runningCount = computed(() => items.value.filter((item) => item.status === 'running').length)
+  const pendingCount = computed(() => items.value.filter((item) => item.status === 'pending').length)
 
   async function refresh(options: { silent?: boolean } = {}) {
     if (!options.silent) {
@@ -36,6 +37,7 @@ export const useTasksStore = defineStore('tasks', () => {
     error,
     failedCount,
     runningCount,
+    pendingCount,
     refresh
   }
 })

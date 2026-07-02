@@ -16,6 +16,7 @@ type Config struct {
 	Download  DownloadConfig
 	GitHub    GitHubConfig
 	Scheduler SchedulerConfig
+	Syncer    SyncerConfig
 	Auth      AuthConfig
 }
 
@@ -60,6 +61,12 @@ type SchedulerConfig struct {
 	MaxConcurrent int
 }
 
+// SyncerConfig 同步器运行时配置（任务队列并发 + 资产下载并发）
+type SyncerConfig struct {
+	MaxConcurrentTasks     int // 任务队列并发执行数
+	MaxConcurrentDownloads int // 单任务内资产下载并发数
+}
+
 type AuthConfig struct {
 	Enabled         bool
 	DefaultAdmin    string
@@ -88,6 +95,9 @@ func Load() (*Config, error) {
 	v.SetDefault("scheduler.enabled", true)
 	v.SetDefault("scheduler.tick_seconds", 60)
 	v.SetDefault("scheduler.max_concurrent", 5)
+	// syncer 并发控制默认值
+	v.SetDefault("syncer.max_concurrent_tasks", 2)
+	v.SetDefault("syncer.max_concurrent_downloads", 3)
 	// auth.enabled 不从环境变量读取，仅通过运行时 API 动态切换
 	v.SetDefault("auth.default_admin", "admin")
 	v.SetDefault("auth.default_password", "admin")
@@ -123,6 +133,10 @@ func Load() (*Config, error) {
 			TickSeconds:   v.GetInt("scheduler.tick_seconds"),
 			MaxConcurrent: v.GetInt("scheduler.max_concurrent"),
 		},
+		Syncer: SyncerConfig{
+			MaxConcurrentTasks:     v.GetInt("syncer.max_concurrent_tasks"),
+			MaxConcurrentDownloads: v.GetInt("syncer.max_concurrent_downloads"),
+		},
 		Auth: AuthConfig{
 			Enabled:         false, // 仅通过运行时 API 动态切换，不从环境变量读取
 			DefaultAdmin:    v.GetString("auth.default_admin"),
@@ -139,6 +153,12 @@ func Load() (*Config, error) {
 	if cfg.Scheduler.MaxConcurrent < 1 {
 		return nil, fmt.Errorf("scheduler.max_concurrent 不能小于 1")
 	}
+	if cfg.Syncer.MaxConcurrentTasks < 1 {
+		cfg.Syncer.MaxConcurrentTasks = 1
+	}
+	if cfg.Syncer.MaxConcurrentDownloads < 1 {
+		cfg.Syncer.MaxConcurrentDownloads = 1
+	}
 
 	return cfg, nil
 }
@@ -150,6 +170,8 @@ type UpdateConfig struct {
 	SchedulerMaxConcurrent *int    `json:"schedulerMaxConcurrent,omitempty"`
 	GitHubAPIBaseURL       *string `json:"githubApiBaseUrl,omitempty"`
 	AuthEnabled            *bool   `json:"authEnabled,omitempty"`
+	SyncerMaxConcurrentTasks     *int `json:"syncerMaxConcurrentTasks,omitempty"`
+	SyncerMaxConcurrentDownloads *int `json:"syncerMaxConcurrentDownloads,omitempty"`
 }
 
 // ApplyUpdate 应用运行时配置更新，返回实际被修改的字段名列表
@@ -185,6 +207,24 @@ func (c *Config) ApplyUpdate(update UpdateConfig) ([]string, error) {
 	if update.AuthEnabled != nil && *update.AuthEnabled != c.Auth.Enabled {
 		c.Auth.Enabled = *update.AuthEnabled
 		changed = append(changed, "authEnabled")
+	}
+	if update.SyncerMaxConcurrentTasks != nil {
+		if *update.SyncerMaxConcurrentTasks < 1 {
+			return nil, fmt.Errorf("syncer.max_concurrent_tasks 不能小于 1")
+		}
+		if *update.SyncerMaxConcurrentTasks != c.Syncer.MaxConcurrentTasks {
+			c.Syncer.MaxConcurrentTasks = *update.SyncerMaxConcurrentTasks
+			changed = append(changed, "syncerMaxConcurrentTasks")
+		}
+	}
+	if update.SyncerMaxConcurrentDownloads != nil {
+		if *update.SyncerMaxConcurrentDownloads < 1 {
+			return nil, fmt.Errorf("syncer.max_concurrent_downloads 不能小于 1")
+		}
+		if *update.SyncerMaxConcurrentDownloads != c.Syncer.MaxConcurrentDownloads {
+			c.Syncer.MaxConcurrentDownloads = *update.SyncerMaxConcurrentDownloads
+			changed = append(changed, "syncerMaxConcurrentDownloads")
+		}
 	}
 
 	return changed, nil

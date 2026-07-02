@@ -19,16 +19,191 @@ import (
 	"gorm.io/gorm"
 )
 
-const defaultMaxConcurrentDownloads = 3
+const (
+	defaultMaxConcurrentDownloads = 3
+	// 任务队列默认并发执行数（任务级串行/有限并发，区别于单任务内的资产下载并发）
+	defaultMaxConcurrentTasks = 2
+	// 任务队列缓冲大小
+	taskQueueBufferSize = 256
+	// worker 数量上限（实际并发由 taskSemaphore 控制，worker 数固定为上限避免频繁启停）
+	maxWorkerCount = 16
+)
+
+// taskJob 描述一个待执行的后台任务
+type taskJob struct {
+	taskID       uint
+	repositoryID uint
+	tag          string // 非空表示同步指定 tag
+	assetID      uint   // 非零表示重试资产下载
+	kind         string // "sync_latest" | "sync_by_tag" | "retry_asset"
+}
 
 type Service struct {
-	db                     *gorm.DB
-	checker                *releasesvc.CheckService
-	assetService           *assetsvc.Service
-	notifier               *notifysvc.Service
-	logService             *tasklogsvc.Service
+	db            *gorm.DB
+	checker       *releasesvc.CheckService
+	assetService  *assetsvc.Service
+	notifier      *notifysvc.Service
+	logService    *tasklogsvc.Service
+	storageConfig config.StorageConfig
+
+	// 并发控制（运行时可调）
+	mu                     stdsync.RWMutex
 	maxConcurrentDownloads int
-	storageConfig          config.StorageConfig
+	maxConcurrentTasks     int
+
+	// 任务队列：worker pool 实现任务级排队，避免所有任务并发执行
+	taskQueue    chan taskJob
+	workerWG     stdsync.WaitGroup
+	workersOnce  stdsync.Once
+	workersStop  chan struct{}
+	// 任务级并发信号量：容量 = maxConcurrentTasks，运行时可通过 swapTaskSemaphore 调整
+	taskSemaphore   chan struct{}
+	semReplacement  chan chan struct{} // 用于通知 worker 信号量已替换
+}
+
+// startWorkers 启动固定数量的 worker goroutine 消费任务队列
+// 使用 sync.Once 保证只启动一次（首次 Enqueue 时懒启动）
+func (s *Service) startWorkers() {
+	s.workersOnce.Do(func() {
+		s.taskQueue = make(chan taskJob, taskQueueBufferSize)
+		s.workersStop = make(chan struct{})
+		s.semReplacement = make(chan chan struct{}, 1)
+		s.mu.RLock()
+		n := s.maxConcurrentTasks
+		s.mu.RUnlock()
+		if n < 1 {
+			n = 1
+		}
+		s.taskSemaphore = make(chan struct{}, n)
+		for i := 0; i < maxWorkerCount; i++ {
+			s.workerWG.Add(1)
+			go s.taskWorker(i)
+		}
+	})
+}
+
+// taskWorker 消费任务队列并执行任务，通过信号量限制并发
+func (s *Service) taskWorker(id int) {
+	defer s.workerWG.Done()
+	for {
+		select {
+		case <-s.workersStop:
+			return
+		case newSem := <-s.semReplacement:
+			// 信号量已被替换，更新本地引用（仅一个 worker 会消费到，其余通过下次 acquire 读取）
+			s.mu.Lock()
+			s.taskSemaphore = newSem
+			s.mu.Unlock()
+		case job, ok := <-s.taskQueue:
+			if !ok {
+				return
+			}
+			s.acquireSlot()
+			s.executeJob(job)
+			s.releaseSlot()
+		}
+	}
+}
+
+// acquireSlot 获取一个任务执行槽位（信号量），支持队列已满时等待
+func (s *Service) acquireSlot() {
+	s.mu.RLock()
+	sem := s.taskSemaphore
+	s.mu.RUnlock()
+	sem <- struct{}{}
+}
+
+func (s *Service) releaseSlot() {
+	s.mu.RLock()
+	sem := s.taskSemaphore
+	s.mu.RUnlock()
+	<-sem
+}
+
+// UpdateMaxConcurrentTasks 运行时调整任务并发数
+// 通过替换信号量实现：新容量立即对新进入的任务生效
+func (s *Service) UpdateMaxConcurrentTasks(n int) {
+	if n < 1 {
+		n = 1
+	}
+	s.startWorkers()
+	s.mu.Lock()
+	old := s.maxConcurrentTasks
+	s.maxConcurrentTasks = n
+	// 创建新信号量
+	newSem := make(chan struct{}, n)
+	s.taskSemaphore = newSem
+	s.mu.Unlock()
+	if old != n {
+		// 通知一个 worker 更新其引用（其他 worker 在下次 acquire 时通过 RLock 读取最新）
+		select {
+		case s.semReplacement <- newSem:
+		default:
+		}
+	}
+}
+
+// UpdateMaxConcurrentDownloads 运行时调整单任务内资产下载并发数
+func (s *Service) UpdateMaxConcurrentDownloads(n int) {
+	if n < 1 {
+		n = 1
+	}
+	s.mu.Lock()
+	s.maxConcurrentDownloads = n
+	s.mu.Unlock()
+}
+
+// MaxConcurrentTasks 返回当前任务并发数
+func (s *Service) MaxConcurrentTasks() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.maxConcurrentTasks
+}
+
+// MaxConcurrentDownloads 返回当前资产下载并发数
+func (s *Service) MaxConcurrentDownloads() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.maxConcurrentDownloads
+}
+
+// executeJob 根据 job 类型分发到对应的执行函数
+func (s *Service) executeJob(job taskJob) {
+	bgCtx := context.Background()
+	// 重新加载任务记录（可能在排队期间状态已变）
+	var task models.Task
+	if err := s.db.WithContext(bgCtx).First(&task, job.taskID).Error; err != nil {
+		return
+	}
+	// 已被取消的任务跳过
+	if task.Status == models.TaskStatusCanceled {
+		return
+	}
+	switch job.kind {
+	case "sync_latest":
+		s.executeSyncRepository(bgCtx, job.repositoryID, task)
+	case "sync_by_tag":
+		s.executeSyncByTag(bgCtx, job.repositoryID, job.tag, task)
+	case "retry_asset":
+		s.executeRetryAsset(bgCtx, job.assetID, task)
+	}
+}
+
+// enqueueJob 将任务投递到队列，队列满时记录警告但不阻塞调用方
+func (s *Service) enqueueJob(job taskJob) {
+	s.startWorkers()
+	select {
+	case s.taskQueue <- job:
+	default:
+		// 队列满：标记任务失败，避免无限堆积
+		s.appendLog(context.Background(), job.taskID, "warn", "任务队列已满，任务未能入队执行")
+		_ = s.db.Model(&models.Task{}).Where("id = ?", job.taskID).
+			Updates(map[string]any{
+				"status":        models.TaskStatusFailed,
+				"error_message": "任务队列已满",
+				"finished_at":   time.Now().UTC(),
+			}).Error
+	}
 }
 
 type Result struct {
@@ -78,10 +253,11 @@ func (s *Service) EnqueueSyncRepository(ctx context.Context, repositoryID uint) 
 
 	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("已加入队列: 同步仓库 (ID: %d) 最新版本", repositoryID))
 
-	go func() {
-		bgCtx := context.Background()
-		s.executeSyncRepository(bgCtx, repositoryID, task)
-	}()
+	s.enqueueJob(taskJob{
+		taskID:       task.ID,
+		repositoryID: repositoryID,
+		kind:         "sync_latest",
+	})
 
 	return &task, nil
 }
@@ -100,10 +276,12 @@ func (s *Service) EnqueueSyncByTag(ctx context.Context, repositoryID uint, tag s
 
 	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("已加入队列: 同步仓库 (ID: %d) 指定版本 %s", repositoryID, tag))
 
-	go func() {
-		bgCtx := context.Background()
-		s.executeSyncByTag(bgCtx, repositoryID, tag, task)
-	}()
+	s.enqueueJob(taskJob{
+		taskID:       task.ID,
+		repositoryID: repositoryID,
+		tag:          tag,
+		kind:         "sync_by_tag",
+	})
 
 	return &task, nil
 }
@@ -134,10 +312,11 @@ func (s *Service) EnqueueRetryAsset(ctx context.Context, assetID uint) (*models.
 
 	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("已加入队列: 重试下载资产 %s (ID: %d)", asset.Name, assetID))
 
-	go func() {
-		bgCtx := context.Background()
-		s.executeRetryAsset(bgCtx, assetID, task)
-	}()
+	s.enqueueJob(taskJob{
+		taskID:  task.ID,
+		assetID: assetID,
+		kind:    "retry_asset",
+	})
 
 	return &task, nil
 }
@@ -374,7 +553,7 @@ func (s *Service) downloadAssetsToStorages(ctx context.Context, assets []models.
 		return nil, nil
 	}
 
-	limit := s.maxConcurrentDownloads
+	limit := s.MaxConcurrentDownloads()
 	if limit < 1 {
 		limit = defaultMaxConcurrentDownloads
 	}
@@ -456,7 +635,7 @@ func (s *Service) downloadAssets(ctx context.Context, assets []models.Asset) ([]
 		return nil, nil
 	}
 
-	limit := s.maxConcurrentDownloads
+	limit := s.MaxConcurrentDownloads()
 	if limit < 1 {
 		limit = defaultMaxConcurrentDownloads
 	}

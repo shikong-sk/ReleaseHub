@@ -71,6 +71,11 @@ async function handleViewLogs(task: Task) {
       </NGi>
       <NGi>
         <NCard :bordered="false">
+          <NStatistic label="排队中" :value="tasksStore.pendingCount" />
+        </NCard>
+      </NGi>
+      <NGi>
+        <NCard :bordered="false">
           <NStatistic label="运行中" :value="tasksStore.runningCount" />
         </NCard>
       </NGi>

@@ -8,6 +8,8 @@ export interface AppConfig {
   storageDataDir: string
   githubApiBaseUrl: string
   authEnabled: boolean
+  syncerMaxConcurrentTasks: number
+  syncerMaxConcurrentDownloads: number
 }
 
 export function getAppConfig(): Promise<AppConfig> {
@@ -21,6 +23,8 @@ export interface AppConfigUpdate {
   schedulerMaxConcurrent?: number
   githubApiBaseUrl?: string
   authEnabled?: boolean
+  syncerMaxConcurrentTasks?: number
+  syncerMaxConcurrentDownloads?: number
 }
 
 export function updateAppConfig(update: AppConfigUpdate): Promise<AppConfig> {

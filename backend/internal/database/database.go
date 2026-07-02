@@ -334,3 +334,26 @@ func MigrateDropDeletedAt(db *gorm.DB) error {
 	fmt.Println("[MigrateDropDeletedAt] 迁移完成")
 	return nil
 }
+
+// MigrateBackfillDownloadBytes 回填存量数据：
+// 已下载成功（downloaded/verified）但 download_bytes=0 的资产，用 size 值补上
+// 仅执行一次，用 AppSetting 标记
+func MigrateBackfillDownloadBytes(db *gorm.DB) error {
+	var marker models.AppSetting
+	if err := db.Where("key = ?", "migrate.backfill_download_bytes_done").First(&marker).Error; err == nil {
+		return nil
+	}
+
+	result := db.Model(&models.Asset{}).
+		Where("download_bytes = 0 AND size > 0 AND status IN ?", []string{"downloaded", "verified"}).
+		Update("download_bytes", gorm.Expr("size"))
+	if result.Error != nil {
+		return result.Error
+	}
+
+	db.Save(&models.AppSetting{Key: "migrate.backfill_download_bytes_done", Value: "true"})
+	if result.RowsAffected > 0 {
+		fmt.Printf("[MigrateBackfillDownloadBytes] 回填 %d 条资产\n", result.RowsAffected)
+	}
+	return nil
+}

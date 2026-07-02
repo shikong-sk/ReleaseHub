@@ -38,6 +38,8 @@ const schedulerMaxConcurrent = shallowRef(5)
 const storageDataDir = shallowRef('')
 const githubApiBaseUrl = shallowRef('')
 const authEnabled = shallowRef(false)
+const syncerMaxConcurrentTasks = shallowRef(2)
+const syncerMaxConcurrentDownloads = shallowRef(3)
 const configSaving = shallowRef(false)
 const configEditing = shallowRef(false)
 
@@ -47,6 +49,8 @@ const editSchedulerTickSeconds = shallowRef(60)
 const editSchedulerMaxConcurrent = shallowRef(5)
 const editGithubApiBaseUrl = shallowRef('')
 const editAuthEnabled = shallowRef(false)
+const editSyncerMaxConcurrentTasks = shallowRef(2)
+const editSyncerMaxConcurrentDownloads = shallowRef(3)
 
 const showModal = shallowRef(false)
 const formName = shallowRef('')
@@ -119,6 +123,8 @@ onMounted(async () => {
     storageDataDir.value = config.storageDataDir
     githubApiBaseUrl.value = config.githubApiBaseUrl
     authEnabled.value = config.authEnabled
+    syncerMaxConcurrentTasks.value = config.syncerMaxConcurrentTasks
+    syncerMaxConcurrentDownloads.value = config.syncerMaxConcurrentDownloads
     configLoaded.value = true
     resetEditForm()
   } catch {
@@ -132,6 +138,8 @@ function resetEditForm() {
   editSchedulerMaxConcurrent.value = schedulerMaxConcurrent.value
   editGithubApiBaseUrl.value = githubApiBaseUrl.value
   editAuthEnabled.value = authEnabled.value
+  editSyncerMaxConcurrentTasks.value = syncerMaxConcurrentTasks.value
+  editSyncerMaxConcurrentDownloads.value = syncerMaxConcurrentDownloads.value
 }
 
 function startEditConfig() {
@@ -163,6 +171,12 @@ async function saveConfig() {
     if (editAuthEnabled.value !== authEnabled.value) {
       update.authEnabled = editAuthEnabled.value
     }
+    if (editSyncerMaxConcurrentTasks.value !== syncerMaxConcurrentTasks.value) {
+      update.syncerMaxConcurrentTasks = editSyncerMaxConcurrentTasks.value
+    }
+    if (editSyncerMaxConcurrentDownloads.value !== syncerMaxConcurrentDownloads.value) {
+      update.syncerMaxConcurrentDownloads = editSyncerMaxConcurrentDownloads.value
+    }
 
     // 没有变更则直接退出编辑
     if (Object.keys(update).length === 0) {
@@ -177,6 +191,8 @@ async function saveConfig() {
     storageDataDir.value = result.storageDataDir
     githubApiBaseUrl.value = result.githubApiBaseUrl
     authEnabled.value = result.authEnabled
+    syncerMaxConcurrentTasks.value = result.syncerMaxConcurrentTasks
+    syncerMaxConcurrentDownloads.value = result.syncerMaxConcurrentDownloads
     configEditing.value = false
     message.success('配置已更新')
   } catch (err) {
@@ -297,16 +313,22 @@ async function handleDelete(id: number) {
           </NTag>
         </NDescriptionsItem>
         <NDescriptionsItem label="扫描间隔">
-          {{ schedulerTickSeconds }} 秒
+          {{ schedulerTickSeconds }} 秒/轮
         </NDescriptionsItem>
-        <NDescriptionsItem label="最大并发">
-          {{ schedulerMaxConcurrent }}
+        <NDescriptionsItem label="调度并发数">
+          {{ schedulerMaxConcurrent }} 个仓库/轮
         </NDescriptionsItem>
         <NDescriptionsItem label="存储目录">
           {{ storageDataDir }}
         </NDescriptionsItem>
         <NDescriptionsItem label="GitHub API">
           {{ githubApiBaseUrl }}
+        </NDescriptionsItem>
+        <NDescriptionsItem label="任务并发数">
+          {{ syncerMaxConcurrentTasks }} 个任务
+        </NDescriptionsItem>
+        <NDescriptionsItem label="下载并发数">
+          {{ syncerMaxConcurrentDownloads }} 个资产/任务
         </NDescriptionsItem>
       </NDescriptions>
 
@@ -320,16 +342,25 @@ async function handleDelete(id: number) {
         </NFormItem>
         <NFormItem label="扫描间隔">
           <NInputNumber v-model:value="editSchedulerTickSeconds" :min="10" :step="10" />
-          <span style="margin-left: 8px; color: #8c8c8c">秒</span>
+          <span style="margin-left: 8px; color: #8c8c8c">秒/轮，定时器多久扫描一次到期仓库</span>
         </NFormItem>
-        <NFormItem label="最大并发">
+        <NFormItem label="调度并发数">
           <NInputNumber v-model:value="editSchedulerMaxConcurrent" :min="1" :max="50" />
+          <span style="margin-left: 8px; color: #8c8c8c">每轮定时扫描最多同时投递的仓库数</span>
         </NFormItem>
         <NFormItem label="GitHub API">
           <NInput v-model:value="editGithubApiBaseUrl" placeholder="https://api.github.com" />
         </NFormItem>
+        <NFormItem label="任务并发数">
+          <NInputNumber v-model:value="editSyncerMaxConcurrentTasks" :min="1" :max="16" />
+          <span style="margin-left: 8px; color: #8c8c8c">任务队列同时执行的任务数</span>
+        </NFormItem>
+        <NFormItem label="下载并发数">
+          <NInputNumber v-model:value="editSyncerMaxConcurrentDownloads" :min="1" :max="32" />
+          <span style="margin-left: 8px; color: #8c8c8c">单个任务内同时下载的资产数</span>
+        </NFormItem>
         <NAlert type="info" style="margin-top: 8px">
-          存储目录为环境变量配置，需重启服务生效，暂不支持在线修改。
+          扫描间隔是全局定时器的轮询周期，每轮检查哪些仓库到期；单个仓库的同步频率由仓库配置中的同步间隔决定。并发控制分三层：调度并发数限制定时扫描投递速率，任务并发数限制后台任务队列执行速率，下载并发数限制单任务内资产下载速率。存储目录为环境变量配置，需重启服务生效。
         </NAlert>
       </NForm>
     </NCard>

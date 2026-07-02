@@ -18,10 +18,11 @@ import (
 )
 
 type Dependencies struct {
-	Config *config.Config
-	DB     *gorm.DB
-	Logger *zap.Logger
+	Config    *config.Config
+	DB        *gorm.DB
+	Logger    *zap.Logger
 	Scheduler SchedulerUpdater
+	Syncer    SyncerUpdater
 }
 
 func NewRouter(deps Dependencies) http.Handler {
@@ -50,7 +51,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	registerAuthRoutes(router, deps.DB)
 	// 启动时加载持久化的配置（如 auth.enabled）
 	LoadPersistedSettings(deps.DB, deps.Config)
-	registerConfigRoutes(router, deps.Config, deps.Scheduler, deps.DB)
+	registerConfigRoutes(router, deps.Config, deps.Scheduler, deps.Syncer, deps.DB)
 
 	// 认证中间件始终注册，运行时通过 config.Auth.Enabled 动态判断
 	authEnabled := func() bool { return deps.Config.Auth.Enabled }

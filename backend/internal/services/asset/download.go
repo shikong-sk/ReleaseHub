@@ -290,6 +290,7 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 	now := time.Now().UTC()
 	asset.StoragePath = storedObject.Path
 	asset.Size = downloadResult.Size
+	asset.DownloadBytes = downloadResult.Size
 	asset.SHA256 = downloadResult.SHA256
 	asset.StorageID = &storageID
 	asset.ErrorMessage = ""
