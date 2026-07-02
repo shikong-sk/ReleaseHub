@@ -5,6 +5,7 @@ import type { DataTableColumns } from 'naive-ui'
 import { Trash2, Upload } from 'lucide-vue-next'
 
 import { uploadAsset } from '@/api/upload'
+import { downloadAssetFile } from '@/api/files'
 import type { Asset, CheckReleaseResult } from '@/types/release'
 
 const props = defineProps<{
@@ -21,6 +22,23 @@ const emit = defineEmits<{
 
 const message = useMessage()
 const uploading = shallowRef(false)
+const fileDownloadingIds = shallowRef<Set<number>>(new Set())
+
+async function handleFileDownload(assetId: number, name: string) {
+  const next = new Set(fileDownloadingIds.value)
+  next.add(assetId)
+  fileDownloadingIds.value = next
+  try {
+    await downloadAssetFile(assetId, name)
+    message.success(`已开始下载 ${name}`)
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '下载失败')
+  } finally {
+    const after = new Set(fileDownloadingIds.value)
+    after.delete(assetId)
+    fileDownloadingIds.value = after
+  }
+}
 
 const assets = computed(() => props.result?.assets ?? [])
 const title = computed(() => {
@@ -117,8 +135,8 @@ const columns = computed<DataTableColumns<Asset>>(() => [
               size: 'small',
               type: 'primary',
               secondary: true,
-              tag: 'a',
-              href: `/api/assets/${row.id}/file`
+              loading: fileDownloadingIds.value.has(row.id),
+              onClick: () => handleFileDownload(row.id, row.name)
             },
             { default: () => '下载文件' }
           )

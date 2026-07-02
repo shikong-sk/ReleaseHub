@@ -6,6 +6,7 @@ import { Pin, PinOff, Trash2 } from 'lucide-vue-next'
 
 import { listRepositoryReleases, listReleaseAssets, pinRelease, unpinRelease, deleteRelease } from '@/api/releases'
 import { syncRepositoryByTag } from '@/api/repositories'
+import { downloadAssetFile } from '@/api/files'
 import type { Release, Asset } from '@/types/release'
 import type { Repository } from '@/types/repository'
 
@@ -30,6 +31,23 @@ const assetsLoading = shallowRef(false)
 const syncingTag = shallowRef<string | null>(null)
 const showSyncTagModal = shallowRef(false)
 const syncTagInput = shallowRef('')
+const fileDownloadingIds = shallowRef<Set<number>>(new Set())
+
+async function handleFileDownload(assetId: number, name: string) {
+  const next = new Set(fileDownloadingIds.value)
+  next.add(assetId)
+  fileDownloadingIds.value = next
+  try {
+    await downloadAssetFile(assetId, name)
+    message.success(`已开始下载 ${name}`)
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '下载失败')
+  } finally {
+    const after = new Set(fileDownloadingIds.value)
+    after.delete(assetId)
+    fileDownloadingIds.value = after
+  }
+}
 
 const title = computed(() =>
   props.repository ? `${props.repository.owner}/${props.repository.repo} - Release 历史` : 'Release 历史'
@@ -299,9 +317,16 @@ function formatBytes(size: number) {
             <NTag size="small" :type="statusTagType(asset.status)">{{ statusLabel(asset.status) }}</NTag>
             <span class="asset-name">{{ asset.name }}</span>
             <span class="asset-size">{{ formatBytes(asset.size) }}</span>
-            <a v-if="asset.status === 'verified'" :href="`/api/assets/${asset.id}/file`" class="asset-download">
-              <NButton size="tiny" type="primary" secondary>下载</NButton>
-            </a>
+            <NButton
+              v-if="asset.status === 'verified' || asset.status === 'downloaded'"
+              size="tiny"
+              type="primary"
+              secondary
+              :loading="fileDownloadingIds.has(asset.id)"
+              @click="handleFileDownload(asset.id, asset.name)"
+            >
+              下载
+            </NButton>
           </div>
         </div>
       </div>

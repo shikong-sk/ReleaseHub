@@ -5,6 +5,7 @@ import { FolderOpen, RefreshCw, Search, Database, Download } from 'lucide-vue-ne
 
 import FileTreeModal from '@/components/file/FileTreeModal.vue'
 import { useFilesStore } from '@/stores/files'
+import { downloadAssetFile } from '@/api/files'
 
 import { search as apiSearch, type SearchParams, type SearchResult, type SearchAsset } from '@/api/search'
 import { runReconcile, type ReconcileItem, type ReconcileResult } from '@/api/reconcile'
@@ -22,9 +23,26 @@ const reconcileError = shallowRef<string | null>(null)
 const reconcileResult = shallowRef<ReconcileResult | null>(null)
 const reconcileDryRun = shallowRef(true)
 const authStore = useAuthStore()
+const fileDownloadingIds = shallowRef<Set<number>>(new Set())
 
 // 全屏文件树弹窗
 const showFileTreeModal = shallowRef(false)
+
+async function handleFileDownload(assetId: number, name: string) {
+  const next = new Set(fileDownloadingIds.value)
+  next.add(assetId)
+  fileDownloadingIds.value = next
+  try {
+    await downloadAssetFile(assetId, name)
+    message.success(`已开始下载 ${name}`)
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '下载失败')
+  } finally {
+    const after = new Set(fileDownloadingIds.value)
+    after.delete(assetId)
+    fileDownloadingIds.value = after
+  }
+}
 
 onMounted(() => {
   void filesStore.refresh()
@@ -45,10 +63,6 @@ function formatItemPath(item: ReconcileItem): string {
     return `${item.owner}/${item.repo}/${item.tag}/${item.filename}`
   }
   return item.path
-}
-
-function assetDownloadUrl(assetId: number): string {
-  return `/api/files/download?assetId=${assetId}`
 }
 
 async function handleReconcile() {
@@ -168,16 +182,17 @@ async function handleGlobalSearch() {
               <span class="search-asset-path">{{ asset.owner }}/{{ asset.repo }}/{{ asset.tag }}/<strong>{{ asset.name }}</strong></span>
               <NTag v-if="asset.storageName" size="small" :bordered="false">{{ asset.storageName }}</NTag>
               <span v-if="asset.size" class="search-asset-size">{{ formatBytes(asset.size) }}</span>
-              <a
+              <NButton
                 v-if="asset.status === 'verified' || asset.status === 'downloaded'"
-                :href="assetDownloadUrl(asset.id)"
-                class="search-asset-download"
+                size="tiny"
+                type="primary"
+                secondary
+                :loading="fileDownloadingIds.has(asset.id)"
                 title="下载"
+                @click="handleFileDownload(asset.id, asset.name)"
               >
-                <NButton size="tiny" type="primary" secondary>
-                  <template #icon><Download :size="14" /></template>
-                </NButton>
-              </a>
+                <template #icon><Download :size="14" /></template>
+              </NButton>
             </div>
           </NCollapseItem>
         </NCollapse>
