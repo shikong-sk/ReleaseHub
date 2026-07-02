@@ -80,6 +80,10 @@ func main() {
 	appCtx, stopApp := context.WithCancel(context.Background())
 	defer stopApp()
 
+	// 启动时加载持久化配置（auth.enabled / syncer 并发数）到 cfg，
+	// 必须在 syncService 初始化之前完成，确保持久化值能注入运行时
+	api.LoadPersistedSettings(db, cfg)
+
 	var scheduler *schedulersvc.Service
 	var syncService *syncersvc.Service
 	if cfg.Scheduler.Enabled {
@@ -110,19 +114,19 @@ func main() {
 		scheduler.Start(appCtx)
 	}
 
-	// 应用 syncer 持久化的并发配置（在 LoadPersistedSettings 之后由 config_handler 调用，
-	// 但此处需在 syncService 创建后立即应用初始值）
+	// 应用 syncer 并发配置到运行时（此时 cfg.Syncer 已含持久化值或环境变量默认值）
 	if syncService != nil {
 		syncService.UpdateMaxConcurrentTasks(cfg.Syncer.MaxConcurrentTasks)
 		syncService.UpdateMaxConcurrentDownloads(cfg.Syncer.MaxConcurrentDownloads)
 	}
 
 	router := api.NewRouter(api.Dependencies{
-		Config:    cfg,
-		DB:        db,
-		Logger:    logger,
-		Scheduler: scheduler,
-		Syncer:    syncService,
+		Config:        cfg,
+		DB:            db,
+		Logger:        logger,
+		Scheduler:     scheduler,
+		Syncer:        syncService,
+		SyncerService: syncService,
 	})
 
 	server := &http.Server{
@@ -142,6 +146,11 @@ func main() {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
 	stopApp()
+
+	// 停止 syncer worker pool，等待在途任务完成，避免 goroutine 泄漏与半截任务状态
+	if syncService != nil {
+		syncService.Stop()
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

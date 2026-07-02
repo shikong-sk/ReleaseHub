@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -122,19 +123,23 @@ func (s *Service) List(ctx context.Context) ([]models.Repository, error) {
 	// 批量聚合每仓库已下载资产占用的存储大小（仅统计 download_bytes > 0 的已下载资产）
 	if len(repoIDs) > 0 {
 		type sizeRow struct {
-			RepositoryID  uint
-			TotalBytes    int64
+			RepositoryID uint
+			TotalBytes   int64
 		}
 		var sizeRows []sizeRow
 		// 关联 assets → releases → repositories，按 repository_id 分组求和
 		// 只统计已下载成功的资产（download_bytes 记录实际下载字节数）
-		if err := s.db.WithContext(ctx).
+		err := s.db.WithContext(ctx).
 			Model(&models.Asset{}).
 			Select("releases.repository_id AS repository_id, COALESCE(SUM(assets.download_bytes), 0) AS total_bytes").
 			Joins("JOIN releases ON releases.id = assets.release_id").
 			Where("releases.repository_id IN ? AND assets.download_bytes > 0", repoIDs).
 			Group("releases.repository_id").
-			Scan(&sizeRows).Error; err == nil {
+			Scan(&sizeRows).Error
+		if err != nil {
+			// 聚合失败不影响仓库列表展示，记录到 stderr 便于排查
+			fmt.Fprintf(os.Stderr, "[repository.List] 聚合仓库存储大小失败: %v\n", err)
+		} else {
 			sizeMap := make(map[uint]int64, len(sizeRows))
 			for _, r := range sizeRows {
 				sizeMap[r.RepositoryID] = r.TotalBytes

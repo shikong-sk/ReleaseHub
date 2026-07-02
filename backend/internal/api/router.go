@@ -7,6 +7,7 @@ import (
 	"releasehub/backend/internal/middleware"
 	githubsvc "releasehub/backend/internal/services/github"
 	"releasehub/backend/internal/services/health"
+	syncersvc "releasehub/backend/internal/services/syncer"
 
 	"github.com/gin-gonic/gin"
 	_ "releasehub/backend/internal/api/docs" // swag init 生成的文档
@@ -18,11 +19,12 @@ import (
 )
 
 type Dependencies struct {
-	Config    *config.Config
-	DB        *gorm.DB
-	Logger    *zap.Logger
-	Scheduler SchedulerUpdater
-	Syncer    SyncerUpdater
+	Config        *config.Config
+	DB            *gorm.DB
+	Logger        *zap.Logger
+	Scheduler     SchedulerUpdater
+	Syncer        SyncerUpdater        // 用于 config_handler 运行时调整并发
+	SyncerService *syncersvc.Service   // 共享 syncer 实例，用于 repository_handler 手动同步入口
 }
 
 func NewRouter(deps Dependencies) http.Handler {
@@ -60,7 +62,7 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	// 核心 API
 	githubClient, githubClientErr := githubsvc.NewClient(deps.Config.GitHub.APIBaseURL)
-	registerRepositoryRoutes(router, deps.DB, deps.Config.Storage, deps.Config.GitHub.APIBaseURL, githubClient, githubClientErr)
+	registerRepositoryRoutes(router, deps.DB, deps.Config.Storage, deps.Config.GitHub.APIBaseURL, githubClient, githubClientErr, deps.SyncerService)
 	registerReleaseRoutes(router, deps.DB, deps.Config.Storage)
 	registerTaskRoutes(router, deps.DB)
 	registerFileRoutes(router, deps.DB)

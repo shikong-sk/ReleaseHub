@@ -25,8 +25,10 @@ const (
 	defaultMaxConcurrentTasks = 2
 	// 任务队列缓冲大小
 	taskQueueBufferSize = 256
-	// worker 数量上限（实际并发由 taskSemaphore 控制，worker 数固定为上限避免频繁启停）
+	// worker 数量上限（实际并发由 taskTokens 控制，worker 数固定为上限避免频繁启停）
 	maxWorkerCount = 16
+	// 信号量容量上限（固定，运行时通过令牌计数调整实际并发，不替换 channel）
+	maxSemaphoreCapacity = 64
 )
 
 // taskJob 描述一个待执行的后台任务
@@ -56,9 +58,13 @@ type Service struct {
 	workerWG     stdsync.WaitGroup
 	workersOnce  stdsync.Once
 	workersStop  chan struct{}
-	// 任务级并发信号量：容量 = maxConcurrentTasks，运行时可通过 swapTaskSemaphore 调整
-	taskSemaphore   chan struct{}
-	semReplacement  chan chan struct{} // 用于通知 worker 信号量已替换
+	stopOnce     stdsync.Once
+
+	// 动态并发限制：用条件变量 + 计数器实现，运行时调整 maxConcurrentTasks 立即生效，无 channel 替换死锁风险
+	concurMu    stdsync.Mutex
+	concurCond  *stdsync.Cond
+	inFlight    int // 当前正在执行的任务数
+	maxInFlight int // 当前允许的最大并发数（= maxConcurrentTasks)
 }
 
 // startWorkers 启动固定数量的 worker goroutine 消费任务队列
@@ -67,14 +73,13 @@ func (s *Service) startWorkers() {
 	s.workersOnce.Do(func() {
 		s.taskQueue = make(chan taskJob, taskQueueBufferSize)
 		s.workersStop = make(chan struct{})
-		s.semReplacement = make(chan chan struct{}, 1)
-		s.mu.RLock()
-		n := s.maxConcurrentTasks
-		s.mu.RUnlock()
-		if n < 1 {
-			n = 1
+		s.concurCond = stdsync.NewCond(&s.concurMu)
+		s.concurMu.Lock()
+		s.maxInFlight = s.maxConcurrentTasks
+		if s.maxInFlight < 1 {
+			s.maxInFlight = 1
 		}
-		s.taskSemaphore = make(chan struct{}, n)
+		s.concurMu.Unlock()
 		for i := 0; i < maxWorkerCount; i++ {
 			s.workerWG.Add(1)
 			go s.taskWorker(i)
@@ -82,65 +87,83 @@ func (s *Service) startWorkers() {
 	})
 }
 
-// taskWorker 消费任务队列并执行任务，通过信号量限制并发
+// taskWorker 消费任务队列并执行任务，通过条件变量限制并发
 func (s *Service) taskWorker(id int) {
 	defer s.workerWG.Done()
 	for {
 		select {
 		case <-s.workersStop:
 			return
-		case newSem := <-s.semReplacement:
-			// 信号量已被替换，更新本地引用（仅一个 worker 会消费到，其余通过下次 acquire 读取）
-			s.mu.Lock()
-			s.taskSemaphore = newSem
-			s.mu.Unlock()
 		case job, ok := <-s.taskQueue:
 			if !ok {
 				return
 			}
-			s.acquireSlot()
+			if !s.acquireSlot() {
+				// 服务停止，放回任务不执行
+				return
+			}
 			s.executeJob(job)
 			s.releaseSlot()
 		}
 	}
 }
 
-// acquireSlot 获取一个任务执行槽位（信号量），支持队列已满时等待
-func (s *Service) acquireSlot() {
-	s.mu.RLock()
-	sem := s.taskSemaphore
-	s.mu.RUnlock()
-	sem <- struct{}{}
+// acquireSlot 等待直到当前执行任务数低于 maxInFlight，或在服务停止时退出
+// 返回 true 表示获取成功，false 表示服务已停止应退出
+func (s *Service) acquireSlot() bool {
+	s.concurMu.Lock()
+	for s.inFlight >= s.maxInFlight {
+		select {
+		case <-s.workersStop:
+			s.concurMu.Unlock()
+			return false
+		default:
+		}
+		s.concurCond.Wait()
+		// 被唤醒后再次检查是否已停止
+		select {
+		case <-s.workersStop:
+			s.concurMu.Unlock()
+			return false
+		default:
+		}
+	}
+	s.inFlight++
+	s.concurMu.Unlock()
+	return true
 }
 
+// releaseSlot 释放一个执行槽位并唤醒等待的 worker
 func (s *Service) releaseSlot() {
-	s.mu.RLock()
-	sem := s.taskSemaphore
-	s.mu.RUnlock()
-	<-sem
+	s.concurMu.Lock()
+	s.inFlight--
+	s.concurCond.Signal()
+	s.concurMu.Unlock()
 }
 
 // UpdateMaxConcurrentTasks 运行时调整任务并发数
-// 通过替换信号量实现：新容量立即对新进入的任务生效
+// 仅更新 maxInFlight 并广播唤醒，新值对后续 acquire 立即生效，无 channel 替换死锁风险
 func (s *Service) UpdateMaxConcurrentTasks(n int) {
 	if n < 1 {
 		n = 1
 	}
-	s.startWorkers()
-	s.mu.Lock()
-	old := s.maxConcurrentTasks
-	s.maxConcurrentTasks = n
-	// 创建新信号量
-	newSem := make(chan struct{}, n)
-	s.taskSemaphore = newSem
-	s.mu.Unlock()
-	if old != n {
-		// 通知一个 worker 更新其引用（其他 worker 在下次 acquire 时通过 RLock 读取最新）
-		select {
-		case s.semReplacement <- newSem:
-		default:
-		}
+	if n > maxWorkerCount {
+		n = maxWorkerCount
 	}
+	s.startWorkers()
+	s.concurMu.Lock()
+	if n > s.maxInFlight {
+		// 放宽上限：唤醒可能因上限阻塞的 worker
+		s.maxInFlight = n
+		s.concurCond.Broadcast()
+	} else if n < s.maxInFlight {
+		s.maxInFlight = n
+	}
+	s.concurMu.Unlock()
+	// 同步更新对外可见的 maxConcurrentTasks（用于 MaxConcurrentTasks() 查询）
+	s.mu.Lock()
+	s.maxConcurrentTasks = n
+	s.mu.Unlock()
 }
 
 // UpdateMaxConcurrentDownloads 运行时调整单任务内资产下载并发数
@@ -165,6 +188,23 @@ func (s *Service) MaxConcurrentDownloads() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.maxConcurrentDownloads
+}
+
+// Stop 停止 worker pool，等待在途任务完成
+func (s *Service) Stop() {
+	s.stopOnce.Do(func() {
+		s.mu.RLock()
+		stopCh := s.workersStop
+		s.mu.RUnlock()
+		if stopCh != nil {
+			close(stopCh)
+			// 唤醒所有在 acquireSlot 中 cond.Wait 的 worker，使其检查 workersStop 并退出
+			s.concurMu.Lock()
+			s.concurCond.Broadcast()
+			s.concurMu.Unlock()
+			s.workerWG.Wait()
+		}
+	})
 }
 
 // executeJob 根据 job 类型分发到对应的执行函数
@@ -235,6 +275,7 @@ func NewService(db *gorm.DB, checker *releasesvc.CheckService, storageConfig con
 		notifier:               notifysvc.NewService(db),
 		logService:             tasklogsvc.NewService(db),
 		maxConcurrentDownloads: defaultMaxConcurrentDownloads,
+		maxConcurrentTasks:     defaultMaxConcurrentTasks,
 		storageConfig:          storageConfig,
 	}, nil
 }

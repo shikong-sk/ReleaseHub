@@ -351,7 +351,9 @@ func MigrateBackfillDownloadBytes(db *gorm.DB) error {
 		return result.Error
 	}
 
-	db.Save(&models.AppSetting{Key: "migrate.backfill_download_bytes_done", Value: "true"})
+	if err := db.Save(&models.AppSetting{Key: "migrate.backfill_download_bytes_done", Value: "true"}).Error; err != nil {
+		return fmt.Errorf("标记迁移完成失败: %w", err)
+	}
 	if result.RowsAffected > 0 {
 		fmt.Printf("[MigrateBackfillDownloadBytes] 回填 %d 条资产\n", result.RowsAffected)
 	}

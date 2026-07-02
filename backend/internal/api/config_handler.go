@@ -140,17 +140,24 @@ func (h *configHandler) update(c *gin.Context) {
 
 	// 持久化到数据库
 	for _, field := range changed {
+		var setting models.AppSetting
 		switch field {
 		case "authEnabled":
 			val := "false"
 			if h.config.Auth.Enabled {
 				val = "true"
 			}
-			h.db.Save(&models.AppSetting{Key: "auth.enabled", Value: val})
+			setting = models.AppSetting{Key: "auth.enabled", Value: val}
 		case "syncerMaxConcurrentTasks":
-			h.db.Save(&models.AppSetting{Key: "syncer.max_concurrent_tasks", Value: strconv.Itoa(h.config.Syncer.MaxConcurrentTasks)})
+			setting = models.AppSetting{Key: "syncer.max_concurrent_tasks", Value: strconv.Itoa(h.config.Syncer.MaxConcurrentTasks)}
 		case "syncerMaxConcurrentDownloads":
-			h.db.Save(&models.AppSetting{Key: "syncer.max_concurrent_downloads", Value: strconv.Itoa(h.config.Syncer.MaxConcurrentDownloads)})
+			setting = models.AppSetting{Key: "syncer.max_concurrent_downloads", Value: strconv.Itoa(h.config.Syncer.MaxConcurrentDownloads)}
+		default:
+			continue
+		}
+		if err := h.db.Save(&setting).Error; err != nil {
+			writeError(c, http.StatusInternalServerError, "配置持久化失败: "+err.Error())
+			return
 		}
 	}
 

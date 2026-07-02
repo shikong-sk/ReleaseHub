@@ -28,7 +28,7 @@ type repositoryHandler struct {
 	retentionSvc    *retentionsvc.Service
 }
 
-func registerRepositoryRoutes(router *gin.Engine, db *gorm.DB, storageConfig config.StorageConfig, githubAPIBaseURL string, githubClient *githubsvc.Client, githubClientErr error) {
+func registerRepositoryRoutes(router *gin.Engine, db *gorm.DB, storageConfig config.StorageConfig, githubAPIBaseURL string, githubClient *githubsvc.Client, githubClientErr error, sharedSyncer *syncersvc.Service) {
 	providerRegistry := providersvc.NewRegistry(githubAPIBaseURL)
 	checkService := releasesvc.NewCheckService(db, githubClient).
 		WithGitHubFactory(githubsvc.NewClientFactory(githubAPIBaseURL, db)).
@@ -38,7 +38,18 @@ func registerRepositoryRoutes(router *gin.Engine, db *gorm.DB, storageConfig con
 		retentionService = rs
 		checkService.WithRetention(rs)
 	}
-	syncService, syncServiceErr := syncersvc.NewService(db, checkService, storageConfig)
+	// 复用全局共享的 syncer 实例（与 scheduler / config_handler 同一实例），
+	// 确保运行时并发配置调整对手动同步入口同样生效
+	syncService := sharedSyncer
+	syncServiceErr := error(nil)
+	if syncService == nil {
+		// scheduler 未启用时降级：独立创建实例，使用默认并发数
+		if s, err := syncersvc.NewService(db, checkService, storageConfig); err == nil {
+			syncService = s
+		} else {
+			syncServiceErr = err
+		}
+	}
 
 	handler := &repositoryHandler{
 		service:         repositorysvc.NewService(db, storageConfig),
