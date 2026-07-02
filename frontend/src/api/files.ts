@@ -1,4 +1,4 @@
-import { getJson, requestJson } from './http'
+import { getJson, requestJson, downloadFile } from './http'
 import type { FileListResponse, FileTreeResponse } from '@/types/file'
 
 export function listFiles(): Promise<FileListResponse> {
@@ -7,6 +7,11 @@ export function listFiles(): Promise<FileListResponse> {
 
 export function assetFileURL(assetId: number): string {
   return `/api/assets/${assetId}/file`
+}
+
+// 下载资产文件（带认证头，解决 <a href> 不带 Authorization 导致 401 的问题）
+export async function downloadAssetFile(assetId: number, filename?: string): Promise<void> {
+  await downloadFile(assetFileURL(assetId), filename)
 }
 
 export function getFileTree(): Promise<FileTreeResponse> {

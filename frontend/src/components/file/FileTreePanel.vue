@@ -12,7 +12,7 @@ import {
 import type { TreeOption } from 'naive-ui'
 import { Download, Trash2 } from 'lucide-vue-next'
 
-import { getRepositoryFileTree, assetFileURL } from '@/api/files'
+import { getRepositoryFileTree, assetFileURL, downloadAssetFile } from '@/api/files'
 import { deleteAsset } from '@/api/releases'
 import type { FileTreeNode } from '@/types/file'
 
@@ -28,6 +28,23 @@ const emit = defineEmits<{
 }>()
 
 const message = useMessage()
+
+// 下载中的资产 ID 集合，用于按钮 loading 状态
+const downloadingIds = ref<Set<number>>(new Set())
+
+async function handleDownload(assetId: number, filename: string) {
+  downloadingIds.value = new Set(downloadingIds.value).add(assetId)
+  try {
+    await downloadAssetFile(assetId, filename)
+    message.success(`已开始下载 ${filename}`)
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '下载失败')
+  } finally {
+    const next = new Set(downloadingIds.value)
+    next.delete(assetId)
+    downloadingIds.value = next
+  }
+}
 
 // 本地可变树：保留已懒加载的 children，避免 computed 重算时丢失
 const localTree = ref<TreeOption[]>([])
@@ -207,8 +224,9 @@ function renderSuffix({ option }: { option: TreeOption }) {
   if (raw.status === 'verified' || raw.status === 'downloaded') {
     buttons.push(
       h(NButton, {
-        size: 'tiny', type: 'primary', secondary: true, tag: 'a',
-        href: assetFileURL(raw.assetId)
+        size: 'tiny', type: 'primary', secondary: true,
+        loading: downloadingIds.value.has(raw.assetId),
+        onClick: () => handleDownload(raw.assetId!, raw.label)
       }, { default: () => '下载' })
     )
   }

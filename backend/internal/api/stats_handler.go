@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"releasehub/backend/internal/models"
@@ -87,8 +88,9 @@ func (h *statsHandler) dashboard(c *gin.Context) {
 
 func (h *statsHandler) trend(c *gin.Context) {
 	days := 30
-	if d, err := time.ParseDuration(c.Query("days") + "h"); err == nil && d.Hours() > 0 && d.Hours() <= 365 {
-		days = int(d.Hours() / 24)
+	// 直接解析天数为整数，前端传 ?days=30 表示 30 天
+	if d, err := strconv.Atoi(c.Query("days")); err == nil && d > 0 && d <= 365 {
+		days = d
 	}
 
 	releaseTrend := make([]trendPoint, 0, days)
