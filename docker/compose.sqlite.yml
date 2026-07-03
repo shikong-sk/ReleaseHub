@@ -3,6 +3,9 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+    # 配合 /api/system/restart 重启接口：后端收到 SIGTERM 退出后容器随之停止，
+    # 必须配置 restart 策略由 Docker 自动重新拉起，否则点击重启服务会直接停机不恢复。
+    restart: unless-stopped
     environment:
       RELEASEHUB_APP_ENV: production
       RELEASEHUB_HTTP_HOST: 0.0.0.0
