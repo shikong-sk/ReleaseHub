@@ -144,8 +144,13 @@ func Load() (*Config, error) {
 		},
 	}
 
-	if cfg.Database.Driver != "sqlite" {
-		return nil, fmt.Errorf("暂不支持数据库类型: %s", cfg.Database.Driver)
+	switch cfg.Database.Driver {
+	case "sqlite", "":
+		cfg.Database.Driver = "sqlite"
+	case "postgres", "mysql":
+		// PostgreSQL 和 MySQL 已支持，无需额外校验
+	default:
+		return nil, fmt.Errorf("不支持的数据库类型: %s（可选 sqlite、postgres 或 mysql）", cfg.Database.Driver)
 	}
 	if cfg.Scheduler.TickSeconds < 10 {
 		return nil, fmt.Errorf("scheduler.tick_seconds 不能小于 10")

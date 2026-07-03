@@ -8,7 +8,7 @@ ReleaseHub 采用经典的前后端分离架构：
 
 - **后端**：单进程 Go 应用，内嵌 HTTP API、Scheduler 和后台任务执行
 - **前端**：Vue 3 SPA，Nginx 反向代理
-- **数据层**：SQLite（GORM AutoMigrate），本地文件系统 / S3 / WebDAV 存储
+- **数据层**：SQLite / PostgreSQL / MySQL（GORM AutoMigrate），本地文件系统 / S3 / WebDAV 存储
 
 ```
 ┌─────────────┐     ┌─────────────────────────────────────┐
@@ -180,11 +180,12 @@ Syncer.SyncRepository(repo)
 
 详细的架构决策记录见 [docs/adr/](adr/)。
 
-### 为什么用 SQLite
+### 为什么默认用 SQLite
 
 - 降低自托管部署门槛，适合 NAS 和个人服务器
 - 单文件便于备份和迁移
 - 写并发能力有限，通过任务队列和仓库级锁控制冲突
+- v1.0 已支持 PostgreSQL 和 MySQL，高并发或规模化场景可选择切换
 
 ### 为什么单进程
 
@@ -200,15 +201,14 @@ Syncer.SyncRepository(repo)
 
 ## 技术债与已知限制
 
-| 项目 | 说明 | 规划版本 |
+| 项目 | 说明 | 状态 |
 | --- | --- | --- |
-| SQLite 写并发 | 单写锁，高并发同步需排队 | v1.0（PostgreSQL） |
-| S3 简化签名 | 当前为 HTTP Basic Auth，非 AWS V4 | v0.5 收尾 |
-| WebDAV/S3 全量上传 | 内部读取完整内容再上传 | v0.5（分片） |
-| 无 OpenAPI 文档 | API 较多但无自动生成文档 | v1.0 |
-| 前端趋势图未集成 | 后端 API 已就绪，前端未调用 | v0.5 |
-| aria2 可选后端 | 代码存在但未接入调度 | v0.6 |
-| 软删除已迁移 | v0.4 已完成硬删除迁移，`DeletedAt` 字段已清理 | 已完成 |
+| S3 签名 | 当前为简化实现，部分 S3 兼容存储可能不兼容 | 待优化 |
+| WebDAV/S3 全量上传 | 内部读取完整内容再上传，大文件可能占用较多内存 | 待优化 |
+| aria2 未接入调度 | 配置字段已存在但 Syncer 尚未调用 aria2 执行下载 | 待实现 |
+| 通知发送为同步 fan-out | 未进入队列，暂无重试机制 | 待优化 |
+| 无国际化（i18n） | 界面和文档目前仅有中文 | 待规划 |
+| 多平台 Provider 完整集成 | Release Checker 仍部分依赖 GitHub 专用类型 | 待完善 |
 
 ## 相关文档
 

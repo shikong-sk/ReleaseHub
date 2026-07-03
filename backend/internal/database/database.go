@@ -10,6 +10,7 @@ import (
 	"releasehub/backend/internal/models"
 
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -23,6 +24,14 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		})
 		if err != nil {
 			return nil, fmt.Errorf("连接 PostgreSQL 失败: %w", err)
+		}
+		return db, nil
+	case "mysql":
+		db, err := gorm.Open(mysql.Open(cfg.DSN), &gorm.Config{
+			TranslateError: true,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("连接 MySQL 失败: %w", err)
 		}
 		return db, nil
 	case "sqlite", "":
@@ -74,33 +83,35 @@ func Migrate(db *gorm.DB) error {
 
 // MigrateAssetUniqueIndex 迁移 Asset 表的唯一索引
 // 从 (release_id, name) 改为 (release_id, name, storage_id)
-// SQLite 不支持 ALTER INDEX，需要手动处理
+// 使用 GORM Migrator API 实现跨数据库兼容（SQLite/PostgreSQL/MySQL）
 func MigrateAssetUniqueIndex(db *gorm.DB) error {
-	// 检查旧索引是否存在
-	var count int64
-	db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_release_asset_name'").Scan(&count)
-	if count > 0 {
-		// 删除旧索引
-		if err := db.Exec("DROP INDEX IF EXISTS idx_release_asset_name").Error; err != nil {
+	migrator := db.Migrator()
+
+	// 检查旧索引是否存在，存在则删除
+	if migrator.HasIndex(&models.Asset{}, "idx_release_asset_name") {
+		if err := migrator.DropIndex(&models.Asset{}, "idx_release_asset_name"); err != nil {
 			return fmt.Errorf("删除旧索引失败: %w", err)
 		}
 	}
 
-	// 检查新索引是否已存在
-	db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_release_asset_storage'").Scan(&count)
-	if count == 0 {
-		// 创建新索引
-		if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_release_asset_storage ON assets(release_id, name, storage_id)").Error; err != nil {
-			// 如果有重复数据导致索引创建失败，先清理重复记录
+	// 检查新索引是否存在，不存在则创建
+	if !migrator.HasIndex(&models.Asset{}, "idx_release_asset_storage") {
+		// 创建新索引，如果因重复数据失败则先清理再重试
+		if err := createAssetUniqueIndex(db); err != nil {
 			fmt.Printf("[MigrateAssetUniqueIndex] 创建索引失败，尝试清理重复数据: %v\n", err)
 			cleanDuplicateAssets(db)
-			if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_release_asset_storage ON assets(release_id, name, storage_id)").Error; err != nil {
+			if err := createAssetUniqueIndex(db); err != nil {
 				return fmt.Errorf("创建新索引失败: %w", err)
 			}
 		}
 	}
 
 	return nil
+}
+
+// createAssetUniqueIndex 通过 Migrator 创建 assets 表的多列唯一索引
+func createAssetUniqueIndex(db *gorm.DB) error {
+	return db.Migrator().CreateIndex(&models.Asset{}, "idx_release_asset_storage")
 }
 
 // cleanDuplicateAssets 清理重复的 asset 记录（保留最新的）
@@ -274,8 +285,9 @@ func BackfillAssetStorageID(db *gorm.DB) error {
 }
 
 
-// MigrateDropDeletedAt 清理软删除列：删除已被软删除的记录，然后删除 deleted_at 列
+// MigrateDropDeletedAt 清理软删除列：删除已被软删除的记录，然后处理旧索引
 // 此函数仅在从软删除迁移到硬删除时需要执行一次
+// 使用 GORM Migrator API 实现跨数据库兼容（SQLite/PostgreSQL/MySQL）
 func MigrateDropDeletedAt(db *gorm.DB) error {
 	// 已迁移过的标记，避免每次启动重复执行
 	var marker models.AppSetting
@@ -283,10 +295,10 @@ func MigrateDropDeletedAt(db *gorm.DB) error {
 		return nil
 	}
 
-	// 检查 assets 表是否有 deleted_at 列
-	var colCount int64
-	db.Raw("SELECT COUNT(*) FROM pragma_table_info('assets') WHERE name='deleted_at'").Scan(&colCount)
-	if colCount == 0 {
+	migrator := db.Migrator()
+
+	// 跨数据库检测：使用 Migrator.HasColumn 检查 assets 表是否有 deleted_at 列
+	if !migrator.HasColumn(&models.Asset{}, "deleted_at") {
 		// 没有 deleted_at 列，标记已完成
 		db.Save(&models.AppSetting{Key: "migrate.drop_deleted_at_done", Value: "true"})
 		return nil
@@ -295,10 +307,18 @@ func MigrateDropDeletedAt(db *gorm.DB) error {
 	fmt.Println("[MigrateDropDeletedAt] 检测到 deleted_at 列，开始迁移...")
 
 	// 删除所有已软删除的记录（deleted_at 不为 NULL 的记录）
+	// 遍历所有可能存在 deleted_at 列的表，用 Migrator.HasColumn 逐个检测
 	tables := []string{"assets", "releases", "repositories", "tasks", "storages",
 		"proxies", "notifications", "git_hub_tokens", "users", "api_keys"}
 
 	for _, table := range tables {
+		// 检查该表是否有 deleted_at 列（有些表可能从没用过软删除）
+		if !migrator.HasTable(table) {
+			continue
+		}
+		if !hasColumnRaw(db, table, "deleted_at") {
+			continue
+		}
 		var count int64
 		db.Raw(fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE deleted_at IS NOT NULL", table)).Scan(&count)
 		if count > 0 {
@@ -310,20 +330,16 @@ func MigrateDropDeletedAt(db *gorm.DB) error {
 		}
 	}
 
-	// 删除旧唯一索引（包含 WHERE deleted_at IS NULL 条件）
-	db.Exec("DROP INDEX IF EXISTS idx_release_asset_storage")
-
-	// SQLite 不支持 DROP COLUMN（3.35.0 之前），但我们只删除数据和索引
-	// 新记录不再有 deleted_at 字段，AutoMigrate 不会自动删除列
-	// 实际上 GORM AutoMigrate 在 SQLite 下会保留旧列，但不影响功能
-	// 因为 Go struct 中已经没有 DeletedAt 字段，GORM 查询不会再引用该列
+	// 删除旧唯一索引（可能包含 WHERE deleted_at IS NULL 条件），使用 Migrator 跨库删除
+	if migrator.HasIndex(&models.Asset{}, "idx_release_asset_storage") {
+		_ = migrator.DropIndex(&models.Asset{}, "idx_release_asset_storage")
+	}
 
 	// 重建不含 WHERE 条件的唯一索引
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_release_asset_storage ON assets(release_id, name, storage_id)").Error; err != nil {
-		// 如果有重复数据导致索引创建失败，先清理
+	if err := createAssetUniqueIndex(db); err != nil {
 		fmt.Printf("[MigrateDropDeletedAt] 创建索引失败，尝试清理重复数据: %v\n", err)
 		cleanDuplicateAssets(db)
-		if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_release_asset_storage ON assets(release_id, name, storage_id)").Error; err != nil {
+		if err := createAssetUniqueIndex(db); err != nil {
 			return fmt.Errorf("创建新索引失败: %w", err)
 		}
 	}
@@ -333,6 +349,27 @@ func MigrateDropDeletedAt(db *gorm.DB) error {
 
 	fmt.Println("[MigrateDropDeletedAt] 迁移完成")
 	return nil
+}
+
+// hasColumnRaw 通过 information_schema 或回退方案检测某表是否有某列
+// GORM Migrator.HasColumn 需要模型对象，这里用 Raw 查询支持任意表名
+func hasColumnRaw(db *gorm.DB, tableName, columnName string) bool {
+	switch db.Dialector.Name() {
+	case "postgres":
+		var count int64
+		db.Raw(`SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?`,
+			tableName, columnName).Scan(&count)
+		return count > 0
+	case "mysql":
+		var count int64
+		db.Raw(`SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?`,
+			tableName, columnName).Scan(&count)
+		return count > 0
+	default: // sqlite
+		var count int64
+		db.Raw(fmt.Sprintf("SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name='%s'", tableName, columnName)).Scan(&count)
+		return count > 0
+	}
 }
 
 // MigrateBackfillDownloadBytes 回填存量数据：
@@ -346,7 +383,7 @@ func MigrateBackfillDownloadBytes(db *gorm.DB) error {
 
 	result := db.Model(&models.Asset{}).
 		Where("download_bytes = 0 AND size > 0 AND status IN ?", []string{"downloaded", "verified"}).
-		Update("download_bytes", gorm.Expr("size"))
+		Update("download_bytes", gorm.Expr("assets.size"))
 	if result.Error != nil {
 		return result.Error
 	}

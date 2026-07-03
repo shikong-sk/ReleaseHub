@@ -20,8 +20,8 @@ ReleaseHub 通过环境变量进行配置，所有变量以 `RELEASEHUB_` 为前
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `RELEASEHUB_DATABASE_DRIVER` | `sqlite` | 数据库类型，当前仅支持 `sqlite` |
-| `RELEASEHUB_DATABASE_DSN` | `data/releasehub.db` | 数据库路径（SQLite）或连接字符串 |
+| `RELEASEHUB_DATABASE_DRIVER` | `sqlite` | 数据库类型，支持 `sqlite`、`postgres` 和 `mysql` |
+| `RELEASEHUB_DATABASE_DSN` | `data/releasehub.db` | 数据库路径（SQLite）或连接字符串（PostgreSQL/MySQL） |
 
 数据库使用 GORM AutoMigrate 自动建表，无需手动执行迁移脚本。
 
@@ -55,6 +55,16 @@ ReleaseHub 通过环境变量进行配置，所有变量以 `RELEASEHUB_` 为前
 
 自托管 GitHub Enterprise 时可修改此地址。
 
+
+## 下载
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `RELEASEHUB_DOWNLOAD_MAX_SPEED_BYTES` | `0` | 下载速度限制（字节/秒），0 表示不限速 |
+| `RELEASEHUB_DOWNLOAD_ARIA2_RPC` | `""` | aria2 JSON-RPC 端点，空则不使用 aria2 |
+| `RELEASEHUB_DOWNLOAD_ARIA2_SECRET` | `""` | aria2 RPC 密钥 |
+| `RELEASEHUB_DOWNLOAD_ARIA2_HTTP` | `""` | aria2 文件服务地址 |
+
 ## Scheduler
 
 | 变量 | 默认值 | 说明 |
@@ -68,6 +78,16 @@ Scheduler 在每个 tick 周期中：
 2. 通过全局 semaphore 控制并发数
 3. 依次执行检查 + 下载
 4. 扫描失败资产并触发重试
+
+
+## Syncer（同步器）
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `RELEASEHUB_SYNCER_MAX_CONCURRENT_TASKS` | `2` | 任务队列并发执行数（同时进行的仓库同步数） |
+| `RELEASEHUB_SYNCER_MAX_CONCURRENT_DOWNLOADS` | `3` | 单任务内资产下载并发数 |
+
+Syncer 配置支持运行时动态更新，在 Web 管理界面的「设置 → 全局配置」中调整，无需重启。
 
 ## 认证
 

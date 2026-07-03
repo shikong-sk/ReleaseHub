@@ -108,7 +108,7 @@ cd backend && go build -o releasehub ./cmd/releasehub
 
 | 内容 | 位置 | 说明 |
 | --- | --- | --- |
-| SQLite 数据库 | `data/releasehub.db` | 元数据、配置、任务记录 |
+| SQLite 数据库 | `data/releasehub.db` | 元数据、配置、任务记录（PostgreSQL 部署时对应外部数据库） |
 | 本地资产 | `data/releases/<provider>/<owner>/<repo>/<tag>/` | 已下载的 Release 文件 |
 | `latest` 映射 | `data/releases/<provider>/<owner>/<repo>/latest` | 指向最新版本的符号链接或文件 |
 
@@ -150,7 +150,7 @@ server {
 | --- | --- | --- | --- |
 | < 50 个仓库 | 默认 5 | 256MB+ | 个人/NAS 部署 |
 | 50–200 个仓库 | 5–10 | 512MB+ | 小团队 |
-| > 200 个仓库 | 10+ | 1GB+ | 需评估 SQLite 写并发，建议 v1.0 后迁移 PostgreSQL |
+| > 200 个仓库 | 10+ | 1GB+ | 建议使用 PostgreSQL 替代 SQLite |
 
 流式下载不缓存完整文件到内存，内存占用主要取决于并发下载数。
 
@@ -168,6 +168,80 @@ ReleaseHub 通过 GORM AutoMigrate 自动处理表结构变更，无需手动迁
 2. 拉取新版本镜像或代码
 3. `docker compose -f docker/compose.sqlite.yml up --build -d` 重建容器
 4. 启动时会自动执行迁移
+
+
+## 方式四：PostgreSQL / MySQL 部署
+
+v1.0 起支持 PostgreSQL 和 MySQL，适合多实例或高并发场景：
+
+```bash
+# 设置环境变量启用 PostgreSQL
+export RELEASEHUB_DATABASE_DRIVER=postgres
+export RELEASEHUB_DATABASE_DSN="host=127.0.0.1 port=5432 user=releasehub password=secret dbname=releasehub sslmode=disable"
+
+# 启动后端
+cd backend && go run ./cmd/releasehub
+```
+
+MySQL 示例：
+
+```bash
+export RELEASEHUB_DATABASE_DRIVER=mysql
+export RELEASEHUB_DATABASE_DSN="releasehub:secret@tcp(127.0.0.1:3306)/releasehub?charset=utf8mb4&parseTime=True&loc=Local"
+```
+
+Docker Compose 示例（PostgreSQL）：
+
+```yaml
+services:
+  releasehub:
+    image: ghcr.io/shikong-sk/releasehub:latest
+    environment:
+      RELEASEHUB_DATABASE_DRIVER: postgres
+      RELEASEHUB_DATABASE_DSN: "host=db port=5432 user=releasehub password=secret dbname=releasehub sslmode=disable"
+      # 其他配置...
+    depends_on:
+      - db
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: releasehub
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: releasehub
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+```
+
+Docker Compose 示例（MySQL）：
+
+```yaml
+services:
+  releasehub:
+    image: ghcr.io/shikong-sk/releasehub:latest
+    environment:
+      RELEASEHUB_DATABASE_DRIVER: mysql
+      RELEASEHUB_DATABASE_DSN: "releasehub:secret@tcp(db:3306)/releasehub?charset=utf8mb4&parseTime=True&loc=Local"
+      # 其他配置...
+    depends_on:
+      - db
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_USER: releasehub
+      MYSQL_PASSWORD: secret
+      MYSQL_DATABASE: releasehub
+    volumes:
+      - mysqldata:/var/lib/mysql
+
+volumes:
+  mysqldata:
+```
+
+> 从 SQLite 迁移到 PostgreSQL/MySQL 时，启动时 GORM AutoMigrate 会自动建表。跨数据库的存量数据迁移需自行处理导出导入。
 
 ## 下一步
 

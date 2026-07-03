@@ -1,6 +1,6 @@
 # ReleaseHub 功能审查与待完善清单
 
-更新时间：2026-06-27
+更新时间：2026-07-03
 
 本文跟踪当前仍需完善的功能缺口。已修复的条目已归档至 git 历史。
 
@@ -39,26 +39,20 @@
 
 ## 规划中
 
-### P2-1 PostgreSQL 未实现
+### P2-1 PostgreSQL / MySQL 支持 ✅ 已完成
 
 说明：
-- `backend/internal/database/database.go` 当前只接受 SQLite。
-- v1.0 规划中列出 SQLite/PostgreSQL 双支持。
+- `backend/internal/database/database.go` 已通过 `gorm.io/driver/postgres` 支持 PostgreSQL。
+- 配置项 `RELEASEHUB_DATABASE_DRIVER=postgres` 或 `mysql` + `RELEASEHUB_DATABASE_DSN` 连接字符串即可切换。
+- `config.go` 已修复为接受 `sqlite`、`postgres`、`mysql` 三种驱动。
+- 迁移函数已改用 GORM Migrator API，避免了 SQLite 专属语法（`sqlite_master`、`pragma_table_info`）。
 
-建议：
-1. 引入 `gorm.io/driver/postgres`。
-2. 增加 `database.type=postgres` 配置。
-3. 补 SQLite/PostgreSQL 迁移一致性测试。
-
-### P2-2 OpenAPI/Swagger 未实现
+### P2-2 OpenAPI/Swagger ✅ 已完成
 
 说明：
-- 路由和 handler 已较多，但未生成 OpenAPI 文档。
-
-建议：
-1. 引入 swag 或维护 OpenAPI YAML。
-2. CI 中校验 OpenAPI 文件同步。
-3. 前端 API 类型后续可从 OpenAPI 生成。
+- 已集成 `swaggo/gin-swagger`，Swagger UI 在 `/swagger/*any` 可访问。
+- `internal/api/docs/docs.go` 为 swag 生成的文档包。
+- 前端 API 类型仍为手写，后续可考虑从 OpenAPI 自动生成。
 
 ### P2-3 插件系统未实现
 
@@ -70,18 +64,11 @@
 2. 再设计插件 manifest、版本兼容、权限声明。
 3. 最后实现插件安装与启停 UI。
 
-### P2-4 Dashboard 统计可视化
+### P2-4 Dashboard 统计可视化 ✅ 已完成
 
 说明：
-- Dashboard 当前以统计卡片为主。
-- 后端已有 `GET /api/stats/trend` 返回时间序列数据。
-- 前端未调用此接口，未展示趋势图。
-
-建议：
-1. 前端调用 `getTrendStats` API。
-2. 引入 ECharts 或轻量图表库。
-3. 展示 Release 检查趋势和下载量趋势。
-4. 增加最近失败任务和异常仓库列表。
+- 前端 Dashboard 已集成 Chart.js Bar 组件，调用 `getTrendStats(30)` 展示近 30 天 Release 趋势和下载趋势图。
+- 统计卡片展示仓库数、Release 数、存储用量、资产状态、任务状态等概览数据。
 
 ### P2-5 S3 签名实现
 

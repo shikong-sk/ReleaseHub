@@ -200,13 +200,16 @@ npm run dev
 | `RELEASEHUB_APP_ENV` | `development` | 运行环境 |
 | `RELEASEHUB_HTTP_HOST` | `0.0.0.0` | API 监听地址 |
 | `RELEASEHUB_HTTP_PORT` | `8080` | API 监听端口 |
-| `RELEASEHUB_DATABASE_DRIVER` | `sqlite` | 数据库类型 |
-| `RELEASEHUB_DATABASE_DSN` | `data/releasehub.db` | 数据库路径 |
+| `RELEASEHUB_DATABASE_DRIVER` | `sqlite` | 数据库类型（`sqlite`、`postgres` 或 `mysql`） |
+| `RELEASEHUB_DATABASE_DSN` | `data/releasehub.db` | 数据库路径（SQLite）或连接字符串（PostgreSQL） |
 | `RELEASEHUB_STORAGE_DATA_DIR` | `data/releases` | 本地资产存储目录 |
 | `RELEASEHUB_GITHUB_API_BASE_URL` | `https://api.github.com` | GitHub API 地址 |
 | `RELEASEHUB_SCHEDULER_ENABLED` | `true` | 是否启用定时检查 |
 | `RELEASEHUB_SCHEDULER_TICK_SECONDS` | `60` | Scheduler 扫描间隔（最小 10 秒） |
 | `RELEASEHUB_SCHEDULER_MAX_CONCURRENT` | `5` | Scheduler 最大并发同步数 |
+| `RELEASEHUB_SYNCER_MAX_CONCURRENT_TASKS` | `2` | 任务队列并发执行数 |
+| `RELEASEHUB_SYNCER_MAX_CONCURRENT_DOWNLOADS` | `3` | 单任务内资产下载并发数 |
+| `RELEASEHUB_DOWNLOAD_MAX_SPEED_BYTES` | `0` | 下载速度限制（字节/秒，0=不限） |
 | `RELEASEHUB_APP_JWT_SECRET` | `""` | JWT 签名密钥（启用认证时必须设置） |
 | `RELEASEHUB_AUTH_DEFAULT_ADMIN` | `admin` | 默认管理员用户名 |
 | `RELEASEHUB_AUTH_DEFAULT_PASSWORD` | `admin` | 默认管理员密码 |
@@ -231,10 +234,11 @@ npm run dev
 | API Key | CRUD |
 | 用户 | CRUD（admin） |
 | 搜索 | `GET /api/search` |
-| 统计 | `GET /api/stats/summary`、`GET /api/stats/trend` |
+| 统计 | `GET /api/stats/dashboard`、`GET /api/stats/trend` |
 | 过滤预览 | `POST /api/filter/preview` |
+| 保留策略 | `GET /api/repositories/:id/retention-preview`、`POST /api/repositories/:id/cleanup` |
 | 上传 | `POST /api/upload` |
-| 对账 | `POST /api/reconcile` |
+| 对账 | `POST /api/reconcile`（含孤儿数据检测与清理） |
 | 配置 | `GET /api/config`、`PUT /api/config` |
 
 ## 项目结构
@@ -316,8 +320,8 @@ ReleaseHub/
 | v0.4 | ✅ 已完成 | 多存储分发、失败重试、硬删除迁移、文件树浏览、存储对账、置顶/固定版本、按 Tag 同步、级联删除、孤儿数据清理、Docker 统一镜像、CI 自动发布 |
 | v0.5 | ✅ 已完成 | 断点续传、SHA256 远程比对与自动填充、保留策略增强、Dashboard 趋势图、429/5xx 自动退避 |
 | v0.6 | ✅ 已完成 | GitLab/Gitea/Forgejo Provider 完整接入、搜索增强（Release body 全文搜索、组合筛选） |
-| v0.7 | ✅ 已完成 | 下载速度限制、aria2 RPC 接入配置 |
-| v1.0 | ✅ 已完成 | PostgreSQL 支持、Prometheus 指标、OpenAPI/Swagger UI |
+| v0.7 | ✅ 已完成 | 下载速度限制（RateLimitedWriter）、aria2 RPC 配置接入 |
+| v1.0 | ✅ 已完成 | PostgreSQL/MySQL 支持、Prometheus 指标导出、OpenAPI/Swagger UI |
 
 ## 许可证
 

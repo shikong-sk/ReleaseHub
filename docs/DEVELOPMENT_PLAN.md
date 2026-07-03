@@ -1,6 +1,6 @@
 # ReleaseHub 统一开发规划
 
-更新时间：2026-06-27
+更新时间：2026-07-03
 
 ---
 
@@ -68,7 +68,7 @@
 | v0.5 | ✅ 已完成 | 断点续传、SHA256 远程比对与自动填充、保留策略增强（手动清理 API）、Dashboard 趋势图、429/5xx 自动退避 |
 | v0.6 | ✅ 已完成 | GitLab/Gitea/Forgejo Provider 完整接入、搜索增强（Release body 全文搜索、组合筛选、高级搜索 API） |
 | v0.7 | ✅ 已完成 | 下载速度限制（RateLimitedWriter）、aria2 RPC 配置接入 |
-| v1.0 | ✅ 已完成 | PostgreSQL 支持、Prometheus 指标导出、OpenAPI/Swagger UI |
+| v1.0 | ✅ 已完成 | PostgreSQL/MySQL 支持、Prometheus 指标导出、OpenAPI/Swagger UI |
 
 ---
 
@@ -173,11 +173,11 @@
 
 ## 五、v1.0 任务清单 — PostgreSQL + OpenAPI + 插件系统 + 可观测性
 
-### 5.1 PostgreSQL 支持
+### 5.1 PostgreSQL / MySQL 支持
 
-1. 引入 `gorm.io/driver/postgres`
-2. 增加 `database.type=postgres` 配置
-3. 补 SQLite/PostgreSQL 迁移一致性测试
+1. 引入 `gorm.io/driver/postgres` 和 `gorm.io/driver/mysql`
+2. 增加 `database.driver=postgres` / `database.driver=mysql` 配置
+3. 补 SQLite/PostgreSQL/MySQL 迁移一致性测试
 4. 迁移脚本
 
 ### 5.2 OpenAPI 文档
@@ -217,7 +217,8 @@
 
 ### 5.8 验收标准
 
-- [ ] PostgreSQL 可作为数据库运行
+- [x] PostgreSQL/MySQL 可作为数据库运行
+- [x] 迁移函数使用 GORM Migrator API 实现跨库兼容
 - [ ] OpenAPI 文档自动生成
 - [ ] 插件可独立开发并加载
 - [ ] Prometheus 可采集指标
@@ -239,17 +240,21 @@
 
 ## 七、技术债跟踪
 
-| 债项 | 来源 | 建议处理版本 |
-|------|------|-------------|
-| S3 简化 HTTP Basic Auth 实现 | MVP 快速闭环 | v0.2 收尾 |
-| WebDAV/S3 全量上传 | MVP 快速闭环 | v0.5 |
-| GitHub Client 手写 HTTP 而非用 go-github SDK | MVP 快速闭环 | v0.3 |
-| 无 OpenAPI/Swagger 文档 | 优先级低 | v1.0 |
-| 无国际化（i18n） | 暂时只有中文 | v0.6+ |
-| 测试覆盖不够全面 | 持续改进 | 每个版本 |
-| 无优雅关闭时的任务中断处理 | 非紧急 | v0.5 |
-| 前端趋势图未集成 | API 已就绪 | v0.5 |
-| aria2 RPC 未接入调度 | 代码已存在 | v0.7 |
+| 债项 | 来源 | 状态 |
+|------|------|------|
+| S3 签名（简化 HTTP Basic Auth） | MVP 快速闭环 | 待优化 |
+| WebDAV/S3 全量上传 | MVP 快速闭环 | 待优化 |
+| GitHub Client 手写 HTTP 而非用 go-github SDK | MVP 快速闭环 | 待评估 |
+| 无国际化（i18n） | 暂时只有中文 | 待规划 |
+| 测试覆盖不够全面 | 持续改进 | 持续进行 |
+| aria2 RPC 未接入调度 | 代码已存在 | 待实现 |
+| 通知发送为同步 fan-out | MVP 快速闭环 | 待优化 |
+| 多平台 Provider 未完全集成到 Release Checker | v0.6 | 待完善 |
+| OpenAPI/Swagger 文档 | 已集成 swaggo | ✅ 已完成 |
+| 前端趋势图集成 | Dashboard 已使用 Chart.js | ✅ 已完成 |
+| PostgreSQL 支持 | v1.0 | ✅ 已完成 |
+| Prometheus 指标 | v1.0 | ✅ 已完成 |
+| 优雅关闭任务处理 | main.go 已实现 syncService.Stop() | ✅ 已完成 |
 
 ---
 

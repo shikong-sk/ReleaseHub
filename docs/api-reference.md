@@ -8,6 +8,8 @@
 | --- | --- | --- | --- |
 | GET | `/api/health` | 服务健康状态 | 否 |
 | GET | `/api/metrics` | 基础指标 | 否 |
+| GET | `/metrics` | Prometheus 指标（`/metrics` 路径） | 否 |
+| GET | `/swagger/*any` | Swagger UI（OpenAPI 文档浏览） | 否 |
 
 ## 认证
 
@@ -52,6 +54,8 @@
 | POST | `/api/repositories/:id/sync-tag` | 同步指定 Tag 的 Release |
 | GET | `/api/repositories/:id/releases` | 仓库的 Release 列表 |
 | GET | `/api/repositories/:id/remote-tags` | 远程仓库的 Tag 列表 |
+| GET | `/api/repositories/:id/retention-preview` | 保留策略预览（dry-run 返回将被清理的 Release） |
+| POST | `/api/repositories/:id/cleanup` | 手动触发保留策略清理 |
 
 ### 仓库创建/更新字段
 
@@ -238,14 +242,14 @@
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/search?q=keyword` | 全文搜索 |
+| GET | `/api/search?q=keyword&repositoryId=&status=&dateFrom=&dateTo=&limit=` | 全文搜索（仓库/Release/资产，支持组合筛选） |
 
 ## 统计
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/stats/dashboard` | Dashboard 统计数据 |
-| GET | `/api/stats/trend` | 趋势时间序列 |
+| GET | `/api/stats/dashboard` | Dashboard 统计数据（仓库数、Release 数、资产数、存储用量、任务状态） |
+| GET | `/api/stats/trend?days=30` | 趋势时间序列（按天统计 Release 与下载资产数，最多 365 天） |
 
 ## 过滤预览
 
@@ -279,7 +283,9 @@
 | --- | --- | --- |
 | POST | `/api/reconcile` | 存储与数据库对账 |
 
-返回存储中缺失的文件、数据库中缺失的记录和孤立资产。
+返回双侧不一致项（存储缺失/数据库缺失）、孤儿数据（Release/Asset/Task/TaskLog/RepositoryStorage）以及修复结果。
+
+支持 `dryRun` 参数（默认 `true`，仅预检不修改），设为 `false` 时自动修复不一致项并清理孤儿数据。
 
 ## 配置
 
@@ -295,7 +301,10 @@
   "schedulerEnabled": true,
   "schedulerTickSeconds": 120,
   "schedulerMaxConcurrent": 3,
-  "githubApiBaseUrl": "https://api.github.com"
+  "githubApiBaseUrl": "https://api.github.com",
+  "authEnabled": true,
+  "syncerMaxConcurrentTasks": 3,
+  "syncerMaxConcurrentDownloads": 5
 }
 ```
 

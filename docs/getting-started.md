@@ -5,6 +5,7 @@
 ## 前置条件
 
 - Docker & Docker Compose（推荐方式），或本地安装 Go 1.25+ / Node.js 22+
+- 数据库：SQLite（默认，零配置）或 PostgreSQL（可选）
 - 至少一个 GitHub Personal Access Token（如果需要同步私有仓库或避免 API 限流）
 
 ## 一、部署
