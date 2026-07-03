@@ -9,6 +9,7 @@ import (
 
 	"releasehub/backend/internal/models"
 	"releasehub/backend/internal/services/tasklog"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -54,25 +55,77 @@ func registerTaskRoutes(router *gin.Engine, db *gorm.DB) {
 }
 
 func (h *taskHandler) list(c *gin.Context) {
+	ctx := c.Request.Context()
+	query := h.db.WithContext(ctx).Model(&models.Task{})
+
+	// 状态筛选
+	if status := c.Query("status"); status != "" {
+		query = query.Where("status = ?", status)
+	}
+	// 类型筛选
+	if taskType := c.Query("type"); taskType != "" {
+		query = query.Where("type = ?", taskType)
+	}
+	// 仓库筛选
+	if repoID := c.Query("repositoryId"); repoID != "" {
+		if id, err := strconv.ParseUint(repoID, 10, 64); err == nil && id > 0 {
+			query = query.Where("repository_id = ?", id)
+		}
+	}
+	// 关键字搜索（仓库名 / 资产名 / 错误信息）。仓库名需关联 Repository 表子查询匹配
+	if keyword := c.Query("keyword"); keyword != "" {
+		like := "%" + keyword + "%"
+		var repoIDs []uint
+		h.db.WithContext(ctx).Model(&models.Repository{}).
+			Where("owner LIKE ? OR repo LIKE ?", like, like).
+			Pluck("id", &repoIDs)
+		var conds []string
+		var params []any
+		// 错误信息直接在 tasks 表
+		conds = append(conds, "error_message LIKE ?")
+		params = append(params, like)
+		if len(repoIDs) > 0 {
+			conds = append(conds, "repository_id IN ?")
+			params = append(params, repoIDs)
+		}
+		query = query.Where(strings.Join(conds, " OR "), params...)
+	}
+
+	// 分页：默认 200，上限 500
+	pageSize := 200
+	if ps := c.Query("pageSize"); ps != "" {
+		if n, err := strconv.Atoi(ps); err == nil && n > 0 && n <= 500 {
+			pageSize = n
+		}
+	}
+	page := 1
+	if pg := c.Query("page"); pg != "" {
+		if n, err := strconv.Atoi(pg); err == nil && n > 0 {
+			page = n
+		}
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		writeError(c, http.StatusInternalServerError, "查询任务总数失败")
+		return
+	}
+
 	var tasks []models.Task
-	if err := h.db.WithContext(c.Request.Context()).
+	if err := query.
 		Order("created_at DESC").
-		Limit(200).
+		Limit(pageSize).
+		Offset((page - 1) * pageSize).
 		Find(&tasks).Error; err != nil {
 		writeError(c, http.StatusInternalServerError, "查询任务失败")
 		return
 	}
 
-	// total 反映全表真实任务数量，避免前端把"最近 200 条"误当成总数
-	var total int64
-	if err := h.db.WithContext(c.Request.Context()).Model(&models.Task{}).Count(&total).Error; err != nil {
-		writeError(c, http.StatusInternalServerError, "查询任务总数失败")
-		return
-	}
-
 	c.JSON(http.StatusOK, gin.H{
-		"items": h.buildTaskResponses(c.Request.Context(), tasks),
-		"total": total,
+		"items":    h.buildTaskResponses(ctx, tasks),
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
 	})
 }
 

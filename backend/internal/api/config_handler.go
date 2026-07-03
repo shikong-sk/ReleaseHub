@@ -52,25 +52,55 @@ func registerConfigRoutes(router *gin.Engine, cfg *config.Config, scheduler Sche
 }
 
 // LoadPersistedSettings 从数据库加载持久化的配置到 Config
+//
+// 注意：每个查询必须使用独立的局部变量，不能复用同一个 models.AppSetting。
+// 因为 AppSetting 的 Key 是 primaryKey，GORM 的 First(&setting) 成功后会把主键
+// 填入变量，复用时 GORM 会把残留主键追加为查询条件，导致后续查询永远查不到记录。
 func LoadPersistedSettings(db *gorm.DB, cfg *config.Config) {
-	var setting models.AppSetting
-	if err := db.Where("key = ?", "auth.enabled").First(&setting).Error; err == nil {
-		cfg.Auth.Enabled = setting.Value == "true"
+	loadBool := func(key string) (string, bool) {
+		var s models.AppSetting
+		err := db.Where("key = ?", key).First(&s).Error
+		return s.Value, err == nil
 	}
-	if err := db.Where("key = ?", "syncer.max_concurrent_tasks").First(&setting).Error; err == nil {
-		if n, perr := strconv.Atoi(setting.Value); perr == nil && n >= 1 {
-			cfg.Syncer.MaxConcurrentTasks = n
-		}
+	// 注意：每个查询独立变量，不能复用（见下方注释）
+	loadStr := func(key string) (string, bool) {
+		var s models.AppSetting
+		err := db.Where("key = ?", key).First(&s).Error
+		return s.Value, err == nil
 	}
-	if err := db.Where("key = ?", "syncer.max_concurrent_downloads").First(&setting).Error; err == nil {
-		if n, perr := strconv.Atoi(setting.Value); perr == nil && n >= 1 {
-			cfg.Syncer.MaxConcurrentDownloads = n
+	loadInt := func(key string, min int) (int, bool) {
+		var s models.AppSetting
+		if err := db.Where("key = ?", key).First(&s).Error; err == nil {
+			if n, perr := strconv.Atoi(s.Value); perr == nil && n >= min {
+				return n, true
+			}
 		}
+		return 0, false
 	}
-	if err := db.Where("key = ?", "tasklog.retention_days").First(&setting).Error; err == nil {
-		if n, perr := strconv.Atoi(setting.Value); perr == nil && n >= 0 {
-			cfg.TaskLog.RetentionDays = n
-		}
+
+	if v, ok := loadBool("auth.enabled"); ok {
+		cfg.Auth.Enabled = v == "true"
+	}
+	if v, ok := loadInt("syncer.max_concurrent_tasks", 1); ok {
+		cfg.Syncer.MaxConcurrentTasks = v
+	}
+	if v, ok := loadInt("syncer.max_concurrent_downloads", 1); ok {
+		cfg.Syncer.MaxConcurrentDownloads = v
+	}
+	if v, ok := loadInt("tasklog.retention_days", 0); ok {
+		cfg.TaskLog.RetentionDays = v
+	}
+	if v, ok := loadBool("scheduler.enabled"); ok {
+		cfg.Scheduler.Enabled = v == "true"
+	}
+	if v, ok := loadInt("scheduler.tick_seconds", 10); ok {
+		cfg.Scheduler.TickSeconds = v
+	}
+	if v, ok := loadInt("scheduler.max_concurrent", 1); ok {
+		cfg.Scheduler.MaxConcurrent = v
+	}
+	if v, ok := loadStr("github.api_base_url"); ok && v != "" {
+		cfg.GitHub.APIBaseURL = v
 	}
 }
 
@@ -163,6 +193,18 @@ func (h *configHandler) update(c *gin.Context) {
 			setting = models.AppSetting{Key: "syncer.max_concurrent_downloads", Value: strconv.Itoa(h.config.Syncer.MaxConcurrentDownloads)}
 		case "taskLogRetentionDays":
 			setting = models.AppSetting{Key: "tasklog.retention_days", Value: strconv.Itoa(h.config.TaskLog.RetentionDays)}
+		case "schedulerEnabled":
+			val := "false"
+			if h.config.Scheduler.Enabled {
+				val = "true"
+			}
+			setting = models.AppSetting{Key: "scheduler.enabled", Value: val}
+		case "schedulerTickSeconds":
+			setting = models.AppSetting{Key: "scheduler.tick_seconds", Value: strconv.Itoa(h.config.Scheduler.TickSeconds)}
+		case "schedulerMaxConcurrent":
+			setting = models.AppSetting{Key: "scheduler.max_concurrent", Value: strconv.Itoa(h.config.Scheduler.MaxConcurrent)}
+		case "githubApiBaseUrl":
+			setting = models.AppSetting{Key: "github.api_base_url", Value: h.config.GitHub.APIBaseURL}
 		default:
 			continue
 		}

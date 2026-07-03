@@ -12,6 +12,7 @@ import SettingsView from '@/views/SettingsView.vue'
 import StoragesView from '@/views/StoragesView.vue'
 import TasksView from '@/views/TasksView.vue'
 import UsersView from '@/views/UsersView.vue'
+import LogsView from '@/views/LogsView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -66,6 +67,11 @@ const router = createRouter({
       path: '/settings',
       name: 'settings',
       component: SettingsView
+    },
+    {
+      path: '/logs',
+      name: 'logs',
+      component: LogsView
     }
   ]
 })

@@ -77,6 +77,8 @@ func NewRouter(deps Dependencies) http.Handler {
 	registerUploadRoutes(router, deps.DB, deps.Config.Storage)
 	registerReconcileRoutes(router, deps.DB, deps.Config.Storage, deps.Logger)
 	registerAPIKeyRoutes(router, deps.DB)
+	registerOperationLogRoutes(router, deps.DB)
+	registerRestartRoutes(router)
 
 	router.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{

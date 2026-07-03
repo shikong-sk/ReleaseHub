@@ -98,6 +98,8 @@ func resourceForPath(path string) string {
 		return "upload"
 	case strings.HasPrefix(path, "/api/reconcile"):
 		return "reconcile"
+	case strings.HasPrefix(path, "/api/operation-logs"):
+		return "operation_log"
 	default:
 		return "api"
 	}
@@ -105,7 +107,7 @@ func resourceForPath(path string) string {
 
 func adminResource(resource string) bool {
 	switch resource {
-	case "storage", "proxy", "notification", "token", "apikey", "upload", "reconcile":
+	case "storage", "proxy", "notification", "token", "apikey", "upload", "reconcile", "operation_log":
 		return true
 	default:
 		return false

@@ -232,3 +232,15 @@ type AppSetting struct {
 	Key   string `json:"key" gorm:"primaryKey;size:64"`
 	Value string `json:"value" gorm:"column:value;size:512;not null;default:''"`
 }
+
+// OperationLog 系统操作日志（用户操作、任务事件、系统变更等审计记录）
+type OperationLog struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Actor     string    `json:"actor" gorm:"column:actor;size:120;not null;default:system;index"` // 操作者用户名或 system
+	Action    string    `json:"action" gorm:"column:action;size:80;not null;index"`                // 操作类型，如 create_repository、login、logout
+	Resource  string    `json:"resource" gorm:"column:resource;size:120"`                          // 受影响的资源，如 repository:42
+	Detail    string    `json:"detail" gorm:"column:detail;type:text"`                             // 人类可读描述
+	Status    string    `json:"status" gorm:"column:status;size:20;not null;default:success"`       // success / failed
+	ClientIP   string    `json:"clientIp" gorm:"column:client_ip;size:64"`
+	CreatedAt time.Time `json:"createdAt" gorm:"column:created_at;index"`
+}

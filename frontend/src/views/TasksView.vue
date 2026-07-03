@@ -4,7 +4,7 @@ import { RefreshCw } from 'lucide-vue-next'
 
 import { listTaskLogs, type TaskLogItem } from '@/api/taskLogs'
 import { getAppConfig, updateAppConfig } from '@/api/settings'
-import { NAlert, NButton, NCard, NGrid, NGi, NStatistic, NInputNumber, NTag, NSpace, useMessage } from 'naive-ui'
+import { NAlert, NButton, NCard, NGrid, NGi, NStatistic, NInputNumber, NTag, NSpace, NSelect, NInput, useMessage } from 'naive-ui'
 import TaskLogDrawer from '@/components/task/TaskLogDrawer.vue'
 import TaskTable from '@/components/task/TaskTable.vue'
 import { useTasksStore } from '@/stores/tasks'
@@ -24,6 +24,28 @@ const retentionDays = shallowRef(30)
 const retentionEditing = shallowRef(false)
 const retentionSaving = shallowRef(false)
 const editRetentionDays = shallowRef(30)
+
+// 任务筛选
+const filterStatus = shallowRef<string | null>(null)
+const filterType = shallowRef<string | null>(null)
+const filterKeyword = shallowRef('')
+
+const statusOptions = [
+  { label: '全部状态', value: null },
+  { label: '排队中', value: 'pending' },
+  { label: '运行中', value: 'running' },
+  { label: '成功', value: 'succeeded' },
+  { label: '失败', value: 'failed' },
+  { label: '已取消', value: 'canceled' }
+]
+const typeOptions = [
+  { label: '全部类型', value: null },
+  { label: '检查版本', value: 'check_release' },
+  { label: '全量检查', value: 'check_all_releases' },
+  { label: '同步版本', value: 'sync_release' },
+  { label: '下载文件', value: 'download_asset' },
+  { label: '保留清理', value: 'cleanup_release' }
+]
 
 onMounted(() => {
   void tasksStore.refresh()
@@ -54,6 +76,23 @@ async function handleViewLogs(task: Task) {
   } finally {
     logsLoading.value = false
   }
+}
+
+// 应用筛选条件：仅刷新列表，不影响统计面板
+function applyFilters() {
+  tasksStore.setFilters({
+    status: filterStatus.value ?? undefined,
+    type: filterType.value ?? undefined,
+    keyword: filterKeyword.value.trim() || undefined
+  })
+  void tasksStore.refreshList()
+}
+
+function resetFilters() {
+  filterStatus.value = null
+  filterType.value = null
+  filterKeyword.value = ''
+  applyFilters()
 }
 
 async function loadRetention() {
@@ -166,6 +205,31 @@ async function saveRetention() {
     </NAlert>
 
     <NCard :bordered="false">
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;">
+        <NSelect
+          v-model:value="filterStatus"
+          :options="statusOptions"
+          placeholder="状态"
+          style="width: 150px"
+          @update:value="applyFilters"
+        />
+        <NSelect
+          v-model:value="filterType"
+          :options="typeOptions"
+          placeholder="类型"
+          style="width: 160px"
+          @update:value="applyFilters"
+        />
+        <NInput
+          v-model:value="filterKeyword"
+          placeholder="搜索仓库名 / 错误信息"
+          clearable
+          style="width: 260px"
+          @keyup.enter="applyFilters"
+          @clear="applyFilters"
+        />
+        <NButton secondary size="small" @click="resetFilters">重置</NButton>
+      </div>
       <TaskTable :tasks="tasksStore.items" :loading="tasksStore.loading" @view-logs="handleViewLogs" />
     </NCard>
 

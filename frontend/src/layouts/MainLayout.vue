@@ -31,7 +31,8 @@ const menuOptions = computed<MenuOption[]>(() => {
       { label: () => hRouterLink('/proxies', '代理'), key: 'proxies' },
       { label: () => hRouterLink('/notifications', '通知'), key: 'notifications' },
       { label: () => hRouterLink('/users', '用户'), key: 'users' },
-      { label: () => hRouterLink('/settings', '设置'), key: 'settings' }
+      { label: () => hRouterLink('/settings', '设置'), key: 'settings' },
+      { label: () => hRouterLink('/logs', '系统日志'), key: 'logs' }
     )
   }
   return items

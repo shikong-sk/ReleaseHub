@@ -7,6 +7,7 @@ import (
 
 	"releasehub/backend/internal/middleware"
 	"releasehub/backend/internal/models"
+	auditlog "releasehub/backend/internal/services/auditlog"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -14,7 +15,8 @@ import (
 )
 
 type authHandler struct {
-	db *gorm.DB
+	db    *gorm.DB
+	audit *auditlog.Service
 }
 
 type loginInput struct {
@@ -49,7 +51,7 @@ type updatePasswordInput struct {
 }
 
 func registerAuthRoutes(router *gin.Engine, db *gorm.DB) {
-	handler := &authHandler{db: db}
+	handler := &authHandler{db: db, audit: auditlog.NewService(db)}
 
 	router.POST("/api/auth/login", handler.login)
 	router.GET("/api/auth/me", middleware.AuthRequired(db), handler.me)
@@ -83,6 +85,7 @@ func (h *authHandler) login(c *gin.Context) {
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(input.Password)); err != nil {
+		_ = h.audit.Record(c.Request.Context(), input.Username, "login", "user:"+input.Username, "用户登录失败：密码错误", "failed", c.ClientIP())
 		writeError(c, http.StatusUnauthorized, "用户名或密码错误")
 		return
 	}
@@ -96,6 +99,9 @@ func (h *authHandler) login(c *gin.Context) {
 	// 更新最后登录时间
 	now := time.Now().UTC()
 	h.db.WithContext(c.Request.Context()).Model(&user).Update("last_login_at", now)
+
+	// 记录登录审计日志（失败不阻塞登录流程）
+	_ = h.audit.Record(c.Request.Context(), user.Username, "login", "user:"+user.Username, "用户登录", "success", c.ClientIP())
 
 	expireAt := time.Now().Add(24 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
 	c.JSON(http.StatusOK, loginResponse{

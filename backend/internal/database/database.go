@@ -78,6 +78,7 @@ func Migrate(db *gorm.DB) error {
 		&models.User{},
 		&models.APIKey{},
 		&models.AppSetting{},
+		&models.OperationLog{},
 	)
 }
 

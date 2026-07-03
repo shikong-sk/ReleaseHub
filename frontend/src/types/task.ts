@@ -25,4 +25,6 @@ export interface Task {
 export interface TaskListResponse {
   items: Task[]
   total: number
+  page: number
+  pageSize: number
 }

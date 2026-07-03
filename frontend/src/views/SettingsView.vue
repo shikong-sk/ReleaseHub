@@ -3,6 +3,8 @@ import { h, onMounted, shallowRef } from 'vue'
 import {
   NAlert,
   NButton,
+  NText,
+  NBadge,
   NCard,
   NDataTable,
   NDescriptions,
@@ -19,10 +21,11 @@ import {
   NTooltip,
   useMessage
 } from 'naive-ui'
-import { Activity, Plus, RefreshCw } from 'lucide-vue-next'
+import { Activity, Plus, RefreshCw, RotateCw } from 'lucide-vue-next'
 import type { DataTableColumns } from 'naive-ui'
 
 import { getAppConfig, updateAppConfig, type AppConfigUpdate } from '@/api/settings'
+import { restartService } from '@/api/system'
 import APIKeyPanel from '@/components/settings/APIKeyPanel.vue'
 import { checkTokenHealth, checkTokenRateLimit, type TokenHealthResult } from '@/api/tokens'
 import { useTokensStore } from '@/stores/tokens'
@@ -42,6 +45,7 @@ const syncerMaxConcurrentTasks = shallowRef(2)
 const syncerMaxConcurrentDownloads = shallowRef(3)
 const configSaving = shallowRef(false)
 const configEditing = shallowRef(false)
+const restarting = shallowRef(false)
 
 // 编辑表单的临时值
 const editSchedulerEnabled = shallowRef(false)
@@ -202,6 +206,18 @@ async function saveConfig() {
   }
 }
 
+async function handleRestart() {
+  restarting.value = true
+  try {
+    await restartService()
+    message.info('服务正在重启，请稍后刷新页面')
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '重启失败')
+  } finally {
+    restarting.value = false
+  }
+}
+
 function openCreateModal() {
   formName.value = ''
   formToken.value = ''
@@ -297,6 +313,10 @@ async function handleDelete(id: number) {
               保存
             </NButton>
           </template>
+          <NButton v-if="!configEditing" :loading="restarting" @click="handleRestart">
+            <template #icon><RotateCw /></template>
+            重启服务
+          </NButton>
         </NSpace>
       </template>
 
@@ -307,7 +327,10 @@ async function handleDelete(id: number) {
             {{ authEnabled ? '已启用' : '已禁用' }}
           </NTag>
         </NDescriptionsItem>
-        <NDescriptionsItem label="Scheduler">
+        <NDescriptionsItem>
+          <template #label>
+            Scheduler <NText depth="3" type="warning" style="font-size: 12px">需重启生效</NText>
+          </template>
           <NTag :type="schedulerEnabled ? 'success' : 'default'">
             {{ schedulerEnabled ? '已启用' : '已禁用' }}
           </NTag>
@@ -321,7 +344,10 @@ async function handleDelete(id: number) {
         <NDescriptionsItem label="存储目录">
           {{ storageDataDir }}
         </NDescriptionsItem>
-        <NDescriptionsItem label="GitHub API">
+        <NDescriptionsItem>
+          <template #label>
+            GitHub API <NText depth="3" type="warning" style="font-size: 12px">需重启生效</NText>
+          </template>
           {{ githubApiBaseUrl }}
         </NDescriptionsItem>
         <NDescriptionsItem label="任务并发数">
@@ -337,7 +363,10 @@ async function handleDelete(id: number) {
         <NFormItem label="认证">
           <NSwitch v-model:value="editAuthEnabled" />
         </NFormItem>
-        <NFormItem label="Scheduler">
+        <NFormItem>
+          <template #label>
+            Scheduler <NText depth="3" type="warning" style="font-size: 12px">需重启生效</NText>
+          </template>
           <NSwitch v-model:value="editSchedulerEnabled" />
         </NFormItem>
         <NFormItem label="扫描间隔">
@@ -348,7 +377,10 @@ async function handleDelete(id: number) {
           <NInputNumber v-model:value="editSchedulerMaxConcurrent" :min="1" :max="50" />
           <span style="margin-left: 8px; color: #8c8c8c">每轮定时扫描最多同时投递的仓库数</span>
         </NFormItem>
-        <NFormItem label="GitHub API">
+        <NFormItem>
+          <template #label>
+            GitHub API <NText depth="3" type="warning" style="font-size: 12px">需重启生效</NText>
+          </template>
           <NInput v-model:value="editGithubApiBaseUrl" placeholder="https://api.github.com" />
         </NFormItem>
         <NFormItem label="任务并发数">
