@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"releasehub/backend/internal/config"
-	"releasehub/backend/internal/database"
 
 	"go.uber.org/zap"
 )
@@ -14,16 +13,7 @@ import (
 func newTokenTestRouter(t *testing.T) http.Handler {
 	t.Helper()
 
-	db, err := database.Open(config.DatabaseConfig{
-		Driver: "sqlite",
-		DSN:    t.TempDir() + "/token-test.db",
-	})
-	if err != nil {
-		t.Fatalf("打开测试数据库失败: %v", err)
-	}
-	if err := database.Migrate(db); err != nil {
-		t.Fatalf("迁移测试数据库失败: %v", err)
-	}
+	db := newTestDB(t)
 
 	return NewRouter(Dependencies{
 		Config: &config.Config{

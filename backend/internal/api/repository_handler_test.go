@@ -17,6 +17,8 @@ import (
 
 	"releasehub/backend/internal/config"
 	"releasehub/backend/internal/database"
+	releasesvc "releasehub/backend/internal/services/release"
+	syncersvc "releasehub/backend/internal/services/syncer"
 
 	"go.uber.org/zap"
 )
@@ -273,7 +275,7 @@ func TestAssetDownloadStoresFileAndSHA256(t *testing.T) {
 	defer githubServer.Close()
 
 	storageDir := filepath.Join(t.TempDir(), "releases")
-	router := newTestRouterWithGitHubBaseURLAndStorageDir(t, githubServer.URL, storageDir)
+	router := newTestRouterWithStoppedSyncer(t, githubServer.URL, storageDir)
 	createRec := performRequest(router, http.MethodPost, "/api/repositories", []byte(`{
 		"owner": "acme",
 		"repo": "tool",
@@ -418,7 +420,9 @@ func TestRepositorySyncDownloadsMatchedAssets(t *testing.T) {
 
 	// 异步同步：等待后台 goroutine 完成
 	var taskID uint
-	var syncTaskBody struct{ ID uint `json:"id"` }
+	var syncTaskBody struct {
+		ID uint `json:"id"`
+	}
 	if err := json.Unmarshal(syncRec.Body.Bytes(), &syncTaskBody); err != nil {
 		t.Fatalf("解析同步任务响应失败: %v", err)
 	}
@@ -429,7 +433,9 @@ func TestRepositorySyncDownloadsMatchedAssets(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		taskRec := performRequest(router, http.MethodGet, fmt.Sprintf("/api/tasks/%d", taskID), nil)
 		if taskRec.Code == http.StatusOK {
-			var task struct{ Status string `json:"status"` }
+			var task struct {
+				Status string `json:"status"`
+			}
 			if json.Unmarshal(taskRec.Body.Bytes(), &task) == nil && (task.Status == "succeeded" || task.Status == "failed") {
 				break
 			}
@@ -560,16 +566,9 @@ func newTestRouterWithGitHubBaseURL(t *testing.T, githubBaseURL string) http.Han
 func newTestRouterWithGitHubBaseURLAndStorageDir(t *testing.T, githubBaseURL string, storageDir string) http.Handler {
 	t.Helper()
 
-	db, err := database.Open(config.DatabaseConfig{
-		Driver: "sqlite",
-		DSN:    filepath.Join(t.TempDir(), "releasehub-test.db"),
-	})
-	if err != nil {
-		t.Fatalf("打开测试数据库失败: %v", err)
-	}
-	if err := database.Migrate(db); err != nil {
-		t.Fatalf("迁移测试数据库失败: %v", err)
-	}
+	// 使用统一的全内存测试数据库（见 testhelpers_test.go），避免文件库在 t.TempDir 清理后
+	// 被泄漏的后台 syncer worker 写入触发 "attempt to write a readonly database"。
+	db := newTestDB(t)
 	// 创建默认本地存储记录，确保 GetRepositoryStorages 能找到存储目标
 	if err := database.SeedDefaultStorage(db, storageDir); err != nil {
 		t.Fatalf("初始化默认存储失败: %v", err)
@@ -584,6 +583,41 @@ func newTestRouterWithGitHubBaseURLAndStorageDir(t *testing.T, githubBaseURL str
 		},
 		DB:     db,
 		Logger: zap.NewNop(),
+	})
+}
+
+// newTestRouterWithStoppedSyncer 构造一个注入了“已停止 syncer”的测试路由。
+// 仅用于不依赖后台异步同步的测试：checkLatest 仍会入队 sync_latest 任务，
+// 但 worker 已全部退出，任务入队后无人消费，避免后台下载与测试随后的手动下载
+// 在 assets 表 (release_id, name, storage_id) 唯一索引上竞态导致偶发失败。
+func newTestRouterWithStoppedSyncer(t *testing.T, githubBaseURL string, storageDir string) http.Handler {
+	t.Helper()
+
+	db := newTestDB(t)
+	if err := database.SeedDefaultStorage(db, storageDir); err != nil {
+		t.Fatalf("初始化默认存储失败: %v", err)
+	}
+	_ = database.BackfillAssetStorageID(db)
+
+	// syncer worker 使用 sync.Once 懒启动，Stop() 仅在 workersStop != nil 时关闭；
+	// 因此先 UpdateMaxConcurrentTasks 触发懒启动初始化 workersStop/taskQueue，
+	// 再 Stop() 关闭 workersStop 让全部 worker 退出，此后 Enqueue 仅入队不消费。
+	stoppedSyncer, err := syncersvc.NewService(db, releasesvc.NewCheckService(db, nil), config.StorageConfig{DataDir: storageDir})
+	if err != nil {
+		t.Fatalf("构造测试 syncer 失败: %v", err)
+	}
+	stoppedSyncer.UpdateMaxConcurrentTasks(1)
+	stoppedSyncer.Stop()
+
+	return NewRouter(Dependencies{
+		Config: &config.Config{
+			App:     config.AppConfig{Env: "test"},
+			GitHub:  config.GitHubConfig{APIBaseURL: githubBaseURL},
+			Storage: config.StorageConfig{DataDir: storageDir},
+		},
+		DB:            db,
+		Logger:        zap.NewNop(),
+		SyncerService: stoppedSyncer,
 	})
 }
 
@@ -685,7 +719,9 @@ func TestConcurrentSyncWithMultipleAssets(t *testing.T) {
 	}
 
 	// 异步同步：等待后台 goroutine 完成
-	var syncTaskBody struct{ ID uint `json:"id"` }
+	var syncTaskBody struct {
+		ID uint `json:"id"`
+	}
 	if err := json.Unmarshal(syncRec.Body.Bytes(), &syncTaskBody); err != nil {
 		t.Fatalf("解析同步任务响应失败: %v", err)
 	}
@@ -693,7 +729,9 @@ func TestConcurrentSyncWithMultipleAssets(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		taskRec := performRequest(router, http.MethodGet, fmt.Sprintf("/api/tasks/%d", syncTaskBody.ID), nil)
 		if taskRec.Code == http.StatusOK {
-			var task struct{ Status string `json:"status"` }
+			var task struct {
+				Status string `json:"status"`
+			}
 			if json.Unmarshal(taskRec.Body.Bytes(), &task) == nil && (task.Status == "succeeded" || task.Status == "failed") {
 				break
 			}

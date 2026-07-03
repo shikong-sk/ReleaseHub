@@ -10,21 +10,14 @@ import (
 	"releasehub/backend/internal/models"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func setupProxyTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("打开测试数据库失败: %v", err)
-	}
-	if err := db.AutoMigrate(&models.Proxy{}, &models.Repository{}); err != nil {
-		t.Fatalf("迁移失败: %v", err)
-	}
-	return db
+	// 统一使用全内存测试数据库（见 testhelpers_test.go）
+	return newTestDB(t)
 }
 
 func TestProxyCRUD(t *testing.T) {
@@ -44,11 +37,11 @@ func TestProxyCRUD(t *testing.T) {
 	}
 
 	var createResp struct {
-		ID     uint   `json:"id"`
-		Name   string `json:"name"`
-		Type   string `json:"type"`
-		Host   string `json:"host"`
-		Port   int    `json:"port"`
+		ID   uint   `json:"id"`
+		Name string `json:"name"`
+		Type string `json:"type"`
+		Host string `json:"host"`
+		Port int    `json:"port"`
 	}
 	if err := json.Unmarshal(createW.Body.Bytes(), &createResp); err != nil {
 		t.Fatalf("解析创建响应失败: %v", err)

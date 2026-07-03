@@ -12,21 +12,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func setupAuthTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("打开测试数据库失败: %v", err)
-	}
-	if err := db.AutoMigrate(&models.User{}); err != nil {
-		t.Fatalf("迁移失败: %v", err)
-	}
-	return db
+	// 统一使用全内存测试数据库（见 testhelpers_test.go）
+	return newTestDB(t)
 }
 
 func createTestUser(db *gorm.DB, username, password, role string) models.User {
