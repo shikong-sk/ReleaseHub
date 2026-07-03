@@ -59,6 +59,8 @@ export interface CheckReleaseResult {
   repository: Repository
   release: Release
   assets: Asset[]
+  isNewRelease?: boolean
+  autoSynced?: boolean
 }
 
 export interface CheckAllReleaseResult {

@@ -18,14 +18,21 @@ type GiteaProvider struct {
 }
 
 func NewGiteaProvider(apiBaseURL string) *GiteaProvider {
+	return NewGiteaProviderWithTransport(apiBaseURL, nil)
+}
+
+// NewGiteaProviderWithTransport 创建带可选代理 transport 的 GiteaProvider
+func NewGiteaProviderWithTransport(apiBaseURL string, transport *http.Transport) *GiteaProvider {
 	if strings.TrimSpace(apiBaseURL) == "" {
 		apiBaseURL = "https://gitea.com/api/v1"
 	}
+	client := &http.Client{Timeout: 20 * time.Second}
+	if transport != nil {
+		client.Transport = transport
+	}
 	return &GiteaProvider{
-		baseURL: strings.TrimRight(apiBaseURL, "/"),
-		httpClient: &http.Client{
-			Timeout: 20 * time.Second,
-		},
+		baseURL:    strings.TrimRight(apiBaseURL, "/"),
+		httpClient: client,
 	}
 }
 
@@ -172,14 +179,14 @@ func (g *GiteaProvider) GetAssetDownloadURL(ctx context.Context, owner, repo str
 
 // Gitea Release JSON 结构（与 Forgejo 兼容）
 type giteaRelease struct {
-	ID          int64         `json:"id"`
-	TagName     string        `json:"tag_name"`
-	Name        string        `json:"name"`
-	Body        string        `json:"body"`
-	HTMLURL     string        `json:"html_url"`
-	URL         string        `json:"url"`
-	PublishedAt time.Time     `json:"published_at"`
-	Assets      []giteaAsset  `json:"assets"`
+	ID          int64        `json:"id"`
+	TagName     string       `json:"tag_name"`
+	Name        string       `json:"name"`
+	Body        string       `json:"body"`
+	HTMLURL     string       `json:"html_url"`
+	URL         string       `json:"url"`
+	PublishedAt time.Time    `json:"published_at"`
+	Assets      []giteaAsset `json:"assets"`
 }
 
 type giteaAsset struct {

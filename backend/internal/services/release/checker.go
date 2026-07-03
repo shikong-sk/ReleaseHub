@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -43,6 +44,7 @@ type CheckResult struct {
 	Release     models.Release    `json:"release"`
 	Assets      []models.Asset    `json:"assets"`
 	IsNewRelease bool             `json:"isNewRelease"`
+	AutoSynced  bool              `json:"autoSynced"`
 	Task        models.Task       `json:"task"`
 }
 
@@ -452,7 +454,13 @@ func (s *CheckService) resolveProvider(ctx context.Context, repository models.Re
 			}
 			return provider.NewGitHubProvider(concrete), nil
 		}
-		return s.providers.GetProvider(repository.Provider, repository.ProviderApiBaseUrl)
+
+		// 非 GitHub provider 也需要使用仓库配置的代理
+		transport, err := s.proxyTransportForRepository(ctx, repository)
+		if err != nil {
+			return nil, fmt.Errorf("获取仓库代理 transport 失败: %w", err)
+		}
+		return s.providers.GetProviderWithTransport(repository.Provider, repository.ProviderApiBaseUrl, transport)
 	}
 
 	// 回退：仅支持 GitHub
@@ -469,6 +477,23 @@ func (s *CheckService) resolveProvider(ctx context.Context, repository models.Re
 		return nil, fmt.Errorf("GitHub Client 类型不兼容")
 	}
 	return provider.NewGitHubProvider(concrete), nil
+}
+
+// proxyTransportForRepository 根据仓库的代理配置返回对应的 http.Transport
+// 没有配置代理时返回 nil，使用 provider 默认 transport
+func (s *CheckService) proxyTransportForRepository(ctx context.Context, repository models.Repository) (*http.Transport, error) {
+	if s.githubFactory != nil {
+		transport, err := s.githubFactory.TransportForRepository(ctx, repository)
+		if err != nil {
+			return nil, err
+		}
+		// TransportForRepository 在无代理时返回空 transport，这里统一转成 nil 让 provider 用默认值
+		if transport != nil && transport.Proxy == nil {
+			return nil, nil
+		}
+		return transport, nil
+	}
+	return nil, nil
 }
 
 // persistProviderRelease 将 ProviderRelease 持久化到数据库

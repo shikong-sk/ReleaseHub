@@ -151,7 +151,11 @@ async function checkRepository(repository: Repository) {
     const result = await repositoryStore.checkLatest(repository)
     releaseStore.setLatestCheck(result)
     const pendingCount = result.assets.filter((asset) => asset.status === 'pending').length
-    message.success(`发现 ${result.release.tag}，${pendingCount} 个资产待下载`)
+    if (result.autoSynced) {
+      message.success(`发现新版本 ${result.release.tag}，已自动开始同步 ${pendingCount} 个资产`)
+    } else {
+      message.success(`发现 ${result.release.tag}，${pendingCount} 个资产待下载`)
+    }
   } catch (err) {
     message.error(err instanceof Error ? err.message : '检查 Release 失败')
   }

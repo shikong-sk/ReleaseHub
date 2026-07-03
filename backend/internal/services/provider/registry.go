@@ -2,6 +2,7 @@ package provider
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 )
 
@@ -32,6 +33,11 @@ func IsSupported(name string) bool {
 // GetProvider 根据仓库的 provider 和可选的 API base URL 创建对应的 ReleaseProvider
 // apiBaseURL 为空时使用默认值
 func (r *Registry) GetProvider(providerName, apiBaseURL string) (ReleaseProvider, error) {
+	return r.GetProviderWithTransport(providerName, apiBaseURL, nil)
+}
+
+// GetProviderWithTransport 创建对应的 ReleaseProvider 并注入可选的 transport（用于代理）
+func (r *Registry) GetProviderWithTransport(providerName, apiBaseURL string, transport *http.Transport) (ReleaseProvider, error) {
 	switch strings.ToLower(strings.TrimSpace(providerName)) {
 	case "github", "":
 		base := apiBaseURL
@@ -44,11 +50,11 @@ func (r *Registry) GetProvider(providerName, apiBaseURL string) (ReleaseProvider
 		}
 		return NewGitHubProvider(client), nil
 	case "gitlab":
-		return NewGitLabProvider(apiBaseURL), nil
+		return NewGitLabProviderWithTransport(apiBaseURL, transport), nil
 	case "gitea":
-		return NewGiteaProvider(apiBaseURL), nil
+		return NewGiteaProviderWithTransport(apiBaseURL, transport), nil
 	case "forgejo":
-		return NewForgejoProvider(apiBaseURL), nil
+		return NewForgejoProviderWithTransport(apiBaseURL, transport), nil
 	default:
 		return nil, fmt.Errorf("不支持的 provider: %s", providerName)
 	}

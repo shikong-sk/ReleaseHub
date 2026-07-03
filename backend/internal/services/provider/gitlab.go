@@ -18,14 +18,21 @@ type GitLabProvider struct {
 }
 
 func NewGitLabProvider(apiBaseURL string) *GitLabProvider {
+	return NewGitLabProviderWithTransport(apiBaseURL, nil)
+}
+
+// NewGitLabProviderWithTransport 创建带可选代理 transport 的 GitLabProvider
+func NewGitLabProviderWithTransport(apiBaseURL string, transport *http.Transport) *GitLabProvider {
 	if strings.TrimSpace(apiBaseURL) == "" {
 		apiBaseURL = "https://gitlab.com/api/v4"
 	}
+	client := &http.Client{Timeout: 20 * time.Second}
+	if transport != nil {
+		client.Transport = transport
+	}
 	return &GitLabProvider{
-		baseURL: strings.TrimRight(apiBaseURL, "/"),
-		httpClient: &http.Client{
-			Timeout: 20 * time.Second,
-		},
+		baseURL:    strings.TrimRight(apiBaseURL, "/"),
+		httpClient: client,
 	}
 }
 

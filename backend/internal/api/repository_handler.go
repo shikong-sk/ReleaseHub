@@ -222,6 +222,14 @@ func (h *repositoryHandler) checkLatest(c *gin.Context) {
 		return
 	}
 
+	// 手动检查发现新版本时，自动触发同步下载资产，与定时调度行为一致。
+	// sync 内部会再次 CheckLatest（幂等），然后下载 pending 资产。
+	if result.IsNewRelease && h.syncService != nil {
+		if _, syncErr := h.syncService.EnqueueSyncRepository(c.Request.Context(), id); syncErr == nil {
+			result.AutoSynced = true
+		}
+	}
+
 	c.JSON(http.StatusOK, result)
 }
 
