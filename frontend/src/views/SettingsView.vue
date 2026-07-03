@@ -4,7 +4,6 @@ import {
   NAlert,
   NButton,
   NText,
-  NBadge,
   NCard,
   NDataTable,
   NDescriptions,
