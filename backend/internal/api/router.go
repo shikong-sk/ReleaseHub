@@ -59,6 +59,8 @@ func NewRouter(deps Dependencies) http.Handler {
 	authEnabled := func() bool { return deps.Config.Auth.Enabled }
 	router.Use(middleware.APIKeyOrAuth(deps.DB, authEnabled))
 	router.Use(middleware.AuthorizeRequest(authEnabled))
+	// 审计日志中间件：自动记录写操作（POST/PUT/DELETE 等）的审计日志
+	router.Use(middleware.AuditMiddleware(deps.DB))
 
 	// 核心 API
 	githubClient, githubClientErr := githubsvc.NewClient(deps.Config.GitHub.APIBaseURL)

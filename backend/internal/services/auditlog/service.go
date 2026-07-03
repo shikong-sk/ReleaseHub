@@ -82,3 +82,16 @@ type ListParams struct {
 	Page     int
 	PageSize int
 }
+
+// Cleanup 删除早于指定保留天数的操作日志，返回删除行数
+// retentionDays <= 0 时跳过清理
+func (s *Service) Cleanup(ctx context.Context, retentionDays int) (int64, error) {
+	if retentionDays <= 0 {
+		return 0, nil
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
+	result := s.db.WithContext(ctx).
+		Where("created_at < ?", cutoff).
+		Delete(&models.OperationLog{})
+	return result.RowsAffected, result.Error
+}

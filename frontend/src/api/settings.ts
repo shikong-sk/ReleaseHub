@@ -11,6 +11,7 @@ export interface AppConfig {
   syncerMaxConcurrentTasks: number
   syncerMaxConcurrentDownloads: number
   taskLogRetentionDays: number
+  operationLogRetentionDays: number
 }
 
 export function getAppConfig(): Promise<AppConfig> {
@@ -27,6 +28,7 @@ export interface AppConfigUpdate {
   syncerMaxConcurrentTasks?: number
   syncerMaxConcurrentDownloads?: number
   taskLogRetentionDays?: number
+  operationLogRetentionDays?: number
 }
 
 export function updateAppConfig(update: AppConfigUpdate): Promise<AppConfig> {

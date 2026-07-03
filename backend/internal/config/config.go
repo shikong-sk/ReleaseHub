@@ -19,6 +19,7 @@ type Config struct {
 	Syncer    SyncerConfig
 	Auth      AuthConfig
 	TaskLog   TaskLogConfig
+	OpLog     OperationLogConfig
 }
 
 type AppConfig struct {
@@ -80,6 +81,12 @@ type TaskLogConfig struct {
 	RetentionDays int
 }
 
+// OperationLogConfig 系统操作日志保留配置
+type OperationLogConfig struct {
+	// RetentionDays 日志保留天数，超过该天数的操作日志将被清理；0 表示不清理
+	RetentionDays int
+}
+
 func Load() (*Config, error) {
 	v := viper.New()
 	v.SetEnvPrefix("RELEASEHUB")
@@ -110,6 +117,8 @@ func Load() (*Config, error) {
 	v.SetDefault("auth.default_password", "admin")
 	// 任务日志保留天数默认 30 天，0 表示不清理
 	v.SetDefault("tasklog.retention_days", 30)
+	// 操作日志保留天数默认 30 天，0 表示不清理
+	v.SetDefault("oplog.retention_days", 30)
 
 	cfg := &Config{
 		App: AppConfig{
@@ -154,6 +163,9 @@ func Load() (*Config, error) {
 		TaskLog: TaskLogConfig{
 			RetentionDays: v.GetInt("tasklog.retention_days"),
 		},
+		OpLog: OperationLogConfig{
+			RetentionDays: v.GetInt("oplog.retention_days"),
+		},
 	}
 
 	switch cfg.Database.Driver {
@@ -190,6 +202,7 @@ type UpdateConfig struct {
 	SyncerMaxConcurrentTasks     *int `json:"syncerMaxConcurrentTasks,omitempty"`
 	SyncerMaxConcurrentDownloads *int `json:"syncerMaxConcurrentDownloads,omitempty"`
 	TaskLogRetentionDays         *int `json:"taskLogRetentionDays,omitempty"`
+	OperationLogRetentionDays    *int `json:"operationLogRetentionDays,omitempty"`
 }
 
 // ApplyUpdate 应用运行时配置更新，返回实际被修改的字段名列表
@@ -251,6 +264,15 @@ func (c *Config) ApplyUpdate(update UpdateConfig) ([]string, error) {
 		if *update.TaskLogRetentionDays != c.TaskLog.RetentionDays {
 			c.TaskLog.RetentionDays = *update.TaskLogRetentionDays
 			changed = append(changed, "taskLogRetentionDays")
+		}
+	}
+	if update.OperationLogRetentionDays != nil {
+		if *update.OperationLogRetentionDays < 0 {
+			return nil, fmt.Errorf("oplog.retention_days 不能小于 0")
+		}
+		if *update.OperationLogRetentionDays != c.OpLog.RetentionDays {
+			c.OpLog.RetentionDays = *update.OperationLogRetentionDays
+			changed = append(changed, "operationLogRetentionDays")
 		}
 	}
 

@@ -19,6 +19,7 @@ import (
 	providersvc "releasehub/backend/internal/services/provider"
 	syncersvc "releasehub/backend/internal/services/syncer"
 	tasklogsvc "releasehub/backend/internal/services/tasklog"
+	auditlogsvc "releasehub/backend/internal/services/auditlog"
 
 	"go.uber.org/zap"
 )
@@ -140,6 +141,30 @@ func main() {
 					logger.Warn("清理过期任务日志失败", zap.Error(err))
 				} else if deleted > 0 {
 					logger.Info("清理过期任务日志", zap.Int64("deleted", deleted), zap.Int("retentionDays", days))
+				}
+			}
+		}
+	}()
+
+	// 启动操作日志保留清理 goroutine：每小时清理一次超过保留天数的操作日志，
+	// RetentionDays 为 0 时跳过清理。cfg 为指针，运行时通过配置 API 修改后立即生效。
+	opLogSvc := auditlogsvc.NewService(db)
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-appCtx.Done():
+				return
+			case <-ticker.C:
+				days := cfg.OpLog.RetentionDays
+				if days <= 0 {
+					continue
+				}
+				if deleted, err := opLogSvc.Cleanup(appCtx, days); err != nil {
+					logger.Warn("清理过期操作日志失败", zap.Error(err))
+				} else if deleted > 0 {
+					logger.Info("清理过期操作日志", zap.Int64("deleted", deleted), zap.Int("retentionDays", days))
 				}
 			}
 		}

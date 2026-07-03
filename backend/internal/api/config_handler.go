@@ -41,6 +41,7 @@ type configResponse struct {
 	SyncerMaxConcurrentTasks     int    `json:"syncerMaxConcurrentTasks"`
 	SyncerMaxConcurrentDownloads int    `json:"syncerMaxConcurrentDownloads"`
 	TaskLogRetentionDays         int    `json:"taskLogRetentionDays"`
+	OperationLogRetentionDays    int    `json:"operationLogRetentionDays"`
 }
 
 func registerConfigRoutes(router *gin.Engine, cfg *config.Config, scheduler SchedulerUpdater, syncer SyncerUpdater, db *gorm.DB) {
@@ -90,6 +91,9 @@ func LoadPersistedSettings(db *gorm.DB, cfg *config.Config) {
 	if v, ok := loadInt("tasklog.retention_days", 0); ok {
 		cfg.TaskLog.RetentionDays = v
 	}
+	if v, ok := loadInt("oplog.retention_days", 0); ok {
+		cfg.OpLog.RetentionDays = v
+	}
 	if v, ok := loadBool("scheduler.enabled"); ok {
 		cfg.Scheduler.Enabled = v == "true"
 	}
@@ -115,6 +119,7 @@ func (h *configHandler) get(c *gin.Context) {
 		SyncerMaxConcurrentTasks:     h.config.Syncer.MaxConcurrentTasks,
 		SyncerMaxConcurrentDownloads: h.config.Syncer.MaxConcurrentDownloads,
 		TaskLogRetentionDays:         h.config.TaskLog.RetentionDays,
+		OperationLogRetentionDays:    h.config.OpLog.RetentionDays,
 	})
 }
 
@@ -127,6 +132,7 @@ type configUpdateRequest struct {
 	SyncerMaxConcurrentTasks     *int    `json:"syncerMaxConcurrentTasks,omitempty"`
 	SyncerMaxConcurrentDownloads *int    `json:"syncerMaxConcurrentDownloads,omitempty"`
 	TaskLogRetentionDays         *int    `json:"taskLogRetentionDays,omitempty"`
+	OperationLogRetentionDays    *int `json:"operationLogRetentionDays,omitempty"`
 }
 
 func (h *configHandler) update(c *gin.Context) {
@@ -145,6 +151,7 @@ func (h *configHandler) update(c *gin.Context) {
 		SyncerMaxConcurrentTasks:     req.SyncerMaxConcurrentTasks,
 		SyncerMaxConcurrentDownloads: req.SyncerMaxConcurrentDownloads,
 		TaskLogRetentionDays:         req.TaskLogRetentionDays,
+		OperationLogRetentionDays:    req.OperationLogRetentionDays,
 	}
 
 	changed, err := h.config.ApplyUpdate(update)
@@ -193,6 +200,8 @@ func (h *configHandler) update(c *gin.Context) {
 			setting = models.AppSetting{Key: "syncer.max_concurrent_downloads", Value: strconv.Itoa(h.config.Syncer.MaxConcurrentDownloads)}
 		case "taskLogRetentionDays":
 			setting = models.AppSetting{Key: "tasklog.retention_days", Value: strconv.Itoa(h.config.TaskLog.RetentionDays)}
+		case "operationLogRetentionDays":
+			setting = models.AppSetting{Key: "oplog.retention_days", Value: strconv.Itoa(h.config.OpLog.RetentionDays)}
 		case "schedulerEnabled":
 			val := "false"
 			if h.config.Scheduler.Enabled {
@@ -225,5 +234,6 @@ func (h *configHandler) update(c *gin.Context) {
 		SyncerMaxConcurrentTasks:     h.config.Syncer.MaxConcurrentTasks,
 		SyncerMaxConcurrentDownloads: h.config.Syncer.MaxConcurrentDownloads,
 		TaskLogRetentionDays:         h.config.TaskLog.RetentionDays,
+		OperationLogRetentionDays:    h.config.OpLog.RetentionDays,
 	})
 }
