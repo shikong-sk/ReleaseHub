@@ -41,6 +41,10 @@ func ValidateAPIKey(db *gorm.DB, key string) (*models.APIKey, error) {
 func APIKeyOrAuth(db *gorm.DB, authEnabled func() bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !authEnabled() {
+			// 关闭认证模式：所有请求视为管理员权限，与 AuthorizeRequest 放行全部操作的语义一致。
+			// 设置 role=admin，使显式校验 admin 角色的 handler（如服务重启）在关闭认证时可用，
+			// 否则这些 handler 取不到 role 会被误判为无权限而返回 403。
+			c.Set("role", "admin")
 			c.Next()
 			return
 		}
