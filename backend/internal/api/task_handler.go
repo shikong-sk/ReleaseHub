@@ -63,8 +63,16 @@ func (h *taskHandler) list(c *gin.Context) {
 		return
 	}
 
+	// total 反映全表真实任务数量，避免前端把"最近 200 条"误当成总数
+	var total int64
+	if err := h.db.WithContext(c.Request.Context()).Model(&models.Task{}).Count(&total).Error; err != nil {
+		writeError(c, http.StatusInternalServerError, "查询任务总数失败")
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"items": h.buildTaskResponses(c.Request.Context(), tasks),
+		"total": total,
 	})
 }
 

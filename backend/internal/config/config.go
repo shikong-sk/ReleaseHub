@@ -18,6 +18,7 @@ type Config struct {
 	Scheduler SchedulerConfig
 	Syncer    SyncerConfig
 	Auth      AuthConfig
+	TaskLog   TaskLogConfig
 }
 
 type AppConfig struct {
@@ -73,6 +74,12 @@ type AuthConfig struct {
 	DefaultPassword string
 }
 
+// TaskLogConfig 任务日志保留配置
+type TaskLogConfig struct {
+	// RetentionDays 日志保留天数，超过该天数的任务日志将被清理；0 表示不清理
+	RetentionDays int
+}
+
 func Load() (*Config, error) {
 	v := viper.New()
 	v.SetEnvPrefix("RELEASEHUB")
@@ -101,6 +108,8 @@ func Load() (*Config, error) {
 	// auth.enabled 不从环境变量读取，仅通过运行时 API 动态切换
 	v.SetDefault("auth.default_admin", "admin")
 	v.SetDefault("auth.default_password", "admin")
+	// 任务日志保留天数默认 30 天，0 表示不清理
+	v.SetDefault("tasklog.retention_days", 30)
 
 	cfg := &Config{
 		App: AppConfig{
@@ -142,6 +151,9 @@ func Load() (*Config, error) {
 			DefaultAdmin:    v.GetString("auth.default_admin"),
 			DefaultPassword: v.GetString("auth.default_password"),
 		},
+		TaskLog: TaskLogConfig{
+			RetentionDays: v.GetInt("tasklog.retention_days"),
+		},
 	}
 
 	switch cfg.Database.Driver {
@@ -177,6 +189,7 @@ type UpdateConfig struct {
 	AuthEnabled            *bool   `json:"authEnabled,omitempty"`
 	SyncerMaxConcurrentTasks     *int `json:"syncerMaxConcurrentTasks,omitempty"`
 	SyncerMaxConcurrentDownloads *int `json:"syncerMaxConcurrentDownloads,omitempty"`
+	TaskLogRetentionDays         *int `json:"taskLogRetentionDays,omitempty"`
 }
 
 // ApplyUpdate 应用运行时配置更新，返回实际被修改的字段名列表
@@ -229,6 +242,15 @@ func (c *Config) ApplyUpdate(update UpdateConfig) ([]string, error) {
 		if *update.SyncerMaxConcurrentDownloads != c.Syncer.MaxConcurrentDownloads {
 			c.Syncer.MaxConcurrentDownloads = *update.SyncerMaxConcurrentDownloads
 			changed = append(changed, "syncerMaxConcurrentDownloads")
+		}
+	}
+	if update.TaskLogRetentionDays != nil {
+		if *update.TaskLogRetentionDays < 0 {
+			return nil, fmt.Errorf("tasklog.retention_days 不能小于 0")
+		}
+		if *update.TaskLogRetentionDays != c.TaskLog.RetentionDays {
+			c.TaskLog.RetentionDays = *update.TaskLogRetentionDays
+			changed = append(changed, "taskLogRetentionDays")
 		}
 	}
 

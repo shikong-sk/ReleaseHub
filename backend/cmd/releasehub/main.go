@@ -18,6 +18,7 @@ import (
 	schedulersvc "releasehub/backend/internal/services/scheduler"
 	providersvc "releasehub/backend/internal/services/provider"
 	syncersvc "releasehub/backend/internal/services/syncer"
+	tasklogsvc "releasehub/backend/internal/services/tasklog"
 
 	"go.uber.org/zap"
 )
@@ -119,6 +120,30 @@ func main() {
 		syncService.UpdateMaxConcurrentTasks(cfg.Syncer.MaxConcurrentTasks)
 		syncService.UpdateMaxConcurrentDownloads(cfg.Syncer.MaxConcurrentDownloads)
 	}
+
+	// 启动任务日志保留清理 goroutine：每小时清理一次超过保留天数的日志，
+	// RetentionDays 为 0 时跳过清理。cfg 为指针，运行时通过配置 API 修改后立即生效。
+	taskLogSvc := tasklogsvc.NewService(db)
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-appCtx.Done():
+				return
+			case <-ticker.C:
+				days := cfg.TaskLog.RetentionDays
+				if days <= 0 {
+					continue
+				}
+				if deleted, err := taskLogSvc.Cleanup(appCtx, days); err != nil {
+					logger.Warn("清理过期任务日志失败", zap.Error(err))
+				} else if deleted > 0 {
+					logger.Info("清理过期任务日志", zap.Int64("deleted", deleted), zap.Int("retentionDays", days))
+				}
+			}
+		}
+	}()
 
 	router := api.NewRouter(api.Dependencies{
 		Config:        cfg,

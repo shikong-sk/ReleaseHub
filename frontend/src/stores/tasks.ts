@@ -8,6 +8,8 @@ export const useTasksStore = defineStore('tasks', () => {
   const items = shallowRef<Task[]>([])
   const loading = shallowRef(false)
   const error = shallowRef<string | null>(null)
+  // 后端返回的全表任务总数（items 最多 200 条，total 才是真实总数）
+  const total = shallowRef<number>(0)
 
   const failedCount = computed(() => items.value.filter((item) => item.status === 'failed').length)
   const runningCount = computed(() => items.value.filter((item) => item.status === 'running').length)
@@ -22,6 +24,7 @@ export const useTasksStore = defineStore('tasks', () => {
     try {
       const response = await listTasks()
       items.value = response.items
+      total.value = response.total ?? response.items.length
     } catch (err) {
       error.value = err instanceof Error ? err.message : '任务列表加载失败'
     } finally {
@@ -33,6 +36,7 @@ export const useTasksStore = defineStore('tasks', () => {
 
   return {
     items,
+    total,
     loading,
     error,
     failedCount,

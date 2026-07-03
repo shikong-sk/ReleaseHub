@@ -55,3 +55,15 @@ func (s *Service) ListRecent(ctx context.Context, limit int) ([]models.TaskLog, 
 		Find(&logs).Error
 	return logs, err
 }
+
+// Cleanup 删除早于指定保留天数的任务日志，返回删除行数
+func (s *Service) Cleanup(ctx context.Context, retentionDays int) (int64, error) {
+	if retentionDays <= 0 {
+		return 0, nil
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
+	result := s.db.WithContext(ctx).
+		Where("timestamp < ?", cutoff).
+		Delete(&models.TaskLog{})
+	return result.RowsAffected, result.Error
+}

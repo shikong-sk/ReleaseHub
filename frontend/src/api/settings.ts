@@ -10,6 +10,7 @@ export interface AppConfig {
   authEnabled: boolean
   syncerMaxConcurrentTasks: number
   syncerMaxConcurrentDownloads: number
+  taskLogRetentionDays: number
 }
 
 export function getAppConfig(): Promise<AppConfig> {
@@ -25,6 +26,7 @@ export interface AppConfigUpdate {
   authEnabled?: boolean
   syncerMaxConcurrentTasks?: number
   syncerMaxConcurrentDownloads?: number
+  taskLogRetentionDays?: number
 }
 
 export function updateAppConfig(update: AppConfigUpdate): Promise<AppConfig> {
