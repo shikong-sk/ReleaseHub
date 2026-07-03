@@ -15,11 +15,11 @@ const page = shallowRef(1)
 const pageSize = shallowRef(20)
 
 // 筛选条件
-const filterStatus = shallowRef<string | null>(null)
+const filterStatus = shallowRef<string>('')
 const filterKeyword = shallowRef('')
 
 const statusOptions = [
-  { label: '全部状态', value: null },
+  { label: '全部状态', value: '' },
   { label: '成功', value: 'success' },
   { label: '失败', value: 'failed' }
 ]
@@ -58,7 +58,7 @@ async function loadLogs() {
   loading.value = true
   try {
     const result = await listOperationLogs({
-      status: filterStatus.value ?? undefined,
+      status: filterStatus.value || undefined,
       keyword: filterKeyword.value.trim() || undefined,
       page: page.value,
       pageSize: pageSize.value
@@ -78,7 +78,7 @@ function applyFilters() {
 }
 
 function resetFilters() {
-  filterStatus.value = null
+  filterStatus.value = ''
   filterKeyword.value = ''
   page.value = 1
   void loadLogs()

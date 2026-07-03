@@ -26,12 +26,12 @@ const retentionSaving = shallowRef(false)
 const editRetentionDays = shallowRef(30)
 
 // 任务筛选
-const filterStatus = shallowRef<string | null>(null)
-const filterType = shallowRef<string | null>(null)
+const filterStatus = shallowRef<string>('')
+const filterType = shallowRef<string>('')
 const filterKeyword = shallowRef('')
 
 const statusOptions = [
-  { label: '全部状态', value: null },
+  { label: '全部状态', value: '' },
   { label: '排队中', value: 'pending' },
   { label: '运行中', value: 'running' },
   { label: '成功', value: 'succeeded' },
@@ -39,7 +39,7 @@ const statusOptions = [
   { label: '已取消', value: 'canceled' }
 ]
 const typeOptions = [
-  { label: '全部类型', value: null },
+  { label: '全部类型', value: '' },
   { label: '检查版本', value: 'check_release' },
   { label: '全量检查', value: 'check_all_releases' },
   { label: '同步版本', value: 'sync_release' },
@@ -81,16 +81,16 @@ async function handleViewLogs(task: Task) {
 // 应用筛选条件：仅刷新列表，不影响统计面板
 function applyFilters() {
   tasksStore.setFilters({
-    status: filterStatus.value ?? undefined,
-    type: filterType.value ?? undefined,
+    status: filterStatus.value || undefined,
+    type: filterType.value || undefined,
     keyword: filterKeyword.value.trim() || undefined
   })
   void tasksStore.refreshList()
 }
 
 function resetFilters() {
-  filterStatus.value = null
-  filterType.value = null
+  filterStatus.value = ''
+  filterType.value = ''
   filterKeyword.value = ''
   applyFilters()
 }
