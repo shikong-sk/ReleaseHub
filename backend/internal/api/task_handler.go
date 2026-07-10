@@ -5,19 +5,26 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"releasehub/backend/internal/models"
+	assetsvc "releasehub/backend/internal/services/asset"
 	"releasehub/backend/internal/services/tasklog"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
+// SyncerProgressProvider 同步器进度查询接口（供 task list API 注入实时下载进度）
+type SyncerProgressProvider interface {
+	ActiveProgresses() map[uint]assetsvc.DownloadProgress
+}
+
 type taskHandler struct {
-	db         *gorm.DB
-	logService *tasklog.Service
+	db          *gorm.DB
+	logService  *tasklog.Service
+	progress    SyncerProgressProvider // 可空，无下载进行时为 nil
 }
 
 type taskResponse struct {
@@ -38,14 +45,18 @@ type taskResponse struct {
 	StartedAt      *time.Time        `json:"startedAt"`
 	FinishedAt     *time.Time        `json:"finishedAt"`
 	ErrorMessage   string            `json:"errorMessage"`
-	CreatedAt      time.Time         `json:"createdAt"`
-	UpdatedAt      time.Time         `json:"updatedAt"`
+	// 下载进度（仅 download_asset / sync_release 类型且正在下载时有值）
+	DownloadedBytes int64 `json:"downloadedBytes"`
+	TotalBytes      int64 `json:"totalBytes"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
-func registerTaskRoutes(router *gin.Engine, db *gorm.DB) {
+func registerTaskRoutes(router *gin.Engine, db *gorm.DB, progress SyncerProgressProvider) {
 	handler := &taskHandler{
 		db:         db,
 		logService: tasklog.NewService(db),
+		progress:   progress,
 	}
 
 	group := router.Group("/api/tasks")
@@ -122,7 +133,7 @@ func (h *taskHandler) list(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"items":    h.buildTaskResponses(ctx, tasks),
+		"items":    h.buildTaskResponsesWithProgress(ctx, tasks),
 		"total":    total,
 		"page":     page,
 		"pageSize": pageSize,
@@ -237,4 +248,28 @@ func (h *taskHandler) buildTaskResponse(ctx context.Context, task models.Task) t
 	}
 
 	return resp
+}
+
+// buildTaskResponsesWithProgress 构建任务响应并注入实时下载进度
+// 仅对 assetID 不为空的任务查进度表，未在下载中则 downloaded/total 为 0
+func (h *taskHandler) buildTaskResponsesWithProgress(ctx context.Context, tasks []models.Task) []taskResponse {
+	items := h.buildTaskResponses(ctx, tasks)
+	if h.progress == nil || len(items) == 0 {
+		return items
+	}
+	progressMap := h.progress.ActiveProgresses()
+	if len(progressMap) == 0 {
+		return items
+	}
+	for i := range items {
+		if items[i].AssetID == nil {
+			continue
+		}
+		assetID := *items[i].AssetID
+		if p, ok := progressMap[assetID]; ok {
+			items[i].DownloadedBytes = p.Downloaded
+			items[i].TotalBytes = p.Total
+		}
+	}
+	return items
 }

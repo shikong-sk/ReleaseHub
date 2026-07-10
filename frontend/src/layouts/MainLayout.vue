@@ -7,6 +7,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { KeyRound, LogOut } from 'lucide-vue-next'
 
 import { useAuthStore } from '@/stores/auth'
+import TaskFab from '@/components/task/TaskFab.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -118,6 +119,8 @@ async function handleLogout() {
     <NLayoutContent class="app-content">
       <RouterView />
     </NLayoutContent>
+    <!-- 全局任务悬浮按钮：任意页面可见，显示活跃任务状态 -->
+    <TaskFab />
     <NModal v-model:show="showPasswordModal" preset="dialog" title="修改密码" positive-text="确认修改" negative-text="取消" :loading="passwordLoading" @positive-click="handleChangePassword">
       <NForm label-placement="left" label-width="auto">
         <NFormItem label="当前密码">

@@ -7,6 +7,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	stdsync "sync"
 	"time"
 
 	"releasehub/backend/internal/config"
@@ -29,6 +30,82 @@ type Service struct {
 	logService *tasklog.Service
 	notifier   *notifysvc.Service
 	logger     *zap.Logger
+
+	// 运行时下载进度表：assetID → {downloaded, total, updatedAt}
+	// 仅存内存，不持久化；task list API 读取注入响应供前端展示真实进度
+	progressMu  stdsync.RWMutex
+	progressMap map[uint]DownloadProgress
+}
+
+// DownloadProgress 单次下载的实时进度
+type DownloadProgress struct {
+	Downloaded int64 // 已下载字节
+	Total      int64 // 总字节（未知为 0）
+	UpdatedAt  time.Time
+}
+
+// SetProgress 设置资产下载进度（下载回调触发，节流到每 1MB 或 2秒一次）
+func (s *Service) SetProgress(assetID uint, downloaded, total int64) {
+	s.progressMu.Lock()
+	if s.progressMap == nil {
+		s.progressMap = make(map[uint]DownloadProgress)
+	}
+	s.progressMap[assetID] = DownloadProgress{
+		Downloaded: downloaded,
+		Total:      total,
+		UpdatedAt:  time.Now().UTC(),
+	}
+	s.progressMu.Unlock()
+}
+
+// ClearProgress 下载结束（成功/失败）后清除进度
+func (s *Service) ClearProgress(assetID uint) {
+	s.progressMu.Lock()
+	delete(s.progressMap, assetID)
+	s.progressMu.Unlock()
+}
+
+// GetProgress 返回资产当前下载进度，未在下载中返回 false
+func (s *Service) GetProgress(assetID uint) (DownloadProgress, bool) {
+	s.progressMu.RLock()
+	p, ok := s.progressMap[assetID]
+	s.progressMu.RUnlock()
+	return p, ok
+}
+
+// ActiveProgresses 返回所有正在下载的资产进度快照（供 task list API 注入）
+func (s *Service) ActiveProgresses() map[uint]DownloadProgress {
+	s.progressMu.RLock()
+	defer s.progressMu.RUnlock()
+	out := make(map[uint]DownloadProgress, len(s.progressMap))
+	for k, v := range s.progressMap {
+		out[k] = v
+	}
+	return out
+}
+
+// progressThrottle 进度回调节流器：每 threshold 字节或 2 秒触发一次 SetProgress
+// 避免高频回调（每个 64KB buffer 触发）造成锁竞争
+type progressThrottle struct {
+	assetID    uint
+	setFn      func(uint, int64, int64)
+	mu         stdsync.Mutex
+	lastBytes  int64
+	lastTime   time.Time
+	threshold  int64
+}
+
+// callback 下载进度回调，节流后写入运行时进度表
+func (p *progressThrottle) callback(downloaded int64, total int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	// 首次、每 threshold 字节、或距上次 ≥ 2 秒、或下载完成时写入
+	if p.lastBytes == 0 || downloaded-p.lastBytes >= p.threshold ||
+		time.Since(p.lastTime) >= 2*time.Second || (total > 0 && downloaded >= total) {
+		p.setFn(p.assetID, downloaded, total)
+		p.lastBytes = downloaded
+		p.lastTime = time.Now()
+	}
 }
 
 type DownloadResult struct {
@@ -235,20 +312,32 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 	var storedObject *storage.StoredObject
 	var storageErr error
 
-	// 下载 goroutine：从 HTTP 读取写入 pipe
+	// 进度回调：节流到每 1MB 或每 2秒一次，避免高频锁竞争
+	progressCtx := &progressThrottle{
+		assetID:    asset.ID,
+		setFn:      s.SetProgress,
+		lastBytes:  0,
+		lastTime:   time.Now(),
+		threshold:  1024 * 1024, // 1MB
+	}
+
+	// 下载 goroutine：从 HTTP 读取写入 pipe（带进度回调）
 	downloadDone := make(chan struct{})
 	go func() {
 		defer close(downloadDone)
 		if downloadErr != nil {
 			return
 		}
-		downloadResult, downloadErr = downloadClient.Download(ctx, downloadURL, token, pw)
+		downloadResult, downloadErr = downloadClient.DownloadWithProgress(ctx, downloadURL, token, pw, progressCtx.callback)
 		if downloadErr != nil {
 			_ = pw.CloseWithError(downloadErr)
 			return
 		}
 		_ = pw.Close()
 	}()
+
+	// 存储完成或下载失败后清除进度记录
+	defer s.ClearProgress(asset.ID)
 
 	// 存储 goroutine：从 pipe 读取写入存储
 	storageDone := make(chan struct{})

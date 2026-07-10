@@ -18,6 +18,8 @@ export interface Task {
   startedAt: string | null
   finishedAt: string | null
   errorMessage: string
+  downloadedBytes: number
+  totalBytes: number
   createdAt: string
   updatedAt: string
 }

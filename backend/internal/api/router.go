@@ -66,7 +66,14 @@ func NewRouter(deps Dependencies) http.Handler {
 	githubClient, githubClientErr := githubsvc.NewClient(deps.Config.GitHub.APIBaseURL)
 	registerRepositoryRoutes(router, deps.DB, deps.Config.Storage, deps.Config.GitHub.APIBaseURL, githubClient, githubClientErr, deps.SyncerService)
 	registerReleaseRoutes(router, deps.DB, deps.Config.Storage)
-	registerTaskRoutes(router, deps.DB)
+	// 避免 nil 具体类型指针赋值给接口后变为非 nil 接口（Go 经典坑）：
+	// SyncerService 为 nil 的 *syncersvc.Service 传入 SyncerProgressProvider 接口参数后
+	// 接口非 nil，导致 buildTaskResponsesWithProgress 越过 nil guard 调用空指针 panic。
+	var progressProvider SyncerProgressProvider
+	if deps.SyncerService != nil {
+		progressProvider = deps.SyncerService
+	}
+	registerTaskRoutes(router, deps.DB, progressProvider)
 	registerFileRoutes(router, deps.DB)
 	registerTokenRoutes(router, deps.DB)
 	registerTokenHealthRoutes(router, deps.DB, deps.Config.GitHub.APIBaseURL)

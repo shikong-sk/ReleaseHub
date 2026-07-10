@@ -190,6 +190,11 @@ func (s *Service) MaxConcurrentDownloads() int {
 	return s.maxConcurrentDownloads
 }
 
+// ActiveProgresses 返回所有正在下载的资产进度快照（供 task list API 注入前端展示真实进度）
+func (s *Service) ActiveProgresses() map[uint]assetsvc.DownloadProgress {
+	return s.assetService.ActiveProgresses()
+}
+
 // Stop 停止 worker pool，等待在途任务完成
 func (s *Service) Stop() {
 	s.stopOnce.Do(func() {
