@@ -35,6 +35,10 @@ type Service struct {
 	// 仅存内存，不持久化；task list API 读取注入响应供前端展示真实进度
 	progressMu  stdsync.RWMutex
 	progressMap map[uint]DownloadProgress
+
+	// 运行时取消表：taskID → cancelFunc，用于中断正在进行中的 HTTP 下载
+	cancelMu  stdsync.Mutex
+	cancelMap map[uint]context.CancelFunc
 }
 
 // DownloadProgress 单次下载的实时进度
@@ -82,6 +86,54 @@ func (s *Service) ActiveProgresses() map[uint]DownloadProgress {
 		out[k] = v
 	}
 	return out
+}
+
+// CancelDownloadTask 取消正在进行的下载任务
+// 对 running 任务：调用 cancelFunc 中断 HTTP 下载，downloadWithAttempt 检测 ctx 取消后标记 task 为 canceled
+// 对 pending 任务：直接在 DB 更新为 canceled（worker 取出时跳过执行）
+func (s *Service) CancelDownloadTask(ctx context.Context, taskID uint) error {
+	var task models.Task
+	if err := s.db.WithContext(ctx).First(&task, taskID).Error; err != nil {
+		return fmt.Errorf("查找任务失败: %w", err)
+	}
+	if task.Status != models.TaskStatusRunning && task.Status != models.TaskStatusPending {
+		return fmt.Errorf("任务状态 %s 不支持取消", task.Status)
+	}
+	// running 任务：先中断 HTTP 下载，downloadWithAttempt 的 context.Canceled 分支会更新 DB
+	s.cancelMu.Lock()
+	cancel, ok := s.cancelMap[taskID]
+	s.cancelMu.Unlock()
+	if ok {
+		cancel()
+		// 等待 downloadWithAttempt 处理取消（它会更新 DB），给一点时间让 goroutine 完成
+		// 不阻塞调用方太久，DB 状态最终会由 downloadWithAttempt 更新
+		return nil
+	}
+	// pending 任务（或 running 但尚未注册 cancel）：直接更新 DB
+	now := time.Now().UTC()
+	return s.db.WithContext(ctx).Model(&models.Task{}).Where("id = ?", taskID).
+		Updates(map[string]any{
+			"status":        models.TaskStatusCanceled,
+			"finished_at":   &now,
+			"error_message": "任务已被手动取消",
+		}).Error
+}
+
+// registerCancel 注册下载取消函数
+func (s *Service) registerCancel(taskID uint, cancel context.CancelFunc) {
+	s.cancelMu.Lock()
+	if s.cancelMap == nil {
+		s.cancelMap = make(map[uint]context.CancelFunc)
+	}
+	s.cancelMap[taskID] = cancel
+	s.cancelMu.Unlock()
+}
+
+// unregisterCancel 注销下载取消函数
+func (s *Service) unregisterCancel(taskID uint) {
+	s.cancelMu.Lock()
+	delete(s.cancelMap, taskID)
+	s.cancelMu.Unlock()
 }
 
 // progressThrottle 进度回调节流器：每 threshold 字节或 2 秒触发一次 SetProgress
@@ -312,6 +364,12 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 	var storedObject *storage.StoredObject
 	var storageErr error
 
+	// 创建可取消 ctx，注册到 cancelMap 供 CancelDownloadTask 中断 HTTP 下载
+	dlCtx, cancelDownload := context.WithCancel(ctx)
+	s.registerCancel(task.ID, cancelDownload)
+	defer s.unregisterCancel(task.ID)
+	defer cancelDownload() // 下载结束后释放 context
+
 	// 进度回调：节流到每 1MB 或每 2秒一次，避免高频锁竞争
 	progressCtx := &progressThrottle{
 		assetID:    asset.ID,
@@ -328,7 +386,7 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 		if downloadErr != nil {
 			return
 		}
-		downloadResult, downloadErr = downloadClient.DownloadWithProgress(ctx, downloadURL, token, pw, progressCtx.callback)
+		downloadResult, downloadErr = downloadClient.DownloadWithProgress(dlCtx, downloadURL, token, pw, progressCtx.callback)
 		if downloadErr != nil {
 			_ = pw.CloseWithError(downloadErr)
 			return
@@ -343,7 +401,7 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 	storageDone := make(chan struct{})
 	go func() {
 		defer close(storageDone)
-		storedObject, storageErr = storageDriver.Put(ctx, objectPath, pr)
+		storedObject, storageErr = storageDriver.Put(dlCtx, objectPath, pr)
 		if storageErr != nil {
 			pr.CloseWithError(storageErr)
 		}
@@ -354,12 +412,38 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 	<-storageDone
 
 	if downloadErr != nil {
+		// 用户手动取消：标记为 canceled 而非 failed，资产恢复 pending 便于重试
+		if errors.Is(downloadErr, context.Canceled) || dlCtx.Err() == context.Canceled {
+			now := time.Now().UTC()
+			asset.Status = models.AssetStatusPending
+			asset.ErrorMessage = "下载已取消"
+			_ = s.db.WithContext(ctx).Save(&asset).Error
+			task.Status = models.TaskStatusCanceled
+			task.FinishedAt = &now
+			task.ErrorMessage = "任务已被手动取消"
+			_ = s.db.WithContext(ctx).Save(&task).Error
+			_ = s.logService.Append(ctx, task.ID, "info", "任务已被手动取消")
+			return nil, fmt.Errorf("任务已被手动取消")
+		}
 		s.markAssetFailed(ctx, &asset, downloadErr)
 		s.failTaskWithLog(ctx, &task, downloadErr, "下载请求失败")
 		s.notifyDownloadFailed(ctx, repository, release, asset, downloadErr)
 		return nil, downloadErr
 	}
 	if storageErr != nil {
+		// 用户手动取消同样处理
+		if errors.Is(storageErr, context.Canceled) || dlCtx.Err() == context.Canceled {
+			now := time.Now().UTC()
+			asset.Status = models.AssetStatusPending
+			asset.ErrorMessage = "下载已取消"
+			_ = s.db.WithContext(ctx).Save(&asset).Error
+			task.Status = models.TaskStatusCanceled
+			task.FinishedAt = &now
+			task.ErrorMessage = "任务已被手动取消"
+			_ = s.db.WithContext(ctx).Save(&task).Error
+			_ = s.logService.Append(ctx, task.ID, "info", "任务已被手动取消")
+			return nil, fmt.Errorf("任务已被手动取消")
+		}
 		s.markAssetFailed(ctx, &asset, storageErr)
 		s.failTaskWithLog(ctx, &task, storageErr, "存储写入失败")
 		s.notifyDownloadFailed(ctx, repository, release, asset, storageErr)

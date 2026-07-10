@@ -1,4 +1,4 @@
-import { getJson } from './http'
+import { getJson, requestJson } from './http'
 import type { Task, TaskListResponse } from '@/types/task'
 
 export interface TaskListParams {
@@ -22,4 +22,14 @@ export function listTasks(params?: TaskListParams): Promise<TaskListResponse> {
 
 export function getTask(id: number): Promise<Task> {
   return getJson<Task>(`/api/tasks/${id}`)
+}
+
+// 取消/停止指定任务（running 中断下载，pending 标记跳过）
+export function cancelTask(id: number): Promise<{ ok: boolean }> {
+  return requestJson(`/api/tasks/${id}/cancel`, { method: 'POST' })
+}
+
+// 清理所有失败状态的任务及其关联日志
+export function clearFailedTasks(): Promise<{ deleted: number }> {
+  return requestJson('/api/tasks/failed', { method: 'DELETE' })
 }

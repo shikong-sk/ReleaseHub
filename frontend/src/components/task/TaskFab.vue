@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, shallowRef } from 'vue'
-import { NBadge, NButton, NDrawer, NDrawerContent, NTag, NSpin, NEmpty, NSpace, NProgress } from 'naive-ui'
-import { ListChecks, RefreshCw, X } from 'lucide-vue-next'
+import { NBadge, NButton, NDrawer, NDrawerContent, NTag, NSpin, NEmpty, NSpace, NProgress, useMessage } from 'naive-ui'
+import { ListChecks, RefreshCw, X, Ban, Trash2 } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
 
-import { listTasks } from '@/api/tasks'
+import { listTasks, cancelTask, clearFailedTasks } from '@/api/tasks'
 import type { Task, TaskStatus } from '@/types/task'
 
 // 自管任务列表：定时刷新活跃任务（pending/running/failed），不依赖 TasksView 的 store
@@ -13,6 +13,12 @@ const loading = shallowRef(false)
 const error = shallowRef<string | null>(null)
 const showDrawer = shallowRef(false)
 let refreshTimer: number | undefined
+
+const message = useMessage()
+// 正在取消中的任务 ID 集合（防止重复提交）
+const cancelingTasks = shallowRef<Set<number>>(new Set())
+// 正在清理失败任务的 loading
+const clearingFailed = shallowRef(false)
 
 // 活跃任务数（badge 显示值）
 const activeCount = computed(() => activeTasks.value.length)
@@ -35,11 +41,51 @@ async function refresh() {
     ])
     const merged = [...runningResp.items, ...pendingResp.items, ...failedResp.items]
     merged.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-    activeTasks.value = merged.slice(0, 50)
+    // 去重（同一任务可能出现在不同状态查询结果中）
+    const seen = new Set<number>()
+    activeTasks.value = merged.filter((t) => {
+      if (seen.has(t.id)) return false
+      seen.add(t.id)
+      return true
+    }).slice(0, 50)
   } catch (err) {
     error.value = err instanceof Error ? err.message : '任务刷新失败'
   } finally {
     loading.value = false
+  }
+}
+
+// 停止指定任务（running 中断下载，pending 标记跳过）
+async function stopTask(task: Task) {
+  if (cancelingTasks.value.has(task.id)) return
+  const next = new Set(cancelingTasks.value)
+  next.add(task.id)
+  cancelingTasks.value = next
+  try {
+    await cancelTask(task.id)
+    message.success('已发送停止信号')
+    await refresh()
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '停止任务失败')
+  } finally {
+    const done = new Set(cancelingTasks.value)
+    done.delete(task.id)
+    cancelingTasks.value = done
+  }
+}
+
+// 清理所有失败状态的任务及关联日志
+async function clearFailed() {
+  if (clearingFailed.value) return
+  clearingFailed.value = true
+  try {
+    const resp = await clearFailedTasks()
+    message.success(`已清理 ${resp.deleted} 个失败任务`)
+    await refresh()
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '清理失败任务失败')
+  } finally {
+    clearingFailed.value = false
   }
 }
 
@@ -160,6 +206,17 @@ const pendingPosition = computed(() => {
           <NTag v-if="runningCount > 0" size="small" type="warning">运行中 {{ runningCount }}</NTag>
           <NTag v-if="pendingCount > 0" size="small" type="info">排队中 {{ pendingCount }}</NTag>
           <NTag v-if="failedCount > 0" size="small" type="error">失败 {{ failedCount }}</NTag>
+          <NButton
+            v-if="failedCount > 0"
+            size="tiny"
+            type="error"
+            ghost
+            :loading="clearingFailed"
+            @click="clearFailed"
+          >
+            <template #icon><Trash2 :size="12" /></template>
+            清理
+          </NButton>
         </NSpace>
       </template>
 
@@ -188,6 +245,16 @@ const pendingPosition = computed(() => {
             </span>
             <span class="task-type">{{ taskTypeLabel(task.type) }}</span>
             <span class="task-time">{{ formatTime(task.startedAt || task.createdAt) }}</span>
+            <NButton
+              v-if="task.status === 'running' || task.status === 'pending'"
+              size="tiny"
+              quaternary
+              :loading="cancelingTasks.has(task.id)"
+              @click="stopTask(task)"
+            >
+              <template #icon><Ban :size="12" /></template>
+              停止
+            </NButton>
           </div>
           <div class="task-item-body">
             <span class="task-repo">{{ task.repositoryName || `#${task.repositoryId}` }}</span>

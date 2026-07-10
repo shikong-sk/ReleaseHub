@@ -65,6 +65,10 @@ type Service struct {
 	concurCond  *stdsync.Cond
 	inFlight    int // 当前正在执行的任务数
 	maxInFlight int // 当前允许的最大并发数（= maxConcurrentTasks)
+
+	// 运行时取消表：sync 层 taskID → cancelFunc，用于中断 executeJob 中的 sync 任务
+	cancelMu  stdsync.Mutex
+	cancelMap map[uint]context.CancelFunc
 }
 
 // startWorkers 启动固定数量的 worker goroutine 消费任务队列
@@ -195,6 +199,58 @@ func (s *Service) ActiveProgresses() map[uint]assetsvc.DownloadProgress {
 	return s.assetService.ActiveProgresses()
 }
 
+// registerCancel 注册 sync 层任务取消函数
+func (s *Service) registerCancel(taskID uint, cancel context.CancelFunc) {
+	s.cancelMu.Lock()
+	if s.cancelMap == nil {
+		s.cancelMap = make(map[uint]context.CancelFunc)
+	}
+	s.cancelMap[taskID] = cancel
+	s.cancelMu.Unlock()
+}
+
+// unregisterCancel 注销 sync 层任务取消函数
+func (s *Service) unregisterCancel(taskID uint) {
+	s.cancelMu.Lock()
+	delete(s.cancelMap, taskID)
+	s.cancelMu.Unlock()
+}
+
+// CancelTask 取消指定任务
+// 根据 task type 分发：download_asset 委托给 assetService 中断 HTTP 下载；sync_release 等取消本层 ctx
+func (s *Service) CancelTask(ctx context.Context, taskID uint) error {
+	var task models.Task
+	if err := s.db.WithContext(ctx).First(&task, taskID).Error; err != nil {
+		return fmt.Errorf("查找任务失败: %w", err)
+	}
+	if task.Status != models.TaskStatusRunning && task.Status != models.TaskStatusPending {
+		return fmt.Errorf("任务状态 %s 不支持取消", task.Status)
+	}
+
+	// download_asset 任务委托给 assetService 处理（它能中断 HTTP 下载并更新 DB）
+	if task.Type == "download_asset" {
+		return s.assetService.CancelDownloadTask(ctx, taskID)
+	}
+
+	// sync 层任务：先取消 context 中断后台执行，executeSyncRepository 等会检测 ctx 取消并更新 DB
+	s.cancelMu.Lock()
+	cancel, ok := s.cancelMap[taskID]
+	s.cancelMu.Unlock()
+	if ok {
+		cancel()
+		return nil
+	}
+
+	// pending 任务（或 running 但尚未注册 cancel）：直接更新 DB
+	now := time.Now().UTC()
+	return s.db.WithContext(ctx).Model(&models.Task{}).Where("id = ?", taskID).
+		Updates(map[string]any{
+			"status":        models.TaskStatusCanceled,
+			"finished_at":   &now,
+			"error_message": "任务已被手动取消",
+		}).Error
+}
+
 // Stop 停止 worker pool，等待在途任务完成
 func (s *Service) Stop() {
 	s.stopOnce.Do(func() {
@@ -214,10 +270,15 @@ func (s *Service) Stop() {
 
 // executeJob 根据 job 类型分发到对应的执行函数
 func (s *Service) executeJob(job taskJob) {
-	bgCtx := context.Background()
+	// 创建可取消 ctx，注册到 cancelMap 供 CancelTask 中断执行
+	ctx, cancel := context.WithCancel(context.Background())
+	s.registerCancel(job.taskID, cancel)
+	defer s.unregisterCancel(job.taskID)
+	defer cancel() // 释放 context
+
 	// 重新加载任务记录（可能在排队期间状态已变）
 	var task models.Task
-	if err := s.db.WithContext(bgCtx).First(&task, job.taskID).Error; err != nil {
+	if err := s.db.WithContext(ctx).First(&task, job.taskID).Error; err != nil {
 		return
 	}
 	// 已被取消的任务跳过
@@ -226,11 +287,11 @@ func (s *Service) executeJob(job taskJob) {
 	}
 	switch job.kind {
 	case "sync_latest":
-		s.executeSyncRepository(bgCtx, job.repositoryID, task)
+		s.executeSyncRepository(ctx, job.repositoryID, task)
 	case "sync_by_tag":
-		s.executeSyncByTag(bgCtx, job.repositoryID, job.tag, task)
+		s.executeSyncByTag(ctx, job.repositoryID, job.tag, task)
 	case "retry_asset":
-		s.executeRetryAsset(bgCtx, job.assetID, task)
+		s.executeRetryAsset(ctx, job.assetID, task)
 	}
 }
 
@@ -487,10 +548,15 @@ func (s *Service) executeSyncRepository(ctx context.Context, repositoryID uint, 
 	now := time.Now().UTC()
 	task.FinishedAt = &now
 	if len(failedAssets) > 0 {
-		task.Status = models.TaskStatusFailed
-		task.ErrorMessage = joinAssetErrors(failedAssets)
+		if errors.Is(ctx.Err(), context.Canceled) {
+			task.Status = models.TaskStatusCanceled
+			task.ErrorMessage = "任务已被手动取消"
+		} else {
+			task.Status = models.TaskStatusFailed
+			task.ErrorMessage = joinAssetErrors(failedAssets)
+			s.notifySyncFailed(ctx, repositoryID, errors.New(task.ErrorMessage))
+		}
 		_ = s.db.WithContext(ctx).Save(&task).Error
-		s.notifySyncFailed(ctx, repositoryID, errors.New(task.ErrorMessage))
 		return
 	}
 
@@ -559,10 +625,15 @@ func (s *Service) executeSyncByTag(ctx context.Context, repositoryID uint, tag s
 	now := time.Now().UTC()
 	task.FinishedAt = &now
 	if len(failedAssets) > 0 {
-		task.Status = models.TaskStatusFailed
-		task.ErrorMessage = joinAssetErrors(failedAssets)
+		if errors.Is(ctx.Err(), context.Canceled) {
+			task.Status = models.TaskStatusCanceled
+			task.ErrorMessage = "任务已被手动取消"
+		} else {
+			task.Status = models.TaskStatusFailed
+			task.ErrorMessage = joinAssetErrors(failedAssets)
+			s.notifySyncFailed(ctx, repositoryID, errors.New(task.ErrorMessage))
+		}
 		_ = s.db.WithContext(ctx).Save(&task).Error
-		s.notifySyncFailed(ctx, repositoryID, errors.New(task.ErrorMessage))
 		return
 	}
 
@@ -735,8 +806,14 @@ func (s *Service) downloadAssets(ctx context.Context, assets []models.Asset) ([]
 
 func (s *Service) failTask(ctx context.Context, task *models.Task, err error) {
 	now := time.Now().UTC()
-	task.Status = models.TaskStatusFailed
-	task.ErrorMessage = err.Error()
+	// ctx 被取消时标记为 canceled 而非 failed（CancelTask 触发的中断）
+	if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+		task.Status = models.TaskStatusCanceled
+		task.ErrorMessage = "任务已被手动取消"
+	} else {
+		task.Status = models.TaskStatusFailed
+		task.ErrorMessage = err.Error()
+	}
 	task.FinishedAt = &now
 	_ = s.db.WithContext(ctx).Save(task).Error
 }

@@ -73,7 +73,12 @@ func NewRouter(deps Dependencies) http.Handler {
 	if deps.SyncerService != nil {
 		progressProvider = deps.SyncerService
 	}
-	registerTaskRoutes(router, deps.DB, progressProvider)
+	// 同样的 nil 接口坑：canceler 也需显式判空
+	var canceler TaskCanceler
+	if deps.SyncerService != nil {
+		canceler = deps.SyncerService
+	}
+	registerTaskRoutes(router, deps.DB, progressProvider, canceler)
 	registerFileRoutes(router, deps.DB)
 	registerTokenRoutes(router, deps.DB)
 	registerTokenHealthRoutes(router, deps.DB, deps.Config.GitHub.APIBaseURL)

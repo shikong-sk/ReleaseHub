@@ -21,10 +21,16 @@ type SyncerProgressProvider interface {
 	ActiveProgresses() map[uint]assetsvc.DownloadProgress
 }
 
+// TaskCanceler 任务取消接口（供 task handler 调用 CancelTask）
+type TaskCanceler interface {
+	CancelTask(ctx context.Context, taskID uint) error
+}
+
 type taskHandler struct {
 	db          *gorm.DB
 	logService  *tasklog.Service
 	progress    SyncerProgressProvider // 可空，无下载进行时为 nil
+	canceler    TaskCanceler           // 可空，测试环境无 syncer 时为 nil
 }
 
 type taskResponse struct {
@@ -52,17 +58,20 @@ type taskResponse struct {
 	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
-func registerTaskRoutes(router *gin.Engine, db *gorm.DB, progress SyncerProgressProvider) {
+func registerTaskRoutes(router *gin.Engine, db *gorm.DB, progress SyncerProgressProvider, canceler TaskCanceler) {
 	handler := &taskHandler{
 		db:         db,
 		logService: tasklog.NewService(db),
 		progress:   progress,
+		canceler:   canceler,
 	}
 
 	group := router.Group("/api/tasks")
 	group.GET("", handler.list)
 	group.GET("/:id", handler.get)
 	group.GET("/:id/logs", handler.logs)
+	group.POST("/:id/cancel", handler.cancel)
+	group.DELETE("/failed", handler.clearFailed)
 }
 
 func (h *taskHandler) list(c *gin.Context) {
@@ -180,6 +189,50 @@ func (h *taskHandler) logs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"items": logs,
 	})
+}
+
+// cancel 取消/停止指定任务（running 中断下载，pending 标记跳过）
+func (h *taskHandler) cancel(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	if h.canceler == nil {
+		writeError(c, http.StatusServiceUnavailable, "任务取消功能不可用")
+		return
+	}
+	if err := h.canceler.CancelTask(c.Request.Context(), id); err != nil {
+		writeError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// clearFailed 清理所有失败状态的任务及其关联日志
+func (h *taskHandler) clearFailed(c *gin.Context) {
+	ctx := c.Request.Context()
+	var taskIDs []uint
+	if err := h.db.WithContext(ctx).Model(&models.Task{}).
+		Where("status = ?", models.TaskStatusFailed).
+		Pluck("id", &taskIDs).Error; err != nil {
+		writeError(c, http.StatusInternalServerError, "查询失败任务出错")
+		return
+	}
+	if len(taskIDs) == 0 {
+		c.JSON(http.StatusOK, gin.H{"deleted": 0})
+		return
+	}
+	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("task_id IN ?", taskIDs).Delete(&models.TaskLog{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("id IN ?", taskIDs).Delete(&models.Task{}).Error
+	})
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "清理失败任务出错")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": len(taskIDs)})
 }
 
 func (h *taskHandler) buildTaskResponses(ctx context.Context, tasks []models.Task) []taskResponse {
