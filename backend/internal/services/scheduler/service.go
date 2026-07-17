@@ -188,6 +188,11 @@ func (s *Service) retryFailedAssetsInScheduling(ctx context.Context) {
 			Model(&models.Task{}).
 			Where("asset_id = ? AND status = ?", asset.ID, models.TaskStatusFailed).
 			Count(&failCount)
+		// 防御异常数据：failed asset 按 Status 查询必有 ≥1 个失败 task，
+		// 但若审计日志被清理或手动改库导致 failCount=0，跳过避免无退避重试风暴
+		if failCount == 0 {
+			continue
+		}
 		if failCount >= 5 {
 			continue
 		}
