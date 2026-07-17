@@ -10,6 +10,11 @@ export interface AppConfig {
   authEnabled: boolean
   syncerMaxConcurrentTasks: number
   syncerMaxConcurrentDownloads: number
+  downloadMaxSpeedBytes: number
+  aria2RPC: string
+  aria2Secret: string
+  aria2HTTP: string
+  aria2Dir: string
   taskLogRetentionDays: number
   operationLogRetentionDays: number
 }
@@ -27,6 +32,10 @@ export interface AppConfigUpdate {
   authEnabled?: boolean
   syncerMaxConcurrentTasks?: number
   syncerMaxConcurrentDownloads?: number
+  downloadMaxSpeedBytes?: number
+  aria2RPC?: string
+  aria2Secret?: string
+  aria2Dir?: string
   taskLogRetentionDays?: number
   operationLogRetentionDays?: number
 }

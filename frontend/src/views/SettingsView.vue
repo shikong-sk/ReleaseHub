@@ -42,6 +42,10 @@ const githubApiBaseUrl = shallowRef('')
 const authEnabled = shallowRef(false)
 const syncerMaxConcurrentTasks = shallowRef(2)
 const syncerMaxConcurrentDownloads = shallowRef(3)
+const downloadMaxSpeedBytes = shallowRef(0)
+const aria2RPC = shallowRef('')
+const aria2Secret = shallowRef('')
+const aria2Dir = shallowRef('')
 const configSaving = shallowRef(false)
 const configEditing = shallowRef(false)
 const restarting = shallowRef(false)
@@ -54,6 +58,10 @@ const editGithubApiBaseUrl = shallowRef('')
 const editAuthEnabled = shallowRef(false)
 const editSyncerMaxConcurrentTasks = shallowRef(2)
 const editSyncerMaxConcurrentDownloads = shallowRef(3)
+const editDownloadMaxSpeedBytes = shallowRef(0)
+const editAria2RPC = shallowRef('')
+const editAria2Secret = shallowRef('')
+const editAria2Dir = shallowRef('')
 
 const showModal = shallowRef(false)
 const formName = shallowRef('')
@@ -128,6 +136,10 @@ onMounted(async () => {
     authEnabled.value = config.authEnabled
     syncerMaxConcurrentTasks.value = config.syncerMaxConcurrentTasks
     syncerMaxConcurrentDownloads.value = config.syncerMaxConcurrentDownloads
+    downloadMaxSpeedBytes.value = config.downloadMaxSpeedBytes
+    aria2RPC.value = config.aria2RPC
+    aria2Secret.value = config.aria2Secret
+    aria2Dir.value = config.aria2Dir
     configLoaded.value = true
     resetEditForm()
   } catch {
@@ -143,6 +155,10 @@ function resetEditForm() {
   editAuthEnabled.value = authEnabled.value
   editSyncerMaxConcurrentTasks.value = syncerMaxConcurrentTasks.value
   editSyncerMaxConcurrentDownloads.value = syncerMaxConcurrentDownloads.value
+  editDownloadMaxSpeedBytes.value = downloadMaxSpeedBytes.value
+  editAria2RPC.value = aria2RPC.value
+  editAria2Secret.value = aria2Secret.value
+  editAria2Dir.value = aria2Dir.value
 }
 
 function startEditConfig() {
@@ -180,6 +196,18 @@ async function saveConfig() {
     if (editSyncerMaxConcurrentDownloads.value !== syncerMaxConcurrentDownloads.value) {
       update.syncerMaxConcurrentDownloads = editSyncerMaxConcurrentDownloads.value
     }
+    if (editDownloadMaxSpeedBytes.value !== downloadMaxSpeedBytes.value) {
+      update.downloadMaxSpeedBytes = editDownloadMaxSpeedBytes.value ?? 0
+    }
+    if (editAria2RPC.value !== aria2RPC.value) {
+      update.aria2RPC = editAria2RPC.value
+    }
+    if (editAria2Secret.value !== aria2Secret.value) {
+      update.aria2Secret = editAria2Secret.value
+    }
+    if (editAria2Dir.value !== aria2Dir.value) {
+      update.aria2Dir = editAria2Dir.value
+    }
 
     // 没有变更则直接退出编辑
     if (Object.keys(update).length === 0) {
@@ -196,6 +224,10 @@ async function saveConfig() {
     authEnabled.value = result.authEnabled
     syncerMaxConcurrentTasks.value = result.syncerMaxConcurrentTasks
     syncerMaxConcurrentDownloads.value = result.syncerMaxConcurrentDownloads
+    downloadMaxSpeedBytes.value = result.downloadMaxSpeedBytes
+    aria2RPC.value = result.aria2RPC
+    aria2Secret.value = result.aria2Secret
+    aria2Dir.value = result.aria2Dir
     configEditing.value = false
     message.success('配置已更新')
   } catch (err) {
@@ -355,6 +387,18 @@ async function handleDelete(id: number) {
         <NDescriptionsItem label="下载并发数">
           {{ syncerMaxConcurrentDownloads }} 个资产/任务
         </NDescriptionsItem>
+        <NDescriptionsItem label="下载限速">
+          {{ downloadMaxSpeedBytes > 0 ? `${downloadMaxSpeedBytes} B/s` : '不限速' }}
+        </NDescriptionsItem>
+        <NDescriptionsItem label="Aria2 RPC">
+          {{ aria2RPC || '未配置（走 HTTP）' }}
+        </NDescriptionsItem>
+        <NDescriptionsItem label="Aria2 Secret">
+          {{ aria2Secret ? '已配置' : '未配置' }}
+        </NDescriptionsItem>
+        <NDescriptionsItem label="Aria2 目录">
+          {{ aria2Dir || '默认' }}
+        </NDescriptionsItem>
       </NDescriptions>
 
       <!-- 编辑模式 -->
@@ -390,8 +434,28 @@ async function handleDelete(id: number) {
           <NInputNumber v-model:value="editSyncerMaxConcurrentDownloads" :min="1" :max="32" />
           <span style="margin-left: 8px; color: #8c8c8c">单个任务内同时下载的资产数</span>
         </NFormItem>
+        <NFormItem label="下载限速">
+          <NInputNumber v-model:value="editDownloadMaxSpeedBytes" :min="0" :step="1048576" />
+          <span style="margin-left: 8px; color: #8c8c8c">单位 B/s，0 = 不限速（仅 HTTP 路径生效，aria2 模式不支持）</span>
+        </NFormItem>
+        <NFormItem>
+          <template #label>
+            Aria2 RPC <NText depth="3" type="warning" style="font-size: 12px">选填</NText>
+          </template>
+          <NInput v-model:value="editAria2RPC" placeholder="http://localhost:6800/jsonrpc" />
+          <span style="margin-left: 8px; color: #8c8c8c">aria2 JSON-RPC 端点；留空则用 HTTP 下载</span>
+        </NFormItem>
+        <NFormItem label="Aria2 Secret">
+          <NInput v-model:value="editAria2Secret" type="password" placeholder="留空表示无 secret" />
+        </NFormItem>
+        <NFormItem label="Aria2 目录">
+          <NInput v-model:value="editAria2Dir" placeholder="留空使用 aria2 daemon 默认目录" />
+        </NFormItem>
         <NAlert type="info" style="margin-top: 8px">
           扫描间隔是全局定时器的轮询周期，每轮检查哪些仓库到期；单个仓库的同步频率由仓库配置中的同步间隔决定。并发控制分三层：调度并发数限制定时扫描投递速率，任务并发数限制后台任务队列执行速率，下载并发数限制单任务内资产下载速率。存储目录为环境变量配置，需重启服务生效。
+        </NAlert>
+        <NAlert type="info" style="margin-top: 8px">
+          Aria2 模式（RPC 端点非空）下下载由 aria2 daemon 独立进程完成：仓库代理配置不生效（请在 aria2 daemon 端配置网络/代理）、下载限速不生效（由 aria2 daemon --max-download-limit 控制）、且 aria2 完成文件目录需对 ReleaseHub 进程可见（本服务通过共享文件系统直接读取后写入存储）。
         </NAlert>
       </NForm>
     </NCard>
