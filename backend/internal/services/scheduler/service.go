@@ -156,11 +156,20 @@ func (s *Service) RunDue(ctx context.Context, now time.Time) int {
 		}()
 	}
 
+	// 在同步仓库之后，重试失败的资产下载
+	s.retryFailedAssetsInScheduling(ctx)
+
 	return started
 }
 
-// retryFailedAssetsInScheduling 在调度循环中重试最近失败的资产下载
+// retryFailedAssetsInScheduling 在调度循环中重试最近失败的资产下载。
+// 按≤5次自动重试、指数退避（attempt²分钟）策略执行，
+// 通过检查 pending/running 任务避免与同步入队重复。
 func (s *Service) retryFailedAssetsInScheduling(ctx context.Context) {
+	if s.syncer == nil {
+		return
+	}
+
 	var failedAssets []models.Asset
 	if err := s.db.WithContext(ctx).
 		Where("status = ?", models.AssetStatusFailed).
@@ -170,6 +179,8 @@ func (s *Service) retryFailedAssetsInScheduling(ctx context.Context) {
 		return
 	}
 
+	retried := 0
+	now := time.Now().UTC()
 	for _, asset := range failedAssets {
 		// 检查失败次数，超过 5 次不再自动重试
 		var failCount int64
@@ -181,34 +192,31 @@ func (s *Service) retryFailedAssetsInScheduling(ctx context.Context) {
 			continue
 		}
 
-		if _, err := s.syncer.EnqueueRetryAsset(ctx, asset.ID); err != nil {
-			s.logger.Debug("重试下载资产失败",
-				zap.Uint("assetID", asset.ID),
-				zap.String("name", asset.Name),
-				zap.Error(err),
-			)
+		// 去重：已有 pending/running 任务的资产跳过，避免与同步入队重复
+		var inFlightCount int64
+		s.db.WithContext(ctx).
+			Model(&models.Task{}).
+			Where("asset_id = ? AND status IN ?", asset.ID, []models.TaskStatus{
+				models.TaskStatusPending, models.TaskStatusRunning,
+			}).
+			Count(&inFlightCount)
+		if inFlightCount > 0 {
+			continue
 		}
-	}
-}
 
-// RetryFailedAssets 扫描最近失败的资产，通过 assetService 触发重试下载。
-// 调用方应在定时循环中周期性调用此方法。
-func (s *Service) RetryFailedAssets(ctx context.Context, assetService interface {
-	Download(ctx context.Context, assetID uint) (interface{}, error)
-}) int {
-	var failedAssets []models.Asset
-	if err := s.db.WithContext(ctx).
-		Where("status = ?", models.AssetStatusFailed).
-		Order("updated_at ASC").
-		Limit(10).
-		Find(&failedAssets).Error; err != nil {
-		s.logger.Warn("查询失败资产失败", zap.Error(err))
-		return 0
-	}
+		// 指数退避：backoff = failCount² 分钟，距离最近一次失败不足 backoff 则跳过
+		backoff := time.Duration(failCount*failCount) * time.Minute
+		var lastFailedTask models.Task
+		if err := s.db.WithContext(ctx).
+			Where("asset_id = ? AND status = ?", asset.ID, models.TaskStatusFailed).
+			Order("finished_at DESC").
+			First(&lastFailedTask).Error; err == nil &&
+			lastFailedTask.FinishedAt != nil &&
+			lastFailedTask.FinishedAt.Add(backoff).After(now) {
+			continue
+		}
 
-	retried := 0
-	for _, asset := range failedAssets {
-		if _, err := assetService.Download(ctx, asset.ID); err != nil {
+		if _, err := s.syncer.EnqueueRetryAsset(ctx, asset.ID); err != nil {
 			s.logger.Debug("重试下载资产失败",
 				zap.Uint("assetID", asset.ID),
 				zap.String("name", asset.Name),
@@ -220,10 +228,8 @@ func (s *Service) RetryFailedAssets(ctx context.Context, assetService interface 
 	}
 
 	if retried > 0 {
-		s.logger.Info("Scheduler 重试下载资产", zap.Int("retried", retried))
+		s.logger.Info("Scheduler 自动重试失败资产", zap.Int("retried", retried))
 	}
-
-	return retried
 }
 
 func (s *Service) dueRepositories(ctx context.Context, now time.Time) ([]models.Repository, error) {
