@@ -1,109 +1,123 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, shallowRef } from 'vue'
-import { NAlert, NCard, NGrid, NGi, NInput, NModal, NSelect, NStatistic, useMessage } from 'naive-ui'
+import { computed, onMounted, onUnmounted, shallowRef } from "vue";
+import {
+  NAlert,
+  NCard,
+  NGrid,
+  NGi,
+  NInput,
+  NModal,
+  NSelect,
+  NStatistic,
+  useMessage,
+} from "naive-ui";
 
-import AssetPanel from '@/components/repository/AssetPanel.vue'
-import RepositoryFilesDrawer from '@/components/repository/RepositoryFilesDrawer.vue'
-import ReleaseHistoryDrawer from '@/components/repository/ReleaseHistoryDrawer.vue'
-import RepositoryFormDrawer from '@/components/repository/RepositoryFormDrawer.vue'
-import RepositoryTable from '@/components/repository/RepositoryTable.vue'
-import RepositoryToolbar from '@/components/repository/RepositoryToolbar.vue'
-import { useAuthStore } from '@/stores/auth'
-import { useRepositoriesStore } from '@/stores/repositories'
-import { useReleasesStore } from '@/stores/releases'
-import { deleteAsset, listReleaseAssets } from '@/api/releases'
-import { syncRepositoryByTag, listRemoteTags } from '@/api/repositories'
-import type { Asset } from '@/types/release'
-import type { Repository, RepositoryFormMode, RepositoryPayload } from '@/types/repository'
+import AssetPanel from "@/components/repository/AssetPanel.vue";
+import RepositoryFilesDrawer from "@/components/repository/RepositoryFilesDrawer.vue";
+import ReleaseHistoryDrawer from "@/components/repository/ReleaseHistoryDrawer.vue";
+import RepositoryFormDrawer from "@/components/repository/RepositoryFormDrawer.vue";
+import RepositoryTable from "@/components/repository/RepositoryTable.vue";
+import RepositoryToolbar from "@/components/repository/RepositoryToolbar.vue";
+import { useAuthStore } from "@/stores/auth";
+import { useRepositoriesStore } from "@/stores/repositories";
+import { useReleasesStore } from "@/stores/releases";
+import { deleteAsset, listReleaseAssets } from "@/api/releases";
+import { syncRepositoryByTag, listRemoteTags } from "@/api/repositories";
+import type { Asset } from "@/types/release";
+import type {
+  Repository,
+  RepositoryFormMode,
+  RepositoryPayload,
+} from "@/types/repository";
 
-const authStore = useAuthStore()
-const repositoryStore = useRepositoriesStore()
-const releaseStore = useReleasesStore()
-const message = useMessage()
+const authStore = useAuthStore();
+const repositoryStore = useRepositoriesStore();
+const releaseStore = useReleasesStore();
+const message = useMessage();
 
-const search = shallowRef('')
-const drawerVisible = shallowRef(false)
-const formMode = shallowRef<RepositoryFormMode>('create')
-const editingRepository = shallowRef<Repository | null>(null)
-const historyRepository = shallowRef<Repository | null>(null)
-const showHistory = shallowRef(false)
-const filesRepository = shallowRef<Repository | null>(null)
-const showFiles = shallowRef(false)
-let assetsRefreshTimer: number | undefined
+const search = shallowRef("");
+const drawerVisible = shallowRef(false);
+const formMode = shallowRef<RepositoryFormMode>("create");
+const editingRepository = shallowRef<Repository | null>(null);
+const historyRepository = shallowRef<Repository | null>(null);
+const showHistory = shallowRef(false);
+const filesRepository = shallowRef<Repository | null>(null);
+const showFiles = shallowRef(false);
+let assetsRefreshTimer: number | undefined;
 
-const showSyncTagModal = shallowRef(false)
-const syncTagRepository = shallowRef<Repository | null>(null)
-const syncTagInput = shallowRef('')
-const syncTagLoading = shallowRef(false)
-const remoteTags = shallowRef<string[]>([])
-const remoteTagsLoading = shallowRef(false)
+const showSyncTagModal = shallowRef(false);
+const syncTagRepository = shallowRef<Repository | null>(null);
+const syncTagInput = shallowRef("");
+const syncTagLoading = shallowRef(false);
+const remoteTags = shallowRef<string[]>([]);
+const remoteTagsLoading = shallowRef(false);
 
 const filteredRepositories = computed(() => {
-  const keyword = search.value.trim().toLowerCase()
+  const keyword = search.value.trim().toLowerCase();
   if (!keyword) {
-    return repositoryStore.items
+    return repositoryStore.items;
   }
 
   return repositoryStore.items.filter((item) =>
-    `${item.owner}/${item.repo}`.toLowerCase().includes(keyword)
-  )
-})
+    `${item.owner}/${item.repo}`.toLowerCase().includes(keyword),
+  );
+});
 
 onMounted(() => {
-  void repositoryStore.refresh()
+  void repositoryStore.refresh();
   assetsRefreshTimer = window.setInterval(() => {
-    void refreshLatestAssets()
-  }, 3000)
-})
+    void refreshLatestAssets();
+  }, 3000);
+});
 
 onUnmounted(() => {
   if (assetsRefreshTimer) {
-    window.clearInterval(assetsRefreshTimer)
+    window.clearInterval(assetsRefreshTimer);
   }
-})
+});
 
 function openHistory(repository: Repository) {
-  historyRepository.value = repository
-  showHistory.value = true
+  historyRepository.value = repository;
+  showHistory.value = true;
 }
 
 function openFiles(repository: Repository) {
-  filesRepository.value = repository
-  showFiles.value = true
+  filesRepository.value = repository;
+  showFiles.value = true;
 }
 
 async function refreshLatestAssets() {
-  const latest = releaseStore.latestCheck
-  if (!latest) return
+  const latest = releaseStore.latestCheck;
+  if (!latest) return;
 
   try {
-    const result = await listReleaseAssets(latest.release.id)
+    const result = await listReleaseAssets(latest.release.id);
     releaseStore.setLatestCheck({
       ...latest,
-      assets: result.items
-    })
+      assets: result.items,
+    });
   } catch {
     // 轮询刷新失败不打断用户当前操作。
   }
 }
 
 function openCreateDrawer() {
-  formMode.value = 'create'
-  editingRepository.value = null
-  drawerVisible.value = true
+  formMode.value = "create";
+  editingRepository.value = null;
+  drawerVisible.value = true;
 }
 
 function openEditDrawer(repository: Repository) {
-  formMode.value = 'edit'
-  editingRepository.value = repository
-  drawerVisible.value = true
+  formMode.value = "edit";
+  editingRepository.value = repository;
+  drawerVisible.value = true;
 }
 
 async function submitRepository(payload: RepositoryPayload) {
   try {
-    if (formMode.value === 'create') {
-      await repositoryStore.create(payload)
-      message.success('仓库已新增')
+    if (formMode.value === "create") {
+      await repositoryStore.create(payload);
+      message.success("仓库已新增");
     } else if (editingRepository.value) {
       await repositoryStore.update(editingRepository.value.id, {
         githubTokenId: payload.githubTokenId,
@@ -119,129 +133,143 @@ async function submitRepository(payload: RepositoryPayload) {
         tagFilterMode: payload.tagFilterMode,
         tagIncludePattern: payload.tagIncludePattern,
         tagExcludePattern: payload.tagExcludePattern,
-        retentionKeepLatest: payload.retentionKeepLatest
-      })
-      message.success('仓库已更新')
+        retentionKeepLatest: payload.retentionKeepLatest,
+      });
+      message.success("仓库已更新");
     }
-    drawerVisible.value = false
+    drawerVisible.value = false;
   } catch (err) {
-    message.error(err instanceof Error ? err.message : '保存仓库失败')
+    message.error(err instanceof Error ? err.message : "保存仓库失败");
   }
 }
 
 async function toggleRepository(repository: Repository) {
   try {
-    await repositoryStore.toggleEnabled(repository)
+    await repositoryStore.toggleEnabled(repository);
   } catch (err) {
-    message.error(err instanceof Error ? err.message : '更新启用状态失败')
+    message.error(err instanceof Error ? err.message : "更新启用状态失败");
   }
 }
 
 async function removeRepository(repository: Repository) {
   try {
-    await repositoryStore.remove(repository.id)
-    message.success('仓库已删除')
+    await repositoryStore.remove(repository.id);
+    message.success("仓库已删除");
   } catch (err) {
-    message.error(err instanceof Error ? err.message : '删除仓库失败')
+    message.error(err instanceof Error ? err.message : "删除仓库失败");
   }
 }
 
 async function checkRepository(repository: Repository) {
   try {
-    const result = await repositoryStore.checkLatest(repository)
-    releaseStore.setLatestCheck(result)
-    const pendingCount = result.assets.filter((asset) => asset.status === 'pending').length
+    const result = await repositoryStore.checkLatest(repository);
+    releaseStore.setLatestCheck(result);
+    const pendingCount = result.assets.filter(
+      (asset) => asset.status === "pending",
+    ).length;
     if (result.autoSynced) {
-      message.success(`发现新版本 ${result.release.tag}，已自动开始同步 ${pendingCount} 个资产`)
+      message.success(
+        `发现新版本 ${result.release.tag}，已自动开始同步 ${pendingCount} 个资产`,
+      );
     } else {
-      message.success(`发现 ${result.release.tag}，${pendingCount} 个资产待下载`)
+      message.success(
+        `发现 ${result.release.tag}，${pendingCount} 个资产待下载`,
+      );
     }
   } catch (err) {
-    message.error(err instanceof Error ? err.message : '检查 Release 失败')
+    message.error(err instanceof Error ? err.message : "检查 Release 失败");
   }
 }
 
 async function checkAllRepository(repository: Repository) {
   try {
-    const result = await repositoryStore.checkAll(repository)
-    message.success(
-      `全量检查完成：${result.releases} 个 Release，${result.newReleases} 个新增，${result.pendingAssets} 个资产待下载`
-    )
+    const result = await repositoryStore.checkAll(repository);
+    if (result.autoSynced) {
+      message.success(
+        `全量检查完成：${result.releases} 个 Release，${result.newReleases} 个新增，已自动开始下载 ${result.pendingAssets} 个资产`,
+      );
+    } else {
+      message.success(
+        `全量检查完成：${result.releases} 个 Release，${result.newReleases} 个新增，${result.pendingAssets} 个资产待下载`,
+      );
+    }
   } catch (err) {
-    message.error(err instanceof Error ? err.message : '全量检查失败')
+    message.error(err instanceof Error ? err.message : "全量检查失败");
   }
 }
 
 async function syncRepository(repository: Repository) {
   try {
-    await repositoryStore.syncLatest(repository)
-    message.success('同步任务已加入队列，请在任务页面查看进度')
+    await repositoryStore.syncLatest(repository);
+    message.success("同步任务已加入队列，请在任务页面查看进度");
   } catch (err) {
-    message.error(err instanceof Error ? err.message : '提交同步任务失败')
+    message.error(err instanceof Error ? err.message : "提交同步任务失败");
   }
 }
 
 async function openSyncTagModal(repository: Repository) {
-  syncTagRepository.value = repository
-  syncTagInput.value = ''
-  remoteTags.value = []
-  showSyncTagModal.value = true
+  syncTagRepository.value = repository;
+  syncTagInput.value = "";
+  remoteTags.value = [];
+  showSyncTagModal.value = true;
   // 加载远程 tag 列表
-  remoteTagsLoading.value = true
+  remoteTagsLoading.value = true;
   try {
-    const tags = await listRemoteTags(repository.id)
-    remoteTags.value = tags
+    const tags = await listRemoteTags(repository.id);
+    remoteTags.value = tags;
   } catch {
     // 加载失败不影响手动输入
   } finally {
-    remoteTagsLoading.value = false
+    remoteTagsLoading.value = false;
   }
 }
 
 async function submitSyncTag() {
-  const tag = syncTagInput.value.trim()
-  const repo = syncTagRepository.value
+  const tag = syncTagInput.value.trim();
+  const repo = syncTagRepository.value;
   if (!tag || !repo) {
-    message.warning('请输入版本号')
-    return
+    message.warning("请输入版本号");
+    return;
   }
-  syncTagLoading.value = true
+  syncTagLoading.value = true;
   try {
-    await syncRepositoryByTag(repo.id, tag)
-    message.success(`同步 ${tag} 任务已加入队列，请在任务页面查看进度`)
-    showSyncTagModal.value = false
+    await syncRepositoryByTag(repo.id, tag);
+    message.success(`同步 ${tag} 任务已加入队列，请在任务页面查看进度`);
+    showSyncTagModal.value = false;
   } catch (err) {
-    message.error(err instanceof Error ? err.message : `提交同步 ${tag} 任务失败`)
+    message.error(
+      err instanceof Error ? err.message : `提交同步 ${tag} 任务失败`,
+    );
   } finally {
-    syncTagLoading.value = false
+    syncTagLoading.value = false;
   }
 }
 
 async function downloadAsset(asset: Asset) {
   try {
-    const downloadedAsset = await releaseStore.download(asset)
-    message.success(`已下载 ${downloadedAsset.name}`)
+    const downloadedAsset = await releaseStore.download(asset);
+    message.success(`已下载 ${downloadedAsset.name}`);
   } catch (err) {
-    message.error(err instanceof Error ? err.message : '下载资产失败')
+    message.error(err instanceof Error ? err.message : "下载资产失败");
   }
 }
 
 async function handleDeleteAsset(asset: Asset) {
   try {
-    await deleteAsset(asset.id)
-    message.success(`已删除 ${asset.name}`)
-    await refreshLatestAssets()
+    await deleteAsset(asset.id);
+    message.success(`已删除 ${asset.name}`);
+    await refreshLatestAssets();
   } catch (err) {
-    message.error(err instanceof Error ? err.message : '删除资产失败')
+    message.error(err instanceof Error ? err.message : "删除资产失败");
   }
 }
 
 async function retryAsset(asset: Asset) {
   try {
-    const downloadedAsset = await releaseStore.redownload(asset)
-    message.success(`已重新下载 ${downloadedAsset.name}`)
+    const downloadedAsset = await releaseStore.redownload(asset);
+    message.success(`已重新下载 ${downloadedAsset.name}`);
   } catch (err) {
-    message.error(err instanceof Error ? err.message : '重试下载失败')
+    message.error(err instanceof Error ? err.message : "重试下载失败");
   }
 }
 </script>
@@ -339,12 +367,16 @@ async function retryAsset(asset: Asset) {
       @positive-click="submitSyncTag"
     >
       <p style="margin: 0 0 8px; color: #667085">
-        仓库：{{ syncTagRepository ? `${syncTagRepository.owner}/${syncTagRepository.repo}` : '' }}
+        仓库：{{
+          syncTagRepository
+            ? `${syncTagRepository.owner}/${syncTagRepository.repo}`
+            : ""
+        }}
       </p>
       <NSelect
         v-if="remoteTags.length > 0"
         v-model:value="syncTagInput"
-        :options="remoteTags.map(t => ({ label: t, value: t }))"
+        :options="remoteTags.map((t) => ({ label: t, value: t }))"
         placeholder="选择版本号或手动输入"
         filterable
         tag
@@ -353,7 +385,9 @@ async function retryAsset(asset: Asset) {
       <NInput
         v-else
         v-model:value="syncTagInput"
-        :placeholder="remoteTagsLoading ? '正在加载版本列表...' : '输入版本号，例如 v1.0.0'"
+        :placeholder="
+          remoteTagsLoading ? '正在加载版本列表...' : '输入版本号，例如 v1.0.0'
+        "
         :disabled="remoteTagsLoading"
         @keyup.enter="submitSyncTag"
       />

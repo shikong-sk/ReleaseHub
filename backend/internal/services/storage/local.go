@@ -76,6 +76,16 @@ func (s *LocalStorage) Put(ctx context.Context, objectPath string, reader io.Rea
 	}
 
 	if err := os.Rename(partialPath, safePath); err != nil {
+		// 并发场景下可能另一个 goroutine 已经完成了 rename（.partial 已不存在）。
+		// 如果目标文件已存在，视为成功；否则返回原始错误。
+		if _, statErr := os.Stat(safePath); statErr == nil {
+			return &StoredObject{
+				Path:     filepath.ToSlash(filepath.Clean(objectPath)),
+				AbsPath:  safePath,
+				Size:     written,
+				Filename: filepath.Base(safePath),
+			}, nil
+		}
 		_ = os.Remove(partialPath)
 		return nil, err
 	}

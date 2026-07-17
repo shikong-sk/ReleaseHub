@@ -250,6 +250,13 @@ func (h *repositoryHandler) checkAll(c *gin.Context) {
 		return
 	}
 
+	// 检测到待下载资产时，自动入队全量同步（下载所有版本的 pending 资产）
+	if result.PendingAssets > 0 && h.syncService != nil {
+		if _, syncErr := h.syncService.EnqueueSyncAllRepository(c.Request.Context(), id); syncErr == nil {
+			result.AutoSynced = true
+		}
+	}
+
 	c.JSON(http.StatusOK, result)
 }
 

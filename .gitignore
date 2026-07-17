@@ -6,6 +6,9 @@
 # 本地工作流状态
 .omc/
 .omx/
+.codex/
+.aionrs/
+.tmp/
 
 # Go
 backend/bin/

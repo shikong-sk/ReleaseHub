@@ -456,7 +456,8 @@ func (h *fileHandler) treeForRepository(c *gin.Context, repoQuery string, storag
 		// 检查该版本是否有正在进行的任务
 		var syncing bool
 		for _, a := range releaseAssets {
-			if a.Status == models.AssetStatusPending || a.Status == models.AssetStatusDownloading {
+			// 只有真正下载中的资产才算"同步中"；pending 仅表示等待下载任务，不代表有任务在执行
+			if a.Status == models.AssetStatusDownloading {
 				syncing = true
 				break
 			}

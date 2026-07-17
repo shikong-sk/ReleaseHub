@@ -44,7 +44,7 @@ func (r *Registry) GetProviderWithTransport(providerName, apiBaseURL string, tra
 		if base == "" {
 			base = r.githubAPIBaseURL
 		}
-		client, err := newGitHubClient(base)
+		client, err := newGitHubClient(base, transport)
 		if err != nil {
 			return nil, err
 		}

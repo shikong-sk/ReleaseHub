@@ -3,6 +3,8 @@ package provider
 import (
 	"context"
 
+	"net/http"
+
 	githubsvc "releasehub/backend/internal/services/github"
 )
 
@@ -82,6 +84,6 @@ func toProviderRelease(r *githubsvc.Release) *ProviderRelease {
 }
 
 // newGitHubClient 创建 GitHub Client（供 registry 使用）
-func newGitHubClient(apiBaseURL string) (*githubsvc.Client, error) {
-	return githubsvc.NewClient(apiBaseURL)
+func newGitHubClient(apiBaseURL string, transport *http.Transport) (*githubsvc.Client, error) {
+	return githubsvc.NewClientWithTransport(apiBaseURL, transport)
 }

@@ -60,12 +60,20 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem(TOKEN_KEY)
   }
 
-  // 角色判断
-  const isAdmin = computed(() => user.value?.role === 'admin')
-  const isOperator = computed(() => user.value?.role === 'operator')
-  const isViewer = computed(() => user.value?.role === 'viewer')
+  // 认证开关：关闭时后端将所有请求视为 admin，前端需同步此状态
+  const authEnabled = shallowRef(true)
+
+  function setAuthEnabled(value: boolean) {
+    authEnabled.value = value
+  }
+
+  // 认证关闭时所有操作视为管理员权限，与后端 APIKeyOrAuth 的 role=admin 语义一致
+  const isAuthDisabled = computed(() => !authEnabled.value)
+  const isAdmin = computed(() => isAuthDisabled.value || user.value?.role === 'admin')
+  const isOperator = computed(() => !isAuthDisabled.value && user.value?.role === 'operator')
+  const isViewer = computed(() => !isAuthDisabled.value && user.value?.role === 'viewer')
   const canWrite = computed(() => isAdmin.value || isOperator.value)
   const canAdmin = computed(() => isAdmin.value)
 
-  return { user, token, loading, bootstrapping, error, isLoggedIn, isAdmin, isOperator, isViewer, canWrite, canAdmin, login, fetchMe, ensureUser, changePassword, logout }
+  return { user, token, loading, bootstrapping, error, isLoggedIn, isAdmin, isOperator, isViewer, canWrite, canAdmin, authEnabled, setAuthEnabled, login, fetchMe, ensureUser, changePassword, logout }
 })

@@ -79,12 +79,15 @@ const router = createRouter({
 let authEnabledCache: boolean | null = null
 
 router.beforeEach(async (to) => {
+  const authStore = useAuthStore()
   if (authEnabledCache === null) {
     try {
       const config = await getAppConfig()
       authEnabledCache = config.authEnabled
+      authStore.setAuthEnabled(config.authEnabled)
     } catch {
       authEnabledCache = false
+      authStore.setAuthEnabled(false)
     }
   }
 
@@ -92,7 +95,6 @@ router.beforeEach(async (to) => {
     return true
   }
 
-  const authStore = useAuthStore()
   if (to.meta.public) {
     return authStore.isLoggedIn && to.name === 'login' ? { name: 'dashboard' } : true
   }

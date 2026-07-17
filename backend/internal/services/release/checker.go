@@ -54,6 +54,7 @@ type CheckAllResult struct {
 	NewReleases   int               `json:"newReleases"`
 	TotalAssets   int               `json:"totalAssets"`
 	PendingAssets int               `json:"pendingAssets"`
+	AutoSynced    bool              `json:"autoSynced"`
 	SkippedAssets int               `json:"skippedAssets"`
 	Task          models.Task       `json:"task"`
 }

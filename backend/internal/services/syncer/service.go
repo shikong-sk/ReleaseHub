@@ -292,6 +292,8 @@ func (s *Service) executeJob(job taskJob) {
 		s.executeSyncByTag(ctx, job.repositoryID, job.tag, task)
 	case "retry_asset":
 		s.executeRetryAsset(ctx, job.assetID, task)
+	case "sync_all":
+		s.executeSyncAll(ctx, job.repositoryID, task)
 	}
 }
 
@@ -648,6 +650,95 @@ func (s *Service) executeSyncByTag(ctx context.Context, repositoryID uint, tag s
 		checkResult.Repository.Owner, checkResult.Repository.Repo, checkResult.Release.Tag, len(downloadResults)))
 }
 
+// executeSyncAll 全量同步：下载仓库所有 Release 下的 pending/failed 资产到配置的存储
+func (s *Service) executeSyncAll(ctx context.Context, repositoryID uint, task models.Task) {
+	task.Status = models.TaskStatusRunning
+	task.StartedAt = ptrTime(time.Now().UTC())
+	_ = s.db.WithContext(ctx).Save(&task).Error
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("开始全量同步仓库 (ID: %d) 所有版本资产", repositoryID))
+
+	var repository models.Repository
+	if err := s.db.WithContext(ctx).First(&repository, repositoryID).Error; err != nil {
+		s.failTaskWithLog(ctx, &task, err, "查询仓库失败")
+		return
+	}
+
+	// 查询该仓库所有 Release 下 pending/failed 的资产（跨所有版本，不限最新）
+	var assetsToDownload []models.Asset
+	if err := s.db.WithContext(ctx).
+		Joins("JOIN releases ON releases.id = assets.release_id").
+		Where("releases.repository_id = ? AND assets.status IN ?", repositoryID,
+			[]models.AssetStatus{models.AssetStatusPending, models.AssetStatusFailed}).
+		Find(&assetsToDownload).Error; err != nil {
+		s.failTaskWithLog(ctx, &task, err, "查询待下载资产失败")
+		return
+	}
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("待下载资产 %d 个", len(assetsToDownload)))
+
+	if len(assetsToDownload) == 0 {
+		now := time.Now().UTC()
+		task.FinishedAt = &now
+		task.Status = models.TaskStatusSucceeded
+		_ = s.db.WithContext(ctx).Save(&task).Error
+		s.appendLog(ctx, task.ID, "info", "全量同步完成: 无待下载资产")
+		return
+	}
+
+	repoSvc := repositorysvc.NewService(s.db, s.storageConfig)
+	storageIDs, err := repoSvc.GetRepositoryStorages(ctx, repositoryID)
+	if err != nil || len(storageIDs) == 0 {
+		errMsg := fmt.Errorf("仓库没有配置存储目标")
+		s.failTaskWithLog(ctx, &task, errMsg, "获取仓库存储配置失败")
+		s.notifySyncFailed(ctx, repositoryID, errMsg)
+		return
+	}
+
+	downloadResults, failedAssets := s.downloadAssetsToStorages(ctx, assetsToDownload, storageIDs)
+
+	// 清理各 Release 的 StorageID=NULL 模板记录，避免多存储场景下文件树重复
+	var releaseIDs []uint
+	s.db.WithContext(ctx).Model(&models.Release{}).Where("repository_id = ?", repositoryID).Pluck("id", &releaseIDs)
+	for _, rid := range releaseIDs {
+		s.cleanupOrphanTemplateAssets(ctx, rid)
+	}
+
+	if len(downloadResults) > 0 {
+		s.appendLog(ctx, task.ID, "info", fmt.Sprintf("已下载 %d 个资产", len(downloadResults)))
+	}
+	if len(failedAssets) > 0 {
+		s.appendLog(ctx, task.ID, "warn", fmt.Sprintf("%d 个资产下载失败: %s", len(failedAssets), joinAssetErrors(failedAssets)))
+	}
+
+	now := time.Now().UTC()
+	task.FinishedAt = &now
+	if len(failedAssets) > 0 {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			task.Status = models.TaskStatusCanceled
+			task.ErrorMessage = "任务已被手动取消"
+		} else {
+			task.Status = models.TaskStatusFailed
+			task.ErrorMessage = joinAssetErrors(failedAssets)
+			s.notifySyncFailed(ctx, repositoryID, errors.New(task.ErrorMessage))
+		}
+		_ = s.db.WithContext(ctx).Save(&task).Error
+		return
+	}
+
+	task.Status = models.TaskStatusSucceeded
+	_ = s.db.WithContext(ctx).Save(&task).Error
+	if len(downloadResults) > 0 {
+		var latestRelease models.Release
+		if err := s.db.WithContext(ctx).Where("repository_id = ? AND is_latest = ?", repositoryID, true).First(&latestRelease).Error; err == nil {
+			s.notifySyncSuccess(ctx, repository, latestRelease, len(downloadResults))
+		}
+	}
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("全量同步完成: %s/%s，下载 %d 个资产",
+		repository.Owner, repository.Repo, len(downloadResults)))
+}
+
 func downloadableAssets(assets []models.Asset) []models.Asset {
 	downloadable := make([]models.Asset, 0, len(assets))
 	for _, asset := range assets {
@@ -689,23 +780,47 @@ func (s *Service) downloadAssetsToStorages(ctx context.Context, assets []models.
 	}
 	jobs := make([]downloadJob, 0, len(assets)*len(storageIDs))
 
+	// 去重：同一 (releaseID, name, targetStorageID) 只保留一条下载任务。
+	// 当 DB 中同时存在模板记录（StorageID=NULL）和存储绑定记录时，
+	// 两者会下载到同一磁盘路径，并发执行导致 .partial 文件竞争 rename 失败。
+	// 优先使用已绑定存储的记录，模板记录仅在无对应存储记录时补充。
+	seen := make(map[string]bool)
+	jobKey := func(releaseID uint, name string, storageID uint) string {
+		return fmt.Sprintf("%d:%s:%d", releaseID, name, storageID)
+	}
+
+	// 第一遍：收集已绑定存储的记录
 	for _, asset := range assets {
 		if asset.StorageID != nil && *asset.StorageID > 0 {
-			// 已绑定具体存储的记录：只下载到该存储
+			key := jobKey(asset.ReleaseID, asset.Name, *asset.StorageID)
+			if seen[key] {
+				continue // 避免重复
+			}
+			seen[key] = true
 			jobs = append(jobs, downloadJob{
 				assetID:   asset.ID,
 				storageID: *asset.StorageID,
 				name:      asset.Name,
 			})
-		} else {
-			// 模板记录（StorageID=NULL）：为每个配置的存储分别下载
-			for _, sid := range storageIDs {
-				jobs = append(jobs, downloadJob{
-					assetID:   asset.ID,
-					storageID: sid,
-					name:      asset.Name,
-				})
+		}
+	}
+
+	// 第二遍：模板记录仅为未被存储记录覆盖的存储创建任务
+	for _, asset := range assets {
+		if asset.StorageID != nil && *asset.StorageID > 0 {
+			continue
+		}
+		for _, sid := range storageIDs {
+			key := jobKey(asset.ReleaseID, asset.Name, sid)
+			if seen[key] {
+				continue // 已有存储绑定记录处理
 			}
+			seen[key] = true
+			jobs = append(jobs, downloadJob{
+				assetID:   asset.ID,
+				storageID: sid,
+				name:      asset.Name,
+			})
 		}
 	}
 
@@ -902,4 +1017,26 @@ func joinAssetErrors(failedAssets []AssetError) string {
 
 func ptrTime(t time.Time) *time.Time {
 	return &t
+}
+// EnqueueSyncAllRepository 异步下载仓库所有 Release 的 pending/failed 资产（全量同步）
+func (s *Service) EnqueueSyncAllRepository(ctx context.Context, repositoryID uint) (*models.Task, error) {
+	task := models.Task{
+		Type:         "sync_all_releases",
+		RepositoryID: &repositoryID,
+		Status:       models.TaskStatusPending,
+		MaxAttempts:  1,
+	}
+	if err := s.db.WithContext(ctx).Create(&task).Error; err != nil {
+		return nil, err
+	}
+
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("已加入队列: 全量同步仓库 (ID: %d) 所有版本资产", repositoryID))
+
+	s.enqueueJob(taskJob{
+		taskID:       task.ID,
+		repositoryID: repositoryID,
+		kind:         "sync_all",
+	})
+
+	return &task, nil
 }
