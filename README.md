@@ -209,7 +209,10 @@ npm run dev
 | `RELEASEHUB_SCHEDULER_MAX_CONCURRENT` | `5` | Scheduler 最大并发同步数 |
 | `RELEASEHUB_SYNCER_MAX_CONCURRENT_TASKS` | `2` | 任务队列并发执行数 |
 | `RELEASEHUB_SYNCER_MAX_CONCURRENT_DOWNLOADS` | `3` | 单任务内资产下载并发数 |
-| `RELEASEHUB_DOWNLOAD_MAX_SPEED_BYTES` | `0` | 下载速度限制（字节/秒，0=不限） |
+| `RELEASEHUB_DOWNLOAD_MAX_SPEED_BYTES` | `0` | 下载速度限制（字节/秒，0=不限；仅作用于 HTTP 直连，使用 aria2 时以 aria2 限速参数为准） |
+| `RELEASEHUB_DOWNLOAD_ARIA2_RPC` | `""` | aria2 JSON-RPC 端点，非空时改用 aria2 离线下载 |
+| `RELEASEHUB_DOWNLOAD_ARIA2_SECRET` | `""` | aria2 RPC 密钥 |
+| `RELEASEHUB_DOWNLOAD_ARIA2_DIR` | `""` | aria2 完成目录（须与 ReleaseHub 进程共享文件系统） |
 | `RELEASEHUB_APP_JWT_SECRET` | `""` | JWT 签名密钥（启用认证时必须设置） |
 | `RELEASEHUB_AUTH_DEFAULT_ADMIN` | `admin` | 默认管理员用户名 |
 | `RELEASEHUB_AUTH_DEFAULT_PASSWORD` | `admin` | 默认管理员密码 |
@@ -255,7 +258,7 @@ ReleaseHub/
 │       ├── models/           # GORM 模型
 │       └── services/         # 业务服务
 │           ├── asset/        # 资产下载与管理
-│           ├── downloader/   # HTTP 下载器
+│           ├── downloader/   # 下载器（HTTP / aria2 接口抽象）
 │           ├── filter/       # Glob/Regex 过滤
 │           ├── github/       # GitHub API 客户端
 │           ├── health/       # 健康检查
@@ -320,8 +323,16 @@ ReleaseHub/
 | v0.4 | ✅ 已完成 | 多存储分发、失败重试、硬删除迁移、文件树浏览、存储对账、置顶/固定版本、按 Tag 同步、级联删除、孤儿数据清理、Docker 统一镜像、CI 自动发布 |
 | v0.5 | ✅ 已完成 | 断点续传、SHA256 远程比对与自动填充、保留策略增强、Dashboard 趋势图、429/5xx 自动退避 |
 | v0.6 | ✅ 已完成 | GitLab/Gitea/Forgejo Provider 完整接入、搜索增强（Release body 全文搜索、组合筛选） |
-| v0.7 | ✅ 已完成 | 下载速度限制（RateLimitedWriter）、aria2 RPC 配置接入 |
+| v0.7 | ✅ 已完成 | 下载速度限制、aria2 RPC 配置占位 |
 | v1.0 | ✅ 已完成 | PostgreSQL/MySQL 支持、Prometheus 指标导出、OpenAPI/Swagger UI |
+| v1.0.1 | ✅ 已完成 | 通知推送历史记录与去重 |
+| v1.0.2 | ✅ 已完成 | 认证开关运行时动态启停 |
+| v1.0.3 | ✅ 已完成 | 版本变更检测与通知触发优化 |
+| v1.0.4 | ✅ 已完成 | 并发信号量死锁修复与运行时配置生命周期 |
+| v1.0.5 | ✅ 已完成 | 统一下载函数替代直连下载 |
+| v1.0.6 | ✅ 已完成 | 关闭认证模式下重启接口 403 修复 |
+| v1.0.7 | ✅ 已完成 | 全量检查后自动触发全量同步 |
+| v1.0.8 | ✅ 已完成 | 下载限速 token bucket 重实现、Downloader 接口抽象（HTTP/aria2）、aria2 离线下载接入、配置热更新与持久化、前端配置 UI、ApplyUpdate 单测 |
 
 ## 许可证
 

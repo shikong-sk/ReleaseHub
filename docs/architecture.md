@@ -121,11 +121,24 @@ Syncer.SyncRepository(repo)
            ├── 遍历 Release 的 Assets
            ├── Filter.Matcher 过滤
            ├── 已存在 / 已跳过 → 跳过
-           ├── 下载：Provider → io.Pipe → StorageDriver.Put
+           ├── 下载：Downloader.For(repo) → HTTP 直连 / aria2 离线 → StorageDriver.Put
            ├── SHA256 校验
            ├── 通知：download_ok / download_err
            └── Retention Service 清理旧版本
 ```
+
+### 下载子系统和 Downloader 接口
+
+`Asset Downloader` 通过统一的 `downloader.Downloader` 接口抽象，按仓库配置选择实现：
+
+- `HTTPDownloader`：HTTP 直连下载，受 `download.max_speed_bytes` 全局限速（基于 `golang.org/x/time/rate` token bucket），支持仓库级代理。
+- `Aria2Downloader`：通过 aria2 JSON-RPC 提交离线下载任务，轮询完成后从本地完成目录读出文件（`os.Open`），不受全局限速与仓库级代理作用。
+
+选择逻辑位于 `asset.Service.downloaderForRepository`：当 `download.aria2_rpc` 非空时返回 `Aria2Downloader`，否则返回 `HTTPDownloader`。Syncer 自动同步与手动下载任务共用同一选择路径，确保两者语义一致。
+
+`Aria2Downloader` 采用惰性缓存：按 `aria2DownloaderKey{rpc,secret,http,dir}` 缓存单个实例，任一 aria2 配置变更后下一次下载即缓存未命中并重建，无需显式调用 setter。其余热更新字段（`max_speed_bytes`、`authEnabled`、`githubApiBaseUrl`、`*RetentionDays`）通过共享的 `*config.Config` 指针读取，消费侧下次访问即生效；scheduler 与 syncer 并发字段则通过显式 setter 重建 ticker / 信号量。
+
+取消语义对两种下载器对称：`downloadWithAttempt` 为每次尝试构造 `context.WithCancel`，`cancelFn` 注册到 `cancelMap[taskID]`；`CancelDownloadTask` 触发取消后，HTTP 下载经 `http.Client` 中止，aria2 下载经轮询 `ctx.Done` 并调用 aria2 `Remove` 回收任务，复制阶段的 `context.Canceled` 被包装后由 `errors.Is(downloadErr, context.Canceled)` 统一识别。
 
 ### 存储驱动选择
 
@@ -205,7 +218,6 @@ Syncer.SyncRepository(repo)
 | --- | --- | --- |
 | S3 签名 | 当前为简化实现，部分 S3 兼容存储可能不兼容 | 待优化 |
 | WebDAV/S3 全量上传 | 内部读取完整内容再上传，大文件可能占用较多内存 | 待优化 |
-| aria2 未接入调度 | 配置字段已存在但 Syncer 尚未调用 aria2 执行下载 | 待实现 |
 | 通知发送为同步 fan-out | 未进入队列，暂无重试机制 | 待优化 |
 | 无国际化（i18n） | 界面和文档目前仅有中文 | 待规划 |
 | 多平台 Provider 完整集成 | Release Checker 仍部分依赖 GitHub 专用类型 | 待完善 |

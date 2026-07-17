@@ -304,7 +304,14 @@
   "githubApiBaseUrl": "https://api.github.com",
   "authEnabled": true,
   "syncerMaxConcurrentTasks": 3,
-  "syncerMaxConcurrentDownloads": 5
+  "syncerMaxConcurrentDownloads": 5,
+  "taskLogRetentionDays": 30,
+  "operationLogRetentionDays": 30,
+  "downloadMaxSpeedBytes": 0,
+  "aria2RPC": "http://127.0.0.1:6800/jsonrpc",
+  "aria2Secret": "your-aria2-secret",
+  "aria2HTTP": "",
+  "aria2Dir": "/data/aria2/done"
 }
 ```
 

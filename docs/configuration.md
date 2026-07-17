@@ -60,10 +60,17 @@ ReleaseHub 通过环境变量进行配置，所有变量以 `RELEASEHUB_` 为前
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `RELEASEHUB_DOWNLOAD_MAX_SPEED_BYTES` | `0` | 下载速度限制（字节/秒），0 表示不限速 |
-| `RELEASEHUB_DOWNLOAD_ARIA2_RPC` | `""` | aria2 JSON-RPC 端点，空则不使用 aria2 |
+| `RELEASEHUB_DOWNLOAD_MAX_SPEED_BYTES` | `0` | HTTP 直连下载速度限制（字节/秒），0 表示不限速；使用 aria2 时不生效，改以 aria2 自身限速参数为准 |
+| `RELEASEHUB_DOWNLOAD_ARIA2_RPC` | `""` | aria2 JSON-RPC 端点，非空时改用 aria2 离线下载，否则走 HTTP 直连 |
 | `RELEASEHUB_DOWNLOAD_ARIA2_SECRET` | `""` | aria2 RPC 密钥 |
-| `RELEASEHUB_DOWNLOAD_ARIA2_HTTP` | `""` | aria2 文件服务地址 |
+| `RELEASEHUB_DOWNLOAD_ARIA2_HTTP` | `""` | aria2 文件服务地址（预留字段，当前未使用；完成后文件由本地文件系统直接读出，不经 HTTP 拉取） |
+| `RELEASEHUB_DOWNLOAD_ARIA2_DIR` | `""` | aria2 完成目录，须与 ReleaseHub 进程共享文件系统以便读出完成文件；留空使用 daemon 默认目录 |
+
+启用 aria2 离线下载模式时，与 HTTP 直连有以下语义差异：
+
+1. ReleaseHub 仓库级代理不作用于 aria2（由 daemon 自行管理网络出口）；
+2. `RELEASEHUB_DOWNLOAD_MAX_SPEED_BYTES` 不作用于 aria2（改用 aria2 `--max-download-limit` 等参数）；
+3. aria2 完成目录须与 ReleaseHub 进程共享同一文件系统（完成后通过本地文件读出，而非 HTTP 拉取）。
 
 ## Scheduler
 
@@ -139,12 +146,19 @@ Syncer 配置支持运行时动态更新，在 Web 管理界面的「设置 → 
 
 以下配置可通过 `PUT /api/config` 在运行时更新，无需重启：
 
-- `schedulerEnabled`
-- `schedulerTickSeconds`
-- `schedulerMaxConcurrent`
+- `schedulerEnabled`、`schedulerTickSeconds`、`schedulerMaxConcurrent`
 - `githubApiBaseUrl`
+- `authEnabled`
+- `syncerMaxConcurrentTasks`、`syncerMaxConcurrentDownloads`
+- `taskLogRetentionDays`、`operationLogRetentionDays`
+- `downloadMaxSpeedBytes`、`aria2RPC`、`aria2Secret`、`aria2HTTP`、`aria2Dir`
 
-更新 scheduler 相关配置后会触发 Scheduler 热重载（tick 间隔和并发数即时生效）。
+热更新机制分两类：
+
+- **显式重载**：scheduler（`UpdateInterval`/`UpdateMaxConcurrent`）与 syncer（`UpdateMaxConcurrentTasks`/`UpdateMaxConcurrentDownloads`）字段更新后会即时重建运行中的 ticker / 并发信号量。
+- **指针共享（惰性生效）**：`authEnabled`、`githubApiBaseUrl`、两个 `*RetentionDays`、`downloadMaxSpeedBytes` 与 `aria2*` 通过共享的 `*config.Config` 指针读取，消费侧下次访问即采用新值，无需显式通知下游。其中 aria2 字段额外采用惰性缓存失效：`Aria2Downloader` 按 `{rpc,secret,http,dir}` 缓存，任一字段变更后下一次下载即缓存未命中并重建下载器。
+
+上述字段在更新后均会持久化到数据库，重启后自动恢复。
 
 ## Docker Compose 配置示例
 
