@@ -8,10 +8,16 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 type HTTPDownloader struct {
 	client *http.Client
+	// limiter 下载速率限制器，nil=不限速。
+	// 用 golang.org/x/time/rate 令牌桶限制读取速率，
+	// io.CopyBuffer 读慢后写自然放慢，从而实现全局限速。
+	limiter *rate.Limiter
 }
 
 type Result struct {
@@ -73,7 +79,9 @@ func (d *HTTPDownloader) DownloadWithResumeAndProgress(ctx context.Context, url 
 	hasher := sha256.New()
 	// 用 TeeReader 在每次读后触发进度回调，避免 io.CopyBuffer 的硬编码 32KB
 	progressReader := &progressReader{r: bodyReader, downloaded: offset, total: totalSize, onProgress: onProgress}
-	written, err := io.CopyBuffer(io.MultiWriter(writer, hasher), progressReader, make([]byte, 64*1024))
+	// 限速包装：在 progressReader 之外加令牌桶限速，读慢则 copy 自然放慢
+	limitedReader := d.applyRate(ctx, progressReader)
+	written, err := io.CopyBuffer(io.MultiWriter(writer, hasher), limitedReader, make([]byte, 64*1024))
 	if err != nil {
 		return nil, fmt.Errorf("下载写入失败: %w", err)
 	}
@@ -133,7 +141,9 @@ func (d *HTTPDownloader) DownloadWithProgress(ctx context.Context, url string, t
 
 	hasher := sha256.New()
 	progressReader := &progressReader{r: resp.Body, total: resp.ContentLength, onProgress: onProgress}
-	written, err := io.CopyBuffer(io.MultiWriter(writer, hasher), progressReader, make([]byte, 64*1024))
+	// 限速包装：在 progressReader 之外加令牌桶限速，读慢则 copy 自然放慢
+	limitedReader := d.applyRate(ctx, progressReader)
+	written, err := io.CopyBuffer(io.MultiWriter(writer, hasher), limitedReader, make([]byte, 64*1024))
 	if err != nil {
 		return nil, fmt.Errorf("下载写入失败: %w", err)
 	}
@@ -166,4 +176,69 @@ func NewHTTPDownloaderWithTransport(transport *http.Transport) *HTTPDownloader {
 // Download 基础下载（无进度回调，向后兼容）
 func (d *HTTPDownloader) Download(ctx context.Context, url string, token string, writer io.Writer) (*Result, error) {
 	return d.DownloadWithProgress(ctx, url, token, writer, nil)
+}
+
+// NewHTTPDownloaderWithLimit 创建带速率限制的 HTTP 下载器。
+// maxSpeed<=0 时不限速（向后兼容），>0 时按字节/秒限速。
+func NewHTTPDownloaderWithLimit(maxSpeed int64) *HTTPDownloader {
+	return &HTTPDownloader{
+		client:  &http.Client{Timeout: 30 * time.Minute},
+		limiter: newDownloadLimiter(maxSpeed),
+	}
+}
+
+// NewHTTPDownloaderWithTransportAndLimit 创建带 Transport 与速率限制的 HTTP 下载器
+func NewHTTPDownloaderWithTransportAndLimit(transport *http.Transport, maxSpeed int64) *HTTPDownloader {
+	return &HTTPDownloader{
+		client:  &http.Client{Timeout: 30 * time.Minute, Transport: transport},
+		limiter: newDownloadLimiter(maxSpeed),
+	}
+}
+
+// newDownloadLimiter 根据限速值构造令牌桶，maxSpeed<=0 返回 nil（不限速）
+func newDownloadLimiter(maxSpeed int64) *rate.Limiter {
+	if maxSpeed <= 0 {
+		return nil
+	}
+	// burst 取 maxSpeed 与 4MB 的较小值：既保证 64KB chunk 不会被分次等待，
+	// 又避免大限速值下突发过大；token 是浮点计数不预分配内存。
+	burst := maxSpeed
+	if burst > 4*1024*1024 {
+		burst = 4 * 1024 * 1024
+	}
+	return rate.NewLimiter(rate.Limit(maxSpeed), int(burst))
+}
+
+// applyRate 包装 reader 加限速；limiter 为 nil 时原样返回（不限速）。
+// golang.org/x/time v0.15.0 的 rate 包尚未提供 NewReader，故用标准库
+// rate.Limiter（令牌桶）配合 rateReader 把 WaitN 接入 io.Reader，
+// 等价于官方更高版本的 rate.NewReader。
+func (d *HTTPDownloader) applyRate(ctx context.Context, r io.Reader) io.Reader {
+	if d.limiter == nil {
+		return r
+	}
+	return &rateReader{r: r, limiter: d.limiter, ctx: ctx}
+}
+
+// rateReader 在每次 Read 后按读取字节数消耗令牌桶令牌：令牌不足时 WaitN
+// 阻塞至有令牌或 ctx 取消，从而限制读取速率；io.CopyBuffer 读慢则写自然放慢。
+// 单次读取量截断到 limiter.Burst()，保证 WaitN(n) 不会因 n>burst 报错。
+type rateReader struct {
+	r       io.Reader
+	limiter *rate.Limiter
+	ctx     context.Context
+}
+
+func (lr *rateReader) Read(p []byte) (int, error) {
+	if b := lr.limiter.Burst(); b > 0 && len(p) > b {
+		p = p[:b]
+	}
+	n, err := lr.r.Read(p)
+	if n > 0 {
+		// 消耗 n 个令牌，不足时阻塞等待；ctx 取消时立即返回错误终止下载
+		if werr := lr.limiter.WaitN(lr.ctx, n); werr != nil {
+			return n, werr
+		}
+	}
+	return n, err
 }

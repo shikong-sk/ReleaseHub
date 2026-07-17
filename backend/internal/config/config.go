@@ -203,6 +203,7 @@ type UpdateConfig struct {
 	SyncerMaxConcurrentDownloads *int `json:"syncerMaxConcurrentDownloads,omitempty"`
 	TaskLogRetentionDays         *int `json:"taskLogRetentionDays,omitempty"`
 	OperationLogRetentionDays    *int `json:"operationLogRetentionDays,omitempty"`
+	DownloadMaxSpeedBytes        *int64 `json:"downloadMaxSpeedBytes,omitempty"`
 }
 
 // ApplyUpdate 应用运行时配置更新，返回实际被修改的字段名列表
@@ -273,6 +274,17 @@ func (c *Config) ApplyUpdate(update UpdateConfig) ([]string, error) {
 		if *update.OperationLogRetentionDays != c.OpLog.RetentionDays {
 			c.OpLog.RetentionDays = *update.OperationLogRetentionDays
 			changed = append(changed, "operationLogRetentionDays")
+		}
+	}
+	// 下载限速：<0 视为 0（不限速）；0=不限速
+	if update.DownloadMaxSpeedBytes != nil {
+		v := *update.DownloadMaxSpeedBytes
+		if v < 0 {
+			v = 0
+		}
+		if v != c.Download.MaxSpeedBytes {
+			c.Download.MaxSpeedBytes = v
+			changed = append(changed, "downloadMaxSpeedBytes")
 		}
 	}
 

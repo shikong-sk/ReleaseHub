@@ -103,6 +103,8 @@ func main() {
 		if err != nil {
 			logger.Fatal("同步服务初始化失败", zap.Error(err))
 		}
+		// 注入全局配置指针，启用下载限速等运行时可热更的设置（持同一 cfg 指针）
+		syncService.WithConfig(cfg)
 
 		scheduler = schedulersvc.NewServiceWithConcurrency(
 			db,

@@ -30,6 +30,8 @@ type Service struct {
 	logService *tasklog.Service
 	notifier   *notifysvc.Service
 	logger     *zap.Logger
+	// config 全局配置指针，用于读取运行时热更新的下载限速等设置；nil 表示未注入（不限速）
+	config *config.Config
 
 	// 运行时下载进度表：assetID → {downloaded, total, updatedAt}
 	// 仅存内存，不持久化；task list API 读取注入响应供前端展示真实进度
@@ -210,6 +212,14 @@ func NewServiceWithFactory(db *gorm.DB, storageConfig config.StorageConfig) *Ser
 		notifier:   notifysvc.NewService(db),
 		logger:     zap.NewNop(),
 	}
+}
+
+// WithConfig 注入全局配置指针，用于读取运行时热更新的下载限速等设置。
+// 必须传入与 main.go 同一个 cfg 指针，热更新后所有 asset.Service 实例天然同时生效。
+// 未调用时 config 为 nil，downloaderForRepository 按不限速处理（向后兼容）。
+func (s *Service) WithConfig(cfg *config.Config) *Service {
+	s.config = cfg
+	return s
 }
 
 func (s *Service) Download(ctx context.Context, assetID uint) (*DownloadResult, error) {
@@ -712,15 +722,28 @@ func (s *Service) driverForAsset(ctx context.Context, asset *models.Asset, repos
 }
 
 func (s *Service) downloaderForRepository(ctx context.Context, repository models.Repository) (*downloader.HTTPDownloader, error) {
+	// 读取当前限速值；config 未注入或 maxSpeed<=0 时不限速，保持原行为
+	maxSpeed := int64(0)
+	if s.config != nil {
+		maxSpeed = s.config.Download.MaxSpeedBytes
+	}
+
 	if repository.ProxyID == nil {
-		return s.downloader, nil
+		// 无限速：用共享默认下载器（保持连接复用）；有限速：构造带限速的实例
+		if maxSpeed <= 0 {
+			return s.downloader, nil
+		}
+		return downloader.NewHTTPDownloaderWithLimit(maxSpeed), nil
 	}
 
 	transport, err := proxysvc.TransportForRepository(ctx, s.db, repository)
 	if err != nil {
 		return nil, err
 	}
-	return downloader.NewHTTPDownloaderWithTransport(transport), nil
+	if maxSpeed <= 0 {
+		return downloader.NewHTTPDownloaderWithTransport(transport), nil
+	}
+	return downloader.NewHTTPDownloaderWithTransportAndLimit(transport, maxSpeed), nil
 }
 
 func (s *Service) notifyDownloadOK(ctx context.Context, repository models.Repository, release models.Release, asset models.Asset) {

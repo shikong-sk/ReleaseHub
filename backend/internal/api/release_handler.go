@@ -16,8 +16,9 @@ type releaseHandler struct {
 	assetService *assetsvc.Service
 }
 
-func registerReleaseRoutes(router *gin.Engine, db *gorm.DB, storageConfig config.StorageConfig) {
-	assetService := assetsvc.NewServiceWithFactory(db, storageConfig)
+// registerReleaseRoutes 注册 Release/资产相关路由；cfg 用于注入下载限速等运行时可热更的配置
+func registerReleaseRoutes(router *gin.Engine, db *gorm.DB, storageConfig config.StorageConfig, cfg *config.Config) {
+	assetService := assetsvc.NewServiceWithFactory(db, storageConfig).WithConfig(cfg)
 	handler := &releaseHandler{
 		db:           db,
 		assetService: assetService,

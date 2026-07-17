@@ -348,6 +348,15 @@ func NewService(db *gorm.DB, checker *releasesvc.CheckService, storageConfig con
 	}, nil
 }
 
+// WithConfig 注入全局配置指针，转发给内部 assetService 以启用下载限速。
+// 必须传入与 main.go 同一个 cfg 指针，热更新后下载实例天然同时生效。
+func (s *Service) WithConfig(cfg *config.Config) *Service {
+	if s.assetService != nil {
+		s.assetService.WithConfig(cfg)
+	}
+	return s
+}
+
 // EnqueueSyncRepository 异步同步最新 Release：创建任务记录后立即返回，后台执行同步
 func (s *Service) EnqueueSyncRepository(ctx context.Context, repositoryID uint) (*models.Task, error) {
 	task := models.Task{

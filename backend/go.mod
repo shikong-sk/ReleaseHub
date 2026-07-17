@@ -10,6 +10,7 @@ require (
 	github.com/studio-b12/gowebdav v0.9.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.53.0
+	golang.org/x/time v0.15.0
 	gorm.io/driver/postgres v1.5.11
 	gorm.io/driver/sqlite v1.5.7
 	gorm.io/gorm v1.30.0

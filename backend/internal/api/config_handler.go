@@ -42,6 +42,7 @@ type configResponse struct {
 	SyncerMaxConcurrentDownloads int    `json:"syncerMaxConcurrentDownloads"`
 	TaskLogRetentionDays         int    `json:"taskLogRetentionDays"`
 	OperationLogRetentionDays    int    `json:"operationLogRetentionDays"`
+	DownloadMaxSpeedBytes        int64  `json:"downloadMaxSpeedBytes"`
 }
 
 func registerConfigRoutes(router *gin.Engine, cfg *config.Config, scheduler SchedulerUpdater, syncer SyncerUpdater, db *gorm.DB) {
@@ -79,6 +80,16 @@ func LoadPersistedSettings(db *gorm.DB, cfg *config.Config) {
 		return 0, false
 	}
 
+	loadInt64 := func(key string, min int64) (int64, bool) {
+		var s models.AppSetting
+		if err := db.Where("key = ?", key).First(&s).Error; err == nil {
+			if n, perr := strconv.ParseInt(s.Value, 10, 64); perr == nil && n >= min {
+				return n, true
+			}
+		}
+		return 0, false
+	}
+
 	if v, ok := loadBool("auth.enabled"); ok {
 		cfg.Auth.Enabled = v == "true"
 	}
@@ -106,6 +117,9 @@ func LoadPersistedSettings(db *gorm.DB, cfg *config.Config) {
 	if v, ok := loadStr("github.api_base_url"); ok && v != "" {
 		cfg.GitHub.APIBaseURL = v
 	}
+	if v, ok := loadInt64("download.max_speed_bytes", 0); ok {
+		cfg.Download.MaxSpeedBytes = v
+	}
 }
 
 func (h *configHandler) get(c *gin.Context) {
@@ -120,6 +134,7 @@ func (h *configHandler) get(c *gin.Context) {
 		SyncerMaxConcurrentDownloads: h.config.Syncer.MaxConcurrentDownloads,
 		TaskLogRetentionDays:         h.config.TaskLog.RetentionDays,
 		OperationLogRetentionDays:    h.config.OpLog.RetentionDays,
+		DownloadMaxSpeedBytes:        h.config.Download.MaxSpeedBytes,
 	})
 }
 
@@ -133,6 +148,7 @@ type configUpdateRequest struct {
 	SyncerMaxConcurrentDownloads *int    `json:"syncerMaxConcurrentDownloads,omitempty"`
 	TaskLogRetentionDays         *int    `json:"taskLogRetentionDays,omitempty"`
 	OperationLogRetentionDays    *int `json:"operationLogRetentionDays,omitempty"`
+	DownloadMaxSpeedBytes       *int64 `json:"downloadMaxSpeedBytes,omitempty"`
 }
 
 func (h *configHandler) update(c *gin.Context) {
@@ -152,6 +168,7 @@ func (h *configHandler) update(c *gin.Context) {
 		SyncerMaxConcurrentDownloads: req.SyncerMaxConcurrentDownloads,
 		TaskLogRetentionDays:         req.TaskLogRetentionDays,
 		OperationLogRetentionDays:    req.OperationLogRetentionDays,
+		DownloadMaxSpeedBytes:        req.DownloadMaxSpeedBytes,
 	}
 
 	changed, err := h.config.ApplyUpdate(update)
@@ -214,6 +231,8 @@ func (h *configHandler) update(c *gin.Context) {
 			setting = models.AppSetting{Key: "scheduler.max_concurrent", Value: strconv.Itoa(h.config.Scheduler.MaxConcurrent)}
 		case "githubApiBaseUrl":
 			setting = models.AppSetting{Key: "github.api_base_url", Value: h.config.GitHub.APIBaseURL}
+		case "downloadMaxSpeedBytes":
+			setting = models.AppSetting{Key: "download.max_speed_bytes", Value: strconv.FormatInt(h.config.Download.MaxSpeedBytes, 10)}
 		default:
 			continue
 		}
@@ -235,5 +254,6 @@ func (h *configHandler) update(c *gin.Context) {
 		SyncerMaxConcurrentDownloads: h.config.Syncer.MaxConcurrentDownloads,
 		TaskLogRetentionDays:         h.config.TaskLog.RetentionDays,
 		OperationLogRetentionDays:    h.config.OpLog.RetentionDays,
+		DownloadMaxSpeedBytes:        h.config.Download.MaxSpeedBytes,
 	})
 }
