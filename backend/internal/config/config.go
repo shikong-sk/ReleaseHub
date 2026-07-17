@@ -51,6 +51,7 @@ type DownloadConfig struct {
 	Aria2RPC      string // aria2 JSON-RPC 端点，空=不使用 aria2
 	Aria2Secret   string // aria2 RPC 密钥
 	Aria2HTTP     string // aria2 文件服务地址
+	Aria2Dir      string // aria2 下载目录，空=依赖 aria2 daemon 自身配置；非空=把 aria2 下载引导到该目录，便于 ReleaseHub 进程读取完成文件
 }
 
 type GitHubConfig struct {
@@ -105,6 +106,7 @@ func Load() (*Config, error) {
 	v.SetDefault("download.aria2_rpc", "")
 	v.SetDefault("download.aria2_secret", "")
 	v.SetDefault("download.aria2_http", "")
+	v.SetDefault("download.aria2_dir", "")
 	v.SetDefault("github.api_base_url", "https://api.github.com")
 	v.SetDefault("scheduler.enabled", true)
 	v.SetDefault("scheduler.tick_seconds", 60)
@@ -142,6 +144,7 @@ func Load() (*Config, error) {
 			Aria2RPC:      v.GetString("download.aria2_rpc"),
 			Aria2Secret:   v.GetString("download.aria2_secret"),
 			Aria2HTTP:     v.GetString("download.aria2_http"),
+			Aria2Dir:      v.GetString("download.aria2_dir"),
 		},
 		GitHub: GitHubConfig{
 			APIBaseURL: v.GetString("github.api_base_url"),
