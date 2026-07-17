@@ -59,16 +59,14 @@ func NewS3Storage(cfg S3Config) (*S3Storage, error) {
 }
 
 func (s *S3Storage) Put(ctx context.Context, objectPath string, reader io.Reader) (*StoredObject, error) {
-	// 读取全部内容（简单实现，v0.4 可改为分片上传）
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, fmt.Errorf("读取上传数据失败: %w", err)
-	}
-
 	key := s.objectKey(objectPath)
 	reqURL := s.objectURL(key)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, reqURL, bytes.NewReader(data))
+	// 流式上传：直接将 reader 作为 PUT 请求体，避免大文件全量缓冲到内存
+	// 使用计数 reader 包装以获取实际传输字节数
+	cr := &countingReader{reader: reader}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, reqURL, cr)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +86,7 @@ func (s *S3Storage) Put(ctx context.Context, objectPath string, reader io.Reader
 	return &StoredObject{
 		Path:     filepath.ToSlash(filepath.Clean(objectPath)),
 		AbsPath:  key,
-		Size:     int64(len(data)),
+		Size:     cr.n,
 		Filename: filepath.Base(objectPath),
 	}, nil
 }

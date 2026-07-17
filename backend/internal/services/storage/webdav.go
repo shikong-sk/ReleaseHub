@@ -96,25 +96,40 @@ func (s *WebDAVStorage) Put(ctx context.Context, objectPath string, reader io.Re
 	remotePath := s.remotePath(objectPath)
 	dir := filepath.Dir(remotePath)
 
-	// 确保目录存在（容错处理）
+	// 确保目录存在（容错处理 OpenList/AList 的 405/423）
 	if err := s.mkdirAllSafe(dir); err != nil {
 		return nil, err
 	}
 
-	// 读取全部内容（WebDAV 客户端不支持流式写入）
-	data, err := io.ReadAll(reader)
+	// 尝试流式写入：WriteStream 内部会调用 createParentCollection，
+	// 对 OpenList/AList 等服务可能因目录已存在返回 405/423。
+	// 此时 reader 尚未被消费，可安全回退到缓冲写入。
+	cr := &countingReader{reader: reader}
+	err := s.client.WriteStream(remotePath, cr, 0o644)
 	if err != nil {
-		return nil, fmt.Errorf("读取上传数据失败: %w", err)
-	}
-
-	if err := s.client.Write(remotePath, data, 0o644); err != nil {
-		return nil, fmt.Errorf("上传到 WebDAV 失败: %w", err)
+		if !isMkdirAcceptable(err) {
+			return nil, fmt.Errorf("上传到 WebDAV 失败: %w", err)
+		}
+		// 流式因 createParentCollection 的 405/423 失败（reader 未被消费），回退缓冲模式
+		data, readErr := io.ReadAll(reader)
+		if readErr != nil {
+			return nil, fmt.Errorf("读取上传数据失败: %w", readErr)
+		}
+		if writeErr := s.client.Write(remotePath, data, 0o644); writeErr != nil {
+			return nil, fmt.Errorf("上传到 WebDAV 失败: %w", writeErr)
+		}
+		return &StoredObject{
+			Path:     filepath.ToSlash(filepath.Clean(objectPath)),
+			AbsPath:  remotePath,
+			Size:     int64(len(data)),
+			Filename: filepath.Base(remotePath),
+		}, nil
 	}
 
 	return &StoredObject{
 		Path:     filepath.ToSlash(filepath.Clean(objectPath)),
 		AbsPath:  remotePath,
-		Size:     int64(len(data)),
+		Size:     cr.n,
 		Filename: filepath.Base(remotePath),
 	}, nil
 }
@@ -122,16 +137,23 @@ func (s *WebDAVStorage) Put(ctx context.Context, objectPath string, reader io.Re
 func (s *WebDAVStorage) Open(ctx context.Context, objectPath string) (io.ReadCloser, *StoredObject, error) {
 	remotePath := s.remotePath(objectPath)
 
-	data, err := s.client.Read(remotePath)
+	// 先尝试获取文件大小（一次 PROPFIND），用于设置 Content-Length
+	// Stat 失败不阻断流式读取（某些 WebDAV 服务 PROPFIND 支持有限）
+	size := int64(-1)
+	if info, err := s.client.Stat(remotePath); err == nil {
+		size = info.Size()
+	}
+
+	// 流式读取替代原来 Read 全量缓冲到内存的方式
+	rc, err := s.client.ReadStream(remotePath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("从 WebDAV 读取失败: %w", err)
 	}
 
-	reader := io.NopCloser(strings.NewReader(string(data)))
-	return reader, &StoredObject{
+	return rc, &StoredObject{
 		Path:     filepath.ToSlash(filepath.Clean(objectPath)),
 		AbsPath:  remotePath,
-		Size:     int64(len(data)),
+		Size:     size,
 		Filename: filepath.Base(remotePath),
 	}, nil
 }
