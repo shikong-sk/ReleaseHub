@@ -45,7 +45,7 @@ type Service struct {
 	progressMu  stdsync.RWMutex
 	progressMap map[uint]DownloadProgress
 
-	// 运行时取消表：taskID → cancelFunc，用于中断正在进行中的 HTTP 下载
+	// 运行时取消表：taskID → cancelFunc，用于中断正在进行中的下载（HTTP/aria2）
 	cancelMu  stdsync.Mutex
 	cancelMap map[uint]context.CancelFunc
 }
@@ -98,7 +98,7 @@ func (s *Service) ActiveProgresses() map[uint]DownloadProgress {
 }
 
 // CancelDownloadTask 取消正在进行的下载任务
-// 对 running 任务：调用 cancelFunc 中断 HTTP 下载，downloadWithAttempt 检测 ctx 取消后标记 task 为 canceled
+// 对 running 任务：调用 cancelFunc 中断下载（HTTP/aria2），downloadWithAttempt 检测 ctx 取消后标记 task 为 canceled
 // 对 pending 任务：直接在 DB 更新为 canceled（worker 取出时跳过执行）
 func (s *Service) CancelDownloadTask(ctx context.Context, taskID uint) error {
 	var task models.Task
@@ -108,7 +108,7 @@ func (s *Service) CancelDownloadTask(ctx context.Context, taskID uint) error {
 	if task.Status != models.TaskStatusRunning && task.Status != models.TaskStatusPending {
 		return fmt.Errorf("任务状态 %s 不支持取消", task.Status)
 	}
-	// running 任务：先中断 HTTP 下载，downloadWithAttempt 的 context.Canceled 分支会更新 DB
+	// running 任务：先中断下载（HTTP/aria2），downloadWithAttempt 的 context.Canceled 分支会更新 DB
 	s.cancelMu.Lock()
 	cancel, ok := s.cancelMap[taskID]
 	s.cancelMu.Unlock()
@@ -381,7 +381,7 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 	var storedObject *storage.StoredObject
 	var storageErr error
 
-	// 创建可取消 ctx，注册到 cancelMap 供 CancelDownloadTask 中断 HTTP 下载
+	// 创建可取消 ctx，注册到 cancelMap 供 CancelDownloadTask 中断下载（HTTP/aria2）
 	dlCtx, cancelDownload := context.WithCancel(ctx)
 	s.registerCancel(task.ID, cancelDownload)
 	defer s.unregisterCancel(task.ID)
@@ -396,7 +396,10 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 		threshold:  1024 * 1024, // 1MB
 	}
 
-	// 下载 goroutine：从 HTTP 读取写入 pipe（带进度回调）
+	// 下载 goroutine：从下载器读取写入 pipe（HTTP 直读 / aria2 完成本地文件读出）
+	// 取消契约对称性：dlCtx 被取消后，HTTPDownloader 经 http.Client 的 ctx abort 释出 Canceled；
+	// Aria2Downloader 轮询期 ctx.Done→Remove(gid)+返回 ctx.Err、拷贝期 ctxReader 返回 Canceled-wrapped error。
+	// 两端 errors.Is(downloadErr, context.Canceled) 均命中，CancelDownloadTask 无需区分 downloader 类型。
 	downloadDone := make(chan struct{})
 	go func() {
 		defer close(downloadDone)
