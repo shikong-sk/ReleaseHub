@@ -30,6 +30,20 @@ type Result struct {
 // ProgressFunc 进度回调：已下载字节数（含续传 offset）、总字节数（未知为 0）
 type ProgressFunc func(downloaded int64, total int64)
 
+// Downloader 资产下载器抽象。HTTPDownloader 为默认实现，Aria2Downloader 为 aria2 RPC 实现。
+// asset.Service 持该接口（非具体类型），据 config.Download.Aria2RPC 是否空在 HTTP/Aria2 间选用。
+// 方法覆盖现 asset 调用面：DownloadWithProgress 为主路径，续传族供未来/测试。
+type Downloader interface {
+	// DownloadWithProgress 下载到 writer 并回调进度，返回含 SHA256 的结果
+	DownloadWithProgress(ctx context.Context, url string, token string, writer io.Writer, onProgress ProgressFunc) (*Result, error)
+	// DownloadWithResumeAndProgress 支持断点续传 + 进度回调的下载
+	DownloadWithResumeAndProgress(ctx context.Context, url string, token string, writer io.Writer, offset int64, onProgress ProgressFunc) (*Result, error)
+	// DownloadWithResume 支持断点续传的下载（无进度回调）
+	DownloadWithResume(ctx context.Context, url string, token string, writer io.Writer, offset int64) (*Result, error)
+	// Download 基础下载（无进度回调，向后兼容）
+	Download(ctx context.Context, url string, token string, writer io.Writer) (*Result, error)
+}
+
 // DownloadWithResumeAndProgress 支持断点续传 + 进度回调的下载
 // offset > 0 时发 Range 请求；onProgress 在 io.Copy 每 64KB 触发
 func (d *HTTPDownloader) DownloadWithResumeAndProgress(ctx context.Context, url string, token string, writer io.Writer, offset int64, onProgress ProgressFunc) (*Result, error) {

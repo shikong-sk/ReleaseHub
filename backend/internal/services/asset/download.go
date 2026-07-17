@@ -26,7 +26,7 @@ type Service struct {
 	db         *gorm.DB
 	storage    storage.Driver
 	storages   *storage.DriverFactory
-	downloader *downloader.HTTPDownloader
+	downloader downloader.Downloader
 	logService *tasklog.Service
 	notifier   *notifysvc.Service
 	logger     *zap.Logger
@@ -192,7 +192,7 @@ func NewServiceWithDriver(db *gorm.DB, driver storage.Driver) *Service {
 }
 
 // NewServiceWithDownloaderAndDriver 使用指定下载器和存储驱动创建资产服务
-func NewServiceWithDownloaderAndDriver(db *gorm.DB, driver storage.Driver, dl *downloader.HTTPDownloader) *Service {
+func NewServiceWithDownloaderAndDriver(db *gorm.DB, driver storage.Driver, dl downloader.Downloader) *Service {
 	return &Service{
 		db:         db,
 		storage:    driver,
@@ -721,7 +721,7 @@ func (s *Service) driverForAsset(ctx context.Context, asset *models.Asset, repos
 	return s.storageDriver(ctx, repository)
 }
 
-func (s *Service) downloaderForRepository(ctx context.Context, repository models.Repository) (*downloader.HTTPDownloader, error) {
+func (s *Service) downloaderForRepository(ctx context.Context, repository models.Repository) (downloader.Downloader, error) {
 	// 读取当前限速值；config 未注入或 maxSpeed<=0 时不限速，保持原行为
 	maxSpeed := int64(0)
 	if s.config != nil {
