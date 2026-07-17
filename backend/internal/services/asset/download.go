@@ -33,6 +33,13 @@ type Service struct {
 	// config 全局配置指针，用于读取运行时热更新的下载限速等设置；nil 表示未注入（不限速）
 	config *config.Config
 
+	// aria2 下载器懒缓存：复用同一 daemon（同 RPC/secret/httpURL/dir），首次需要时构造一次复用，
+	// cfg.Download.Aria2* 任一字段变更后下次 downloaderForRepository 调用检测 key 不一致即重建。
+	// 加锁保护并发下载间的缓存读写。
+	aria2Cache    *downloader.Aria2Downloader
+	aria2CacheMu  stdsync.Mutex
+	aria2CacheKey aria2DownloaderKey
+
 	// 运行时下载进度表：assetID → {downloaded, total, updatedAt}
 	// 仅存内存，不持久化；task list API 读取注入响应供前端展示真实进度
 	progressMu  stdsync.RWMutex
@@ -722,6 +729,18 @@ func (s *Service) driverForAsset(ctx context.Context, asset *models.Asset, repos
 }
 
 func (s *Service) downloaderForRepository(ctx context.Context, repository models.Repository) (downloader.Downloader, error) {
+	// 启用 aria2（RPC 端点非空）时走 Aria2Downloader：aria2 异步离线下载完成后从本地完成文件
+	// 读喂 storage Put。三条语义差异（aria2 接线架构特性，非 bug，须文档化）：
+	//   1) 代理不生效：aria2 模式下 ReleaseHub 的仓库 proxy 配置对其下载不生效（本分支不查
+	//      ProxyID / TransportForRepository），下载由 aria2 daemon 独立进程做，daemon 自身的
+	//      代理配置生效；若需代理请在 aria2 daemon 端配置。
+	//   2) 限速不生效：ReleaseHub MaxSpeedBytes 限的是 HTTP reader 速率，对 aria2 路径无效；
+	//      aria2 速率由 daemon 自身 --max-download-limit 等参数控制。
+	//   3) 失败明确 error 供 syncer 自动重试 + 暴露问题，不静默回退 HTTP（会掩盖 aria2 配置问题）。
+	if s.config != nil && s.config.Download.Aria2RPC != "" {
+		return s.getAria2Downloader()
+	}
+
 	// 读取当前限速值；config 未注入或 maxSpeed<=0 时不限速，保持原行为
 	maxSpeed := int64(0)
 	if s.config != nil {
@@ -744,6 +763,39 @@ func (s *Service) downloaderForRepository(ctx context.Context, repository models
 		return downloader.NewHTTPDownloaderWithTransport(transport), nil
 	}
 	return downloader.NewHTTPDownloaderWithTransportAndLimit(transport, maxSpeed), nil
+}
+
+// aria2DownloaderKey aria2 下载器缓存键：由决定 aria2 连接的四要素构成，
+// 任一变更即代表配置已热更新，需重建缓存（保证方案2 cfg 指针热更新天然生效）。
+type aria2DownloaderKey struct {
+	rpc     string
+	secret  string
+	httpURL string
+	dir     string
+}
+
+// getAria2Downloader 返回缓存的 Aria2Downloader，按当前 cfg 的 Aria2* 四字段构造。
+// 缓存命中（key 一致）复用既有 RPC client；key 变更（热更新后）重建。
+// 失败明确返回 error，不静默回退 HTTP。
+func (s *Service) getAria2Downloader() (downloader.Downloader, error) {
+	cur := aria2DownloaderKey{
+		rpc:     s.config.Download.Aria2RPC,
+		secret:  s.config.Download.Aria2Secret,
+		httpURL: s.config.Download.Aria2HTTP,
+		dir:     s.config.Download.Aria2Dir,
+	}
+	s.aria2CacheMu.Lock()
+	defer s.aria2CacheMu.Unlock()
+	if s.aria2Cache != nil && s.aria2CacheKey == cur {
+		return s.aria2Cache, nil
+	}
+	dl, err := downloader.NewAria2Downloader(cur.rpc, cur.secret, cur.httpURL, cur.dir)
+	if err != nil {
+		return nil, fmt.Errorf("构造 aria2 下载器失败: %w", err)
+	}
+	s.aria2Cache = dl
+	s.aria2CacheKey = cur
+	return dl, nil
 }
 
 func (s *Service) notifyDownloadOK(ctx context.Context, repository models.Repository, release models.Release, asset models.Asset) {
