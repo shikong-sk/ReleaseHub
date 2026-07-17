@@ -43,6 +43,10 @@ type configResponse struct {
 	TaskLogRetentionDays         int    `json:"taskLogRetentionDays"`
 	OperationLogRetentionDays    int    `json:"operationLogRetentionDays"`
 	DownloadMaxSpeedBytes        int64  `json:"downloadMaxSpeedBytes"`
+	Aria2RPC                     string `json:"aria2RPC"`
+	Aria2Secret                  string `json:"aria2Secret"`
+	Aria2HTTP                    string `json:"aria2HTTP"`
+	Aria2Dir                     string `json:"aria2Dir"`
 }
 
 func registerConfigRoutes(router *gin.Engine, cfg *config.Config, scheduler SchedulerUpdater, syncer SyncerUpdater, db *gorm.DB) {
@@ -120,6 +124,18 @@ func LoadPersistedSettings(db *gorm.DB, cfg *config.Config) {
 	if v, ok := loadInt64("download.max_speed_bytes", 0); ok {
 		cfg.Download.MaxSpeedBytes = v
 	}
+	if v, ok := loadStr("download.aria2_rpc"); ok && v != "" {
+		cfg.Download.Aria2RPC = v
+	}
+	if v, ok := loadStr("download.aria2_secret"); ok && v != "" {
+		cfg.Download.Aria2Secret = v
+	}
+	if v, ok := loadStr("download.aria2_http"); ok && v != "" {
+		cfg.Download.Aria2HTTP = v
+	}
+	if v, ok := loadStr("download.aria2_dir"); ok && v != "" {
+		cfg.Download.Aria2Dir = v
+	}
 }
 
 func (h *configHandler) get(c *gin.Context) {
@@ -135,6 +151,10 @@ func (h *configHandler) get(c *gin.Context) {
 		TaskLogRetentionDays:         h.config.TaskLog.RetentionDays,
 		OperationLogRetentionDays:    h.config.OpLog.RetentionDays,
 		DownloadMaxSpeedBytes:        h.config.Download.MaxSpeedBytes,
+		Aria2RPC:                     h.config.Download.Aria2RPC,
+		Aria2Secret:                  h.config.Download.Aria2Secret,
+		Aria2HTTP:                    h.config.Download.Aria2HTTP,
+		Aria2Dir:                     h.config.Download.Aria2Dir,
 	})
 }
 
@@ -149,6 +169,10 @@ type configUpdateRequest struct {
 	TaskLogRetentionDays         *int    `json:"taskLogRetentionDays,omitempty"`
 	OperationLogRetentionDays    *int `json:"operationLogRetentionDays,omitempty"`
 	DownloadMaxSpeedBytes       *int64 `json:"downloadMaxSpeedBytes,omitempty"`
+	Aria2RPC                    *string `json:"aria2RPC,omitempty"`
+	Aria2Secret                 *string `json:"aria2Secret,omitempty"`
+	Aria2HTTP                   *string `json:"aria2HTTP,omitempty"`
+	Aria2Dir                    *string `json:"aria2Dir,omitempty"`
 }
 
 func (h *configHandler) update(c *gin.Context) {
@@ -169,6 +193,10 @@ func (h *configHandler) update(c *gin.Context) {
 		TaskLogRetentionDays:         req.TaskLogRetentionDays,
 		OperationLogRetentionDays:    req.OperationLogRetentionDays,
 		DownloadMaxSpeedBytes:        req.DownloadMaxSpeedBytes,
+		Aria2RPC:                     req.Aria2RPC,
+		Aria2Secret:                  req.Aria2Secret,
+		Aria2HTTP:                    req.Aria2HTTP,
+		Aria2Dir:                     req.Aria2Dir,
 	}
 
 	changed, err := h.config.ApplyUpdate(update)
@@ -233,6 +261,14 @@ func (h *configHandler) update(c *gin.Context) {
 			setting = models.AppSetting{Key: "github.api_base_url", Value: h.config.GitHub.APIBaseURL}
 		case "downloadMaxSpeedBytes":
 			setting = models.AppSetting{Key: "download.max_speed_bytes", Value: strconv.FormatInt(h.config.Download.MaxSpeedBytes, 10)}
+		case "aria2RPC":
+			setting = models.AppSetting{Key: "download.aria2_rpc", Value: h.config.Download.Aria2RPC}
+		case "aria2Secret":
+			setting = models.AppSetting{Key: "download.aria2_secret", Value: h.config.Download.Aria2Secret}
+		case "aria2HTTP":
+			setting = models.AppSetting{Key: "download.aria2_http", Value: h.config.Download.Aria2HTTP}
+		case "aria2Dir":
+			setting = models.AppSetting{Key: "download.aria2_dir", Value: h.config.Download.Aria2Dir}
 		default:
 			continue
 		}
@@ -255,5 +291,9 @@ func (h *configHandler) update(c *gin.Context) {
 		TaskLogRetentionDays:         h.config.TaskLog.RetentionDays,
 		OperationLogRetentionDays:    h.config.OpLog.RetentionDays,
 		DownloadMaxSpeedBytes:        h.config.Download.MaxSpeedBytes,
+		Aria2RPC:                     h.config.Download.Aria2RPC,
+		Aria2Secret:                  h.config.Download.Aria2Secret,
+		Aria2HTTP:                    h.config.Download.Aria2HTTP,
+		Aria2Dir:                     h.config.Download.Aria2Dir,
 	})
 }

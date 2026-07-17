@@ -207,6 +207,10 @@ type UpdateConfig struct {
 	TaskLogRetentionDays         *int `json:"taskLogRetentionDays,omitempty"`
 	OperationLogRetentionDays    *int `json:"operationLogRetentionDays,omitempty"`
 	DownloadMaxSpeedBytes        *int64 `json:"downloadMaxSpeedBytes,omitempty"`
+	Aria2RPC                     *string `json:"aria2RPC,omitempty"`
+	Aria2Secret                  *string `json:"aria2Secret,omitempty"`
+	Aria2HTTP                    *string `json:"aria2HTTP,omitempty"`
+	Aria2Dir                     *string `json:"aria2Dir,omitempty"`
 }
 
 // ApplyUpdate 应用运行时配置更新，返回实际被修改的字段名列表
@@ -289,6 +293,24 @@ func (c *Config) ApplyUpdate(update UpdateConfig) ([]string, error) {
 			c.Download.MaxSpeedBytes = v
 			changed = append(changed, "downloadMaxSpeedBytes")
 		}
+	}
+	// aria2 配置热更新（空串合法：RPC 空=禁用 aria2 走 HTTP；Dir 空=用 daemon 默认），无归一化。
+	// 下游 getAria2Downloader 的缓存键含四要素，任一变更后下次 downloaderForRepository 调用失效重建，零下游通知。
+	if update.Aria2RPC != nil && *update.Aria2RPC != c.Download.Aria2RPC {
+		c.Download.Aria2RPC = *update.Aria2RPC
+		changed = append(changed, "aria2RPC")
+	}
+	if update.Aria2Secret != nil && *update.Aria2Secret != c.Download.Aria2Secret {
+		c.Download.Aria2Secret = *update.Aria2Secret
+		changed = append(changed, "aria2Secret")
+	}
+	if update.Aria2HTTP != nil && *update.Aria2HTTP != c.Download.Aria2HTTP {
+		c.Download.Aria2HTTP = *update.Aria2HTTP
+		changed = append(changed, "aria2HTTP")
+	}
+	if update.Aria2Dir != nil && *update.Aria2Dir != c.Download.Aria2Dir {
+		c.Download.Aria2Dir = *update.Aria2Dir
+		changed = append(changed, "aria2Dir")
 	}
 
 	return changed, nil
