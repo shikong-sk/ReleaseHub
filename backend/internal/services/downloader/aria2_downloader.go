@@ -32,8 +32,18 @@ const aria2DownloadTimeout = 30 * time.Minute
 // io.Copy 返回时所有数据已被 pipe reader（storage Put）消费，故删本地文件安全；若未来下载链路
 // 改为带缓冲 pipe 或异步度更高的写入，此 defer 可能过早删文件，需同步调整清理时机。
 type Aria2Downloader struct {
-	client   *aria2.Client
-	aria2Dir string // 显式下载目录；空=依赖 daemon 自身配置
+	client    *aria2.Client
+	aria2Dir  string        // 显式下载目录；空=依赖 daemon 自身配置
+	userAgent func() string // 动态 User-Agent 来源，nil=不覆盖（浏览器默认 UA 由 aria2 daemon 决定）
+}
+
+// WithUserAgentFunc 注入动态 User-Agent 来源（如 cfg.DownloadUserAgent）。
+// 非空时以 aria2 的 user-agent 选项下发，覆盖 daemon 默认 UA（应对镜像站拦截非浏览器 UA）。
+func (a *Aria2Downloader) WithUserAgentFunc(fn func() string) *Aria2Downloader {
+	if a != nil {
+		a.userAgent = fn
+	}
+	return a
 }
 
 // NewAria2Downloader 创建 aria2 RPC 下载器。
@@ -65,6 +75,13 @@ func (a *Aria2Downloader) DownloadWithProgress(ctx context.Context, url string, 
 	// 下载源鉴权走 Bearer header（与 HTTPDownloader 语义一致）；aria2 daemon RPC 鉴权走 client.secret，两者别混淆
 	if token != "" {
 		options["header"] = []string{"Authorization: Bearer " + token}
+	}
+	// User-Agent：aria2 原生支持 user-agent 选项（而非 header），非空时才下发，
+	// 避免把空串当成「无 UA」覆盖掉 daemon 自身配置
+	if a.userAgent != nil {
+		if ua := a.userAgent(); ua != "" {
+			options["user-agent"] = ua
+		}
 	}
 	gid, err := a.client.AddURI(ctx, []string{url}, options)
 	if err != nil {

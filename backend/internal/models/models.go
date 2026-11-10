@@ -71,6 +71,12 @@ type Repository struct {
 	StorageID            *uint            `json:"storageId" gorm:"column:storage_id"`
 	ProxyID              *uint            `json:"proxyId" gorm:"column:proxy_id"`
 	ProviderApiBaseUrl   string           `json:"providerApiBaseUrl" gorm:"column:provider_api_base_url;size:1024"`
+	// DownloadMirrorBaseUrl GitHub 下载镜像（反向代理）地址，仅改写 release 资产下载地址
+	DownloadMirrorBaseUrl string `json:"downloadMirrorBaseUrl" gorm:"column:download_mirror_base_url;size:1024"`
+	// DownloadUserAgentPreset 仓库级下载 UA 预设，空=跟随全局配置（download.userAgentPreset）
+	DownloadUserAgentPreset string `json:"downloadUserAgentPreset" gorm:"column:download_user_agent_preset;size:40;not null;default:''"`
+	// DownloadUserAgent 仓库级自定义 UA，仅 DownloadUserAgentPreset=custom 时生效
+	DownloadUserAgent string `json:"downloadUserAgent" gorm:"column:download_user_agent;size:512;not null;default:''"`
 	IntervalSeconds      int              `json:"intervalSeconds" gorm:"column:interval_seconds;not null;default:1800"`
 	FilterMode           string           `json:"filterMode" gorm:"column:filter_mode;size:20;not null;default:glob"`
 	AssetIncludePatterns string           `json:"assetIncludePatterns" gorm:"column:asset_include_patterns;type:text"`

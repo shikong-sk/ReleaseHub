@@ -10,6 +10,7 @@ import (
 
 	"releasehub/backend/internal/config"
 	"releasehub/backend/internal/models"
+	"releasehub/backend/internal/services/mirror"
 	"releasehub/backend/internal/services/provider"
 	"releasehub/backend/internal/services/storage"
 
@@ -46,6 +47,9 @@ type CreateInput struct {
 	StorageIDs           []uint `json:"storageIds"`    // 多存储（优先）
 	ProxyID              *uint  `json:"proxyId"`
 	ProviderApiBaseUrl    string `json:"providerApiBaseUrl"`
+	DownloadMirrorBaseUrl string `json:"downloadMirrorBaseUrl"`
+	DownloadUserAgentPreset string `json:"downloadUserAgentPreset"`
+	DownloadUserAgent       string `json:"downloadUserAgent"`
 	IntervalSeconds      int    `json:"intervalSeconds"`
 	FilterMode           string `json:"filterMode"`
 	AssetIncludePatterns string `json:"assetIncludePatterns"`
@@ -63,6 +67,9 @@ type UpdateInput struct {
 	StorageIDs           []uint  `json:"storageIds"`    // 多存储（优先）
 	ProxyID              *uint  `json:"proxyId"`
 	ProviderApiBaseUrl    *string `json:"providerApiBaseUrl"`
+	DownloadMirrorBaseUrl *string `json:"downloadMirrorBaseUrl"`
+	DownloadUserAgentPreset *string `json:"downloadUserAgentPreset"`
+	DownloadUserAgent       *string `json:"downloadUserAgent"`
 	IntervalSeconds      *int    `json:"intervalSeconds"`
 	FilterMode           *string `json:"filterMode"`
 	AssetIncludePatterns *string `json:"assetIncludePatterns"`
@@ -233,6 +240,29 @@ func (s *Service) Update(ctx context.Context, id uint, input UpdateInput) (*mode
 	}
 	if input.ProviderApiBaseUrl != nil {
 		repository.ProviderApiBaseUrl = strings.TrimSpace(*input.ProviderApiBaseUrl)
+	}
+	// 下载镜像：空字符串表示关闭镜像，非空时校验地址合法性
+	if input.DownloadMirrorBaseUrl != nil {
+		mirrorBase := strings.TrimSpace(*input.DownloadMirrorBaseUrl)
+		if err := validateDownloadMirror(mirrorBase); err != nil {
+			return nil, err
+		}
+		repository.DownloadMirrorBaseUrl = mirrorBase
+	}
+	// 仓库级下载 UA：preset 空=跟随全局；非空时必须是内置预设或 custom
+	if input.DownloadUserAgentPreset != nil {
+		preset := strings.TrimSpace(*input.DownloadUserAgentPreset)
+		if err := validateUserAgentOverride(preset, ""); err != nil {
+			return nil, err
+		}
+		repository.DownloadUserAgentPreset = preset
+	}
+	if input.DownloadUserAgent != nil {
+		ua := strings.TrimSpace(*input.DownloadUserAgent)
+		if err := validateUserAgentValue(ua); err != nil {
+			return nil, err
+		}
+		repository.DownloadUserAgent = ua
 	}
 	if input.IntervalSeconds != nil {
 		if err := validateInterval(*input.IntervalSeconds); err != nil {
@@ -406,6 +436,19 @@ func buildRepository(input CreateInput) (*models.Repository, error) {
 		return nil, err
 	}
 
+	// 创建时校验下载镜像地址，避免非法配置写入数据库
+	mirrorBase := strings.TrimSpace(input.DownloadMirrorBaseUrl)
+	if err := validateDownloadMirror(mirrorBase); err != nil {
+		return nil, err
+	}
+
+	// 创建时校验仓库级下载 UA：preset 空=跟随全局，自定义值禁止换行
+	uaPreset := strings.TrimSpace(input.DownloadUserAgentPreset)
+	uaValue := strings.TrimSpace(input.DownloadUserAgent)
+	if err := validateUserAgentOverride(uaPreset, uaValue); err != nil {
+		return nil, err
+	}
+
 	return &models.Repository{
 		Provider:             providerName,
 		Owner:                owner,
@@ -414,6 +457,9 @@ func buildRepository(input CreateInput) (*models.Repository, error) {
 		GitHubTokenID:        input.GitHubTokenID,
 		StorageID:            input.StorageID,
 		ProxyID:              input.ProxyID,
+		DownloadMirrorBaseUrl: mirrorBase,
+		DownloadUserAgentPreset: uaPreset,
+		DownloadUserAgent:       uaValue,
 		IntervalSeconds:      interval,
 		FilterMode:           filterMode,
 		AssetIncludePatterns: strings.TrimSpace(input.AssetIncludePatterns),
@@ -456,6 +502,37 @@ func validateFilterMode(filterMode string) error {
 func validateRetention(retention int) error {
 	if retention < 1 {
 		return fmt.Errorf("%w: retentionKeepLatest 不能小于 1", errInvalidInput)
+	}
+
+	return nil
+}
+
+// validateUserAgentOverride 校验仓库级 UA 覆盖配置：preset 空表示跟随全局配置。
+// preset 非空时必须是内置预设或 custom；UA 值仅在 custom 时有意义，但仍统一校验格式。
+func validateUserAgentOverride(preset, ua string) error {
+	if preset != "" {
+		if err := config.ValidateUserAgentPreset(preset); err != nil {
+			return fmt.Errorf("%w: %v", errInvalidInput, err)
+		}
+	}
+	if err := validateUserAgentValue(ua); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateUserAgentValue 校验自定义 UA 字符串（禁止换行注入、限长）
+func validateUserAgentValue(ua string) error {
+	if err := config.ValidateUserAgent(ua); err != nil {
+		return fmt.Errorf("%w: %v", errInvalidInput, err)
+	}
+	return nil
+}
+
+// validateDownloadMirror 校验 GitHub 下载镜像地址，空字符串表示不启用。
+func validateDownloadMirror(baseURL string) error {
+	if err := mirror.ValidateBase(baseURL); err != nil {
+		return fmt.Errorf("%w: 下载镜像地址无效: %v", errInvalidInput, err)
 	}
 
 	return nil

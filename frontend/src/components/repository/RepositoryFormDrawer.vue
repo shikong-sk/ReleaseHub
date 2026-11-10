@@ -26,6 +26,7 @@ import { useTokensStore } from '@/stores/tokens'
 import { useStoragesStore } from '@/stores/storages'
 import { useProxiesStore } from '@/stores/proxies'
 import type { Repository, RepositoryFilterMode, RepositoryFormMode, RepositoryPayload } from '@/types/repository'
+import { buildUserAgentOptions, resolveUserAgentPreview, USER_AGENT_PRESETS } from '@/constants/userAgent'
 
 const props = defineProps<{
   show: boolean
@@ -87,6 +88,9 @@ const form = reactive<RepositoryPayload>({
   storageIds: [] as number[],
   proxyId: null,
   providerApiBaseUrl: '',
+  downloadMirrorBaseUrl: '',
+  downloadUserAgentPreset: '',
+  downloadUserAgent: '',
   enabled: true,
   intervalSeconds: 1800,
   filterMode: 'glob',
@@ -196,6 +200,15 @@ watch(
   { immediate: true }
 )
 
+// 仓库级 UA 下拉：首位为「跟随全局配置」，其余复用后端预设表
+const userAgentOptions = buildUserAgentOptions(USER_AGENT_PRESETS, true)
+// 只读预览：选中项对应的 UA 串（跟随全局时不展示具体值）
+const userAgentPreview = computed(() =>
+  form.downloadUserAgentPreset
+    ? resolveUserAgentPreview(form.downloadUserAgentPreset, form.downloadUserAgent ?? '', USER_AGENT_PRESETS)
+    : ''
+)
+
 function resetForm() {
   form.provider = props.repository?.provider ?? 'github'
   form.owner = props.repository?.owner ?? ''
@@ -205,6 +218,9 @@ function resetForm() {
   form.storageIds = props.repository?.storageIds ?? []
   form.proxyId = props.repository?.proxyId ?? null
   form.providerApiBaseUrl = props.repository?.providerApiBaseUrl ?? ''
+  form.downloadMirrorBaseUrl = props.repository?.downloadMirrorBaseUrl ?? ''
+  form.downloadUserAgentPreset = props.repository?.downloadUserAgentPreset ?? ''
+  form.downloadUserAgent = props.repository?.downloadUserAgent ?? ''
   form.enabled = props.repository?.enabled ?? true
   form.intervalSeconds = props.repository?.intervalSeconds ?? 1800
   form.filterMode = (props.repository?.filterMode ?? 'glob') as RepositoryFilterMode
@@ -230,6 +246,11 @@ function submit() {
     storageIds: (form.storageIds ?? []).length > 0 ? form.storageIds : undefined,
     proxyId: proxyId === 0 || proxyId === null ? null : proxyId,
     providerApiBaseUrl: (form.providerApiBaseUrl ?? '').trim() || undefined,
+    downloadMirrorBaseUrl: (form.downloadMirrorBaseUrl ?? '').trim(),
+    // 仓库级 UA：preset 空=跟随全局；非 custom 时清空自定义值，避免脏数据残留
+    downloadUserAgentPreset: (form.downloadUserAgentPreset ?? '').trim(),
+    downloadUserAgent:
+      (form.downloadUserAgentPreset ?? '') === 'custom' ? (form.downloadUserAgent ?? '').trim() : '',
     enabled: form.enabled,
     intervalSeconds: form.intervalSeconds,
     filterMode: form.filterMode,
@@ -389,6 +410,43 @@ function sampleAssetNames(): string[] {
           />
         </NFormItem>
 
+        <NFormItem label="GitHub 下载镜像">
+          <div style="display: flex; flex-direction: column; gap: 6px; width: 100%">
+            <NInput
+              v-model:value="form.downloadMirrorBaseUrl"
+              :disabled="ownerDisabled"
+              placeholder="https://ghproxy.example.com 或 https://ghproxy.example.com/{url}"
+              clearable
+            />
+            <span class="form-hint">
+              留空则直连。仅改写 GitHub Release 资产的下载地址，不影响 API 请求；
+              支持前缀式与 {url} 模板式镜像，可与上方 http/socks5 代理叠加使用。
+            </span>
+          </div>
+        </NFormItem>
+
+        <NFormItem label="下载 UA">
+          <div style="display: flex; flex-direction: column; gap: 6px; width: 100%">
+            <NSelect
+              v-model:value="form.downloadUserAgentPreset"
+              :options="userAgentOptions"
+              :disabled="ownerDisabled"
+              style="width: 240px"
+            />
+            <NInput
+              v-if="form.downloadUserAgentPreset === 'custom'"
+              v-model:value="form.downloadUserAgent"
+              :disabled="ownerDisabled"
+              placeholder="自定义 UA，例如 Mozilla/5.0 (Windows NT 10.0; Win64; x64) ..."
+              clearable
+            />
+            <span class="form-hint">
+              选「跟随全局配置」，或选「自定义」但不填值，都会使用系统设置里的下载 UA；填了值则覆盖全局。
+              当前生效：{{ userAgentPreview || '跟随全局配置' }}
+            </span>
+          </div>
+        </NFormItem>
+
         <NFormItem label="启用同步">
           <NSwitch v-model:value="form.enabled" />
         </NFormItem>
@@ -517,6 +575,13 @@ function sampleAssetNames(): string[] {
   display: flex;
   justify-content: flex-end;
   margin: -8px 0 16px;
+}
+
+/* 表单项辅助说明文字 */
+.form-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--n-text-color-3, #909399);
 }
 
 .preview-list {

@@ -2,8 +2,8 @@ package provider
 
 import (
 	"context"
-
 	"net/http"
+	"strings"
 
 	githubsvc "releasehub/backend/internal/services/github"
 )
@@ -69,6 +69,7 @@ func toProviderRelease(r *githubsvc.Release) *ProviderRelease {
 			ContentType:        a.ContentType,
 			URL:                a.URL,
 			BrowserDownloadURL: a.BrowserDownloadURL,
+			Digest:             normalizeDigest(a.Digest),
 		})
 	}
 	return &ProviderRelease{
@@ -86,4 +87,17 @@ func toProviderRelease(r *githubsvc.Release) *ProviderRelease {
 // newGitHubClient 创建 GitHub Client（供 registry 使用）
 func newGitHubClient(apiBaseURL string, transport *http.Transport) (*githubsvc.Client, error) {
 	return githubsvc.NewClientWithTransport(apiBaseURL, transport)
+}
+
+// normalizeDigest 统一摘要格式：GitHub API 返回 "sha256:xxx"，
+// HTML 抓取与入库都使用不带前缀的小写十六进制，这里统一成后者。
+func normalizeDigest(digest string) string {
+	trimmed := strings.TrimSpace(digest)
+	if trimmed == "" {
+		return ""
+	}
+	if index := strings.Index(trimmed, ":"); index >= 0 {
+		trimmed = trimmed[index+1:]
+	}
+	return strings.ToLower(strings.TrimSpace(trimmed))
 }

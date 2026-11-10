@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, onMounted, shallowRef } from 'vue'
+import { computed, h, onMounted, shallowRef } from 'vue'
 import {
   NAlert,
   NButton,
@@ -14,6 +14,7 @@ import {
   NInputNumber,
   NModal,
   NPopconfirm,
+  NSelect,
   NSpace,
   NSwitch,
   NTag,
@@ -23,12 +24,13 @@ import {
 import { Activity, Plus, RefreshCw, RotateCw } from 'lucide-vue-next'
 import type { DataTableColumns } from 'naive-ui'
 
-import { getAppConfig, updateAppConfig, type AppConfigUpdate } from '@/api/settings'
+import { getAppConfig, updateAppConfig, type AppConfigUpdate, type UserAgentPreset } from '@/api/settings'
 import { restartService } from '@/api/system'
 import APIKeyPanel from '@/components/settings/APIKeyPanel.vue'
 import { checkTokenHealth, checkTokenRateLimit, type TokenHealthResult } from '@/api/tokens'
 import { useTokensStore } from '@/stores/tokens'
 import type { TokenItem } from '@/types/token'
+import { USER_AGENT_PRESETS } from '@/constants/userAgent'
 
 const tokensStore = useTokensStore()
 const message = useMessage()
@@ -46,6 +48,10 @@ const downloadMaxSpeedBytes = shallowRef(0)
 const aria2RPC = shallowRef('')
 const aria2Secret = shallowRef('')
 const aria2Dir = shallowRef('')
+// 下载 User-Agent：preset 为预设标识（default/custom/...），userAgentPresetList 由后端下发
+const userAgentPreset = shallowRef('default')
+const userAgent = shallowRef('')
+const userAgentPresetList = shallowRef<UserAgentPreset[]>([])
 const configSaving = shallowRef(false)
 const configEditing = shallowRef(false)
 const restarting = shallowRef(false)
@@ -62,6 +68,38 @@ const editDownloadMaxSpeedBytes = shallowRef(0)
 const editAria2RPC = shallowRef('')
 const editAria2Secret = shallowRef('')
 const editAria2Dir = shallowRef('')
+const editUserAgentPreset = shallowRef('default')
+const editUserAgent = shallowRef('')
+
+// 后端未下发预设时用共享常量兜底（旧版本后端 / 字段缺失），保证下拉始终有选项
+const presetSource = computed(() =>
+  userAgentPresetList.value.length > 0 ? userAgentPresetList.value : USER_AGENT_PRESETS
+)
+
+// 下拉选项：由后端预设列表映射而来（label/value 直接复用）
+const userAgentOptions = computed(() =>
+  presetSource.value.map((item) => ({ label: item.label, value: item.value }))
+)
+
+// 只读态展示预设名，便于区分「默认」与「浏览器 UA」
+const effectiveUserAgentLabel = computed(() => {
+  const preset = userAgentPreset.value || 'default'
+  const hit = presetSource.value.find((item) => item.value === preset)
+  return hit?.label || preset
+})
+
+// 只读展示：当前生效 UA 的预览（默认/预设取预设值，custom 取自定义值）
+const effectiveUserAgent = computed(() => {
+  const preset = userAgentPreset.value || 'default'
+  if (preset === 'custom') {
+    return userAgent.value || 'ReleaseHub'
+  }
+  if (preset === 'default') {
+    return 'ReleaseHub'
+  }
+  const hit = presetSource.value.find((item) => item.value === preset)
+  return hit?.ua || 'ReleaseHub'
+})
 
 const showModal = shallowRef(false)
 const formName = shallowRef('')
@@ -140,6 +178,9 @@ onMounted(async () => {
     aria2RPC.value = config.aria2RPC
     aria2Secret.value = config.aria2Secret
     aria2Dir.value = config.aria2Dir
+    userAgentPreset.value = config.userAgentPreset || 'default'
+    userAgent.value = config.userAgent || ''
+    userAgentPresetList.value = config.userAgentPresets || []
     configLoaded.value = true
     resetEditForm()
   } catch {
@@ -159,6 +200,8 @@ function resetEditForm() {
   editAria2RPC.value = aria2RPC.value
   editAria2Secret.value = aria2Secret.value
   editAria2Dir.value = aria2Dir.value
+  editUserAgentPreset.value = userAgentPreset.value
+  editUserAgent.value = userAgent.value
 }
 
 function startEditConfig() {
@@ -208,6 +251,13 @@ async function saveConfig() {
     if (editAria2Dir.value !== aria2Dir.value) {
       update.aria2Dir = editAria2Dir.value
     }
+    if (editUserAgentPreset.value !== userAgentPreset.value) {
+      update.userAgentPreset = editUserAgentPreset.value
+    }
+    // 自定义 UA 仅在选中 custom 时提交，避免切回预设后残留旧值
+    if (editUserAgentPreset.value === 'custom' && editUserAgent.value !== userAgent.value) {
+      update.userAgent = editUserAgent.value
+    }
 
     // 没有变更则直接退出编辑
     if (Object.keys(update).length === 0) {
@@ -228,6 +278,11 @@ async function saveConfig() {
     aria2RPC.value = result.aria2RPC
     aria2Secret.value = result.aria2Secret
     aria2Dir.value = result.aria2Dir
+    userAgentPreset.value = result.userAgentPreset || 'default'
+    userAgent.value = result.userAgent || ''
+    if (result.userAgentPresets) {
+      userAgentPresetList.value = result.userAgentPresets
+    }
     configEditing.value = false
     message.success('配置已更新')
   } catch (err) {
@@ -399,6 +454,16 @@ async function handleDelete(id: number) {
         <NDescriptionsItem label="Aria2 目录">
           {{ aria2Dir || '默认' }}
         </NDescriptionsItem>
+        <NDescriptionsItem label="下载 User-Agent">
+          <NTooltip>
+            <template #trigger>
+              <NText style="font-size: 12px">
+                {{ effectiveUserAgentLabel }}<template v-if="userAgentPreset === 'custom'">：{{ effectiveUserAgent }}</template>
+              </NText>
+            </template>
+            {{ effectiveUserAgent }}
+          </NTooltip>
+        </NDescriptionsItem>
       </NDescriptions>
 
       <!-- 编辑模式 -->
@@ -451,8 +516,25 @@ async function handleDelete(id: number) {
         <NFormItem label="Aria2 目录">
           <NInput v-model:value="editAria2Dir" placeholder="留空使用 aria2 daemon 默认目录" />
         </NFormItem>
+        <NFormItem label="下载 User-Agent">
+          <NSelect v-model:value="editUserAgentPreset" :options="userAgentOptions" style="width: 220px" />
+          <span style="margin-left: 8px; color: #8c8c8c">部分镜像站会拦截非浏览器 UA，可切换为浏览器 UA</span>
+        </NFormItem>
+        <NFormItem label="自定义 UA">
+          <NInput
+            v-model:value="editUserAgent"
+            :disabled="editUserAgentPreset !== 'custom'"
+            placeholder="选择上方「自定义」后可填写，例如 Mozilla/5.0 (Windows NT 10.0; Win64; x64) ..."
+          />
+          <span style="margin-left: 8px; color: #8c8c8c">
+            {{ editUserAgentPreset === 'custom' ? '留空则回退 ReleaseHub' : '仅在选择「自定义」时生效' }}
+          </span>
+        </NFormItem>
         <NAlert type="info" style="margin-top: 8px">
           扫描间隔是全局定时器的轮询周期，每轮检查哪些仓库到期；单个仓库的同步频率由仓库配置中的同步间隔决定。并发控制分三层：调度并发数限制定时扫描投递速率，任务并发数限制后台任务队列执行速率，下载并发数限制单任务内资产下载速率。存储目录为环境变量配置，需重启服务生效。
+        </NAlert>
+        <NAlert type="info" style="margin-top: 8px">
+          下载 User-Agent 同时作用于 HTTP 下载、aria2 下载（user-agent 选项）与免 Token 的网页抓取。默认使用 ReleaseHub 标识，便于上游识别来源；若镜像站返回「人机验证」页面或 403，可切换为浏览器 UA。
         </NAlert>
         <NAlert type="info" style="margin-top: 8px">
           Aria2 模式（RPC 端点非空）下下载由 aria2 daemon 独立进程完成：仓库代理配置不生效（请在 aria2 daemon 端配置网络/代理）、下载限速不生效（由 aria2 daemon --max-download-limit 控制）、且 aria2 完成文件目录需对 ReleaseHub 进程可见（本服务通过共享文件系统直接读取后写入存储）。

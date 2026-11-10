@@ -28,11 +28,15 @@ type repositoryHandler struct {
 	retentionSvc    *retentionsvc.Service
 }
 
-func registerRepositoryRoutes(router *gin.Engine, db *gorm.DB, storageConfig config.StorageConfig, githubAPIBaseURL string, githubClient *githubsvc.Client, githubClientErr error, sharedSyncer *syncersvc.Service) {
+func registerRepositoryRoutes(router *gin.Engine, db *gorm.DB, storageConfig config.StorageConfig, cfg *config.Config, githubAPIBaseURL string, githubClient *githubsvc.Client, githubClientErr error, sharedSyncer *syncersvc.Service) {
 	providerRegistry := providersvc.NewRegistry(githubAPIBaseURL)
 	checkService := releasesvc.NewCheckService(db, githubClient).
 		WithGitHubFactory(githubsvc.NewClientFactory(githubAPIBaseURL, db)).
 		WithProviderRegistry(providerRegistry)
+	// 网页降级抓取复用全局下载 UA（镜像站拦截非浏览器 UA 时同样需要浏览器 UA）
+	if cfg != nil {
+		checkService = checkService.WithUserAgentProvider(cfg.DownloadUserAgent)
+	}
 	var retentionService *retentionsvc.Service
 	if rs, err := retentionsvc.NewService(db, storageConfig); err == nil {
 		retentionService = rs
@@ -45,7 +49,9 @@ func registerRepositoryRoutes(router *gin.Engine, db *gorm.DB, storageConfig con
 	if syncService == nil {
 		// scheduler 未启用时降级：独立创建实例，使用默认并发数
 		if s, err := syncersvc.NewService(db, checkService, storageConfig); err == nil {
-			syncService = s
+			// 降级实例同样注入全局配置指针：否则此路径上的下载 UA / 限速等 Download 配置不会生效
+			// （cfg 为 nil 时 WithConfig 内部安全，assetService 保持未注入状态）
+			syncService = s.WithConfig(cfg)
 		} else {
 			syncServiceErr = err
 		}

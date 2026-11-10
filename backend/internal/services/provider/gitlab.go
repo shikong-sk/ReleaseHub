@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"path"
 	"strings"
 	"time"
 )
@@ -203,5 +202,3 @@ func toGitLabProviderRelease(r gitLabRelease) ProviderRelease {
 	}
 }
 
-// 确保引用 path
-var _ = path.Join

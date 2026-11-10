@@ -95,7 +95,8 @@ func main() {
 		}
 		checkService := releasesvc.NewCheckService(db, githubClient).
 			WithGitHubFactory(githubsvc.NewClientFactory(cfg.GitHub.APIBaseURL, db)).
-			WithProviderRegistry(providersvc.NewRegistry(cfg.GitHub.APIBaseURL))
+			WithProviderRegistry(providersvc.NewRegistry(cfg.GitHub.APIBaseURL)).
+			WithUserAgentProvider(cfg.DownloadUserAgent)
 		retentionService := retentionsvc.NewServiceWithFactory(db, cfg.Storage)
 		checkService.WithRetention(retentionService)
 

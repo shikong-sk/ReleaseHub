@@ -141,6 +141,7 @@ Syncer 配置支持运行时动态更新，在 Web 管理界面的「设置 → 
 | 关联 Token | 空 | 用于 API 认证的 GitHub Token |
 | 存储目标 | 默认存储 | 资产存储位置 |
 | 代理 | 空 | API 和下载请求使用的代理 |
+| 下载 UA | 空（跟随全局） | 仓库级 UA 覆盖；非空时优先于全局配置 |
 
 ## 运行时配置更新
 
@@ -152,6 +153,7 @@ Syncer 配置支持运行时动态更新，在 Web 管理界面的「设置 → 
 - `syncerMaxConcurrentTasks`、`syncerMaxConcurrentDownloads`
 - `taskLogRetentionDays`、`operationLogRetentionDays`
 - `downloadMaxSpeedBytes`、`aria2RPC`、`aria2Secret`、`aria2HTTP`、`aria2Dir`
+- `userAgentPreset`、`userAgent`（下载 User-Agent，见下节）
 
 热更新机制分两类：
 
@@ -159,6 +161,24 @@ Syncer 配置支持运行时动态更新，在 Web 管理界面的「设置 → 
 - **指针共享（惰性生效）**：`authEnabled`、`githubApiBaseUrl`、两个 `*RetentionDays`、`downloadMaxSpeedBytes` 与 `aria2*` 通过共享的 `*config.Config` 指针读取，消费侧下次访问即采用新值，无需显式通知下游。其中 aria2 字段额外采用惰性缓存失效：`Aria2Downloader` 按 `{rpc,secret,http,dir}` 缓存，任一字段变更后下一次下载即缓存未命中并重建下载器。
 
 上述字段在更新后均会持久化到数据库，重启后自动恢复。
+
+### 下载 User-Agent
+
+部分 GitHub 镜像站/加速服务会拦截非浏览器 UA，返回 `403` 或人机验证页（Cloudflare `Just a moment...`）。此时可切换下载 UA：
+
+| 预设值 | 说明 |
+| --- | --- |
+| `default` | 程序默认 UA（`ReleaseHub`），便于上游识别来源 |
+| `chrome-win` / `edge-win` / `firefox-win` | Windows 常见桌面浏览器 |
+| `safari-mac` | macOS Safari |
+| `chrome-android` | Android Chrome |
+| `custom` | 使用 `userAgent` 字段的自定义字符串（禁止换行，≤512 字节） |
+
+生效范围：HTTP 下载（`HTTPDownloader` 请求头）、aria2 下载（`user-agent` 选项）、免 Token 的网页降级抓取（`HTMLFetcher`）。GitHub API 与各 Provider 请求仍使用 `ReleaseHub` 标识，不受该配置影响。
+
+优先级：**仓库级 `downloadUserAgentPreset`（非空且不是空值的 `custom`）→ 全局 `download.userAgentPreset` → 内置默认值**。仓库级选 `custom` 但未填 UA 时同样回退全局，保证「留空即跟随全局」这一条语义。仓库级留空即跟随全局，适合「不同镜像站需要不同 UA」的场景；同 UA 的仓库共用同一个 HTTP 连接池（`uaDownloaders` 缓存），与全局 UA 相同的仓库仍走共享下载器。
+
+对应环境变量：`RELEASEHUB_DOWNLOAD_USER_AGENT_PRESET`、`RELEASEHUB_DOWNLOAD_USER_AGENT`。
 
 ## Docker Compose 配置示例
 

@@ -67,8 +67,11 @@
 | enabled | bool | 否 | 是否启用 |
 | githubTokenId | number/null | 否 | 关联的 Token ID |
 | storageId | number/null | 否 | 存储目标 ID |
-| proxyId | number/null | 否 | 代理 ID |
+| proxyId | number/null | 否 | 代理 ID（http/socks5 传输层代理） |
 | providerApiBaseUrl | string | 否 | 自托管实例地址 |
+| downloadMirrorBaseUrl | string | 否 | GitHub 下载镜像地址，仅改写 Release 资产下载链接；留空表示直连。支持 `{url}` 占位符，例如 `https://ghproxy.example.com/{url}`；省略 scheme 时按 `https://` 处理 |
+| downloadUserAgentPreset | string | 否 | 仓库级下载 UA 预设；留空=跟随全局配置。可选 `default`/`custom`/`chrome-win`/`edge-win`/`firefox-win`/`safari-mac`/`chrome-android` |
+| downloadUserAgent | string | 否 | 仓库级自定义 UA，仅 `downloadUserAgentPreset=custom` 时生效；禁止换行，≤512 字节 |
 | intervalSeconds | number | 否 | 同步间隔，默认 1800 |
 | filterMode | string | 否 | `glob` 或 `regex` |
 | assetIncludePatterns | string | 否 | 包含规则 |
@@ -311,9 +314,15 @@
   "aria2RPC": "http://127.0.0.1:6800/jsonrpc",
   "aria2Secret": "your-aria2-secret",
   "aria2HTTP": "",
-  "aria2Dir": "/data/aria2/done"
+  "aria2Dir": "/data/aria2/done",
+  "userAgentPreset": "chrome-win",
+  "userAgent": ""
 }
 ```
+
+`userAgentPreset` 可选 `default`（程序默认 UA）、`custom`（配合 `userAgent` 使用）、`chrome-win`、`edge-win`、`firefox-win`、`safari-mac`、`chrome-android`。
+下载 UA 同时作用于 HTTP 下载、aria2 下载与免 Token 网页抓取；`userAgent` 包含换行符或超过 512 字节时返回 400。
+`GET /api/config` 响应额外返回 `userAgentPresets` 数组（`{value,label,ua}`），前端据此渲染下拉选项。
 
 ## 通用响应格式
 

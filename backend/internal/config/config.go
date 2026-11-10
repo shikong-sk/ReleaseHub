@@ -52,6 +52,11 @@ type DownloadConfig struct {
 	Aria2Secret   string // aria2 RPC 密钥
 	Aria2HTTP     string // aria2 文件服务地址
 	Aria2Dir      string // aria2 下载目录，空=依赖 aria2 daemon 自身配置；非空=把 aria2 下载引导到该目录，便于 ReleaseHub 进程读取完成文件
+	// UserAgentPreset 下载请求使用的 User-Agent 预设（default/custom/chrome-win/edge-win/firefox-win/safari-mac/chrome-android）
+	// 用途：部分 GitHub 镜像站点会拦截非浏览器 UA，此时可切换为浏览器 UA
+	UserAgentPreset string
+	// UserAgent 自定义 User-Agent，仅 UserAgentPreset=custom 时生效
+	UserAgent string
 }
 
 type GitHubConfig struct {
@@ -107,6 +112,9 @@ func Load() (*Config, error) {
 	v.SetDefault("download.aria2_secret", "")
 	v.SetDefault("download.aria2_http", "")
 	v.SetDefault("download.aria2_dir", "")
+	// 下载 User-Agent：default=ReleaseHub，custom=使用 download.user_agent
+	v.SetDefault("download.user_agent_preset", UserAgentPresetDefault)
+	v.SetDefault("download.user_agent", "")
 	v.SetDefault("github.api_base_url", "https://api.github.com")
 	v.SetDefault("scheduler.enabled", true)
 	v.SetDefault("scheduler.tick_seconds", 60)
@@ -140,11 +148,13 @@ func Load() (*Config, error) {
 			DataDir: v.GetString("storage.data_dir"),
 		},
 		Download: DownloadConfig{
-			MaxSpeedBytes: v.GetInt64("download.max_speed_bytes"),
-			Aria2RPC:      v.GetString("download.aria2_rpc"),
-			Aria2Secret:   v.GetString("download.aria2_secret"),
-			Aria2HTTP:     v.GetString("download.aria2_http"),
-			Aria2Dir:      v.GetString("download.aria2_dir"),
+			MaxSpeedBytes:   v.GetInt64("download.max_speed_bytes"),
+			Aria2RPC:        v.GetString("download.aria2_rpc"),
+			Aria2Secret:     v.GetString("download.aria2_secret"),
+			Aria2HTTP:       v.GetString("download.aria2_http"),
+			Aria2Dir:        v.GetString("download.aria2_dir"),
+			UserAgentPreset: v.GetString("download.user_agent_preset"),
+			UserAgent:       v.GetString("download.user_agent"),
 		},
 		GitHub: GitHubConfig{
 			APIBaseURL: v.GetString("github.api_base_url"),
@@ -211,11 +221,26 @@ type UpdateConfig struct {
 	Aria2Secret                  *string `json:"aria2Secret,omitempty"`
 	Aria2HTTP                    *string `json:"aria2HTTP,omitempty"`
 	Aria2Dir                     *string `json:"aria2Dir,omitempty"`
+	UserAgentPreset              *string `json:"userAgentPreset,omitempty"`
+	UserAgent                    *string `json:"userAgent,omitempty"`
 }
 
 // ApplyUpdate 应用运行时配置更新，返回实际被修改的字段名列表
 func (c *Config) ApplyUpdate(update UpdateConfig) ([]string, error) {
 	var changed []string
+
+	// 预校验：先校验全部 UA 相关字段再落值，避免「preset 已改、userAgent 校验失败」的部分更新。
+	// （其余字段的校验仍是就地执行，本函数不做全局事务性保证。）
+	if update.UserAgentPreset != nil {
+		if err := ValidateUserAgentPreset(strings.TrimSpace(*update.UserAgentPreset)); err != nil {
+			return nil, err
+		}
+	}
+	if update.UserAgent != nil {
+		if err := ValidateUserAgent(*update.UserAgent); err != nil {
+			return nil, err
+		}
+	}
 
 	if update.SchedulerEnabled != nil && *update.SchedulerEnabled != c.Scheduler.Enabled {
 		c.Scheduler.Enabled = *update.SchedulerEnabled
@@ -311,6 +336,22 @@ func (c *Config) ApplyUpdate(update UpdateConfig) ([]string, error) {
 	if update.Aria2Dir != nil && *update.Aria2Dir != c.Download.Aria2Dir {
 		c.Download.Aria2Dir = *update.Aria2Dir
 		changed = append(changed, "aria2Dir")
+	}
+	// 下载 User-Agent：preset 只接受内置值/custom/空；UA 禁止换行（HTTP 头注入）且限 512 字节。
+	// 空串合法：preset 空=回退 default，UA 空=回退默认 UA。
+	if update.UserAgentPreset != nil {
+		v := strings.TrimSpace(*update.UserAgentPreset)
+		if v != c.Download.UserAgentPreset {
+			c.Download.UserAgentPreset = v
+			changed = append(changed, "userAgentPreset")
+		}
+	}
+	if update.UserAgent != nil {
+		v := *update.UserAgent
+		if v != c.Download.UserAgent {
+			c.Download.UserAgent = v
+			changed = append(changed, "userAgent")
+		}
 	}
 
 	return changed, nil

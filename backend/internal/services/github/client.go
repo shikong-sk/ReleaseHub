@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -35,7 +36,19 @@ type Asset struct {
 	ContentType        string `json:"content_type"`
 	URL                string `json:"url"`
 	BrowserDownloadURL string `json:"browser_download_url"`
+	// Digest GitHub 为资产计算的摘要（形如 sha256:xxx），老资产可能为空
+	Digest string `json:"digest"`
 }
+
+// 哨兵错误：供上层（如 release checker）判断是否需要降级到 HTML 抓取
+var (
+	// ErrReleaseNotFound Release 不存在或无权限访问
+	ErrReleaseNotFound = errors.New("GitHub Release 不存在或无权限访问")
+	// ErrRepoNotFound 仓库不存在或无权限访问
+	ErrRepoNotFound = errors.New("仓库不存在或无权限访问")
+	// ErrRateLimited API 限流或拒绝访问
+	ErrRateLimited = errors.New("GitHub API 限流或拒绝访问")
+)
 
 func NewClient(apiBaseURL string) (*Client, error) {
 	if strings.TrimSpace(apiBaseURL) == "" {
@@ -139,10 +152,10 @@ func (c *Client) GetLatestRelease(ctx context.Context, owner string, repo string
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("GitHub Release 不存在或无权限访问")
+		return nil, ErrReleaseNotFound
 	}
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
-		return nil, fmt.Errorf("GitHub API 限流或拒绝访问: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("%w: HTTP %d", ErrRateLimited, resp.StatusCode)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("GitHub API 返回异常状态: HTTP %d", resp.StatusCode)
@@ -195,10 +208,10 @@ func (c *Client) ListReleases(ctx context.Context, owner string, repo string, to
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("仓库不存在或无权限访问")
+		return nil, ErrRepoNotFound
 	}
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
-		return nil, fmt.Errorf("GitHub API 限流或拒绝访问: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("%w: HTTP %d", ErrRateLimited, resp.StatusCode)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("GitHub API 返回异常状态: HTTP %d", resp.StatusCode)
@@ -244,7 +257,13 @@ func (c *Client) ListAllReleases(ctx context.Context, owner string, repo string,
 // GitHub API: GET /repos/{owner}/{repo}/releases/tags/{tag}
 func (c *Client) GetReleaseByTag(ctx context.Context, owner string, repo string, tag string, token string) (*Release, error) {
 	endpoint := *c.baseURL
-	endpoint.Path = path.Join(endpoint.Path, "repos", owner, repo, "releases", "tags", tag)
+	// tag 可能包含 "/" 等字符（如 release/1.0），必须作为单个路径段转义，
+	// 否则会被 path.Join 当成目录分隔符，导致 GitHub 返回 404。
+	// 这里先拼定不含 tag 的前缀，再分别维护 Path（原始值）与 RawPath（编码值）。
+	endpoint.Path = path.Join(endpoint.Path, "repos", owner, repo, "releases", "tags")
+	escapedPrefix := strings.TrimRight(endpoint.EscapedPath(), "/")
+	endpoint.Path = endpoint.Path + "/" + tag
+	endpoint.RawPath = escapedPrefix + "/" + url.PathEscape(tag)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
@@ -263,10 +282,10 @@ func (c *Client) GetReleaseByTag(ctx context.Context, owner string, repo string,
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("Release %s 不存在或无权限访问", tag)
+		return nil, fmt.Errorf("%w: %s", ErrReleaseNotFound, tag)
 	}
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
-		return nil, fmt.Errorf("GitHub API 限流或拒绝访问: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("%w: HTTP %d", ErrRateLimited, resp.StatusCode)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("GitHub API 返回异常状态: HTTP %d", resp.StatusCode)

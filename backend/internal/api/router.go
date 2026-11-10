@@ -64,7 +64,7 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	// 核心 API
 	githubClient, githubClientErr := githubsvc.NewClient(deps.Config.GitHub.APIBaseURL)
-	registerRepositoryRoutes(router, deps.DB, deps.Config.Storage, deps.Config.GitHub.APIBaseURL, githubClient, githubClientErr, deps.SyncerService)
+	registerRepositoryRoutes(router, deps.DB, deps.Config.Storage, deps.Config, deps.Config.GitHub.APIBaseURL, githubClient, githubClientErr, deps.SyncerService)
 	registerReleaseRoutes(router, deps.DB, deps.Config.Storage, deps.Config)
 	// 避免 nil 具体类型指针赋值给接口后变为非 nil 接口（Go 经典坑）：
 	// SyncerService 为 nil 的 *syncersvc.Service 传入 SyncerProgressProvider 接口参数后

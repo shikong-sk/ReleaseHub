@@ -47,6 +47,11 @@ type configResponse struct {
 	Aria2Secret                  string `json:"aria2Secret"`
 	Aria2HTTP                    string `json:"aria2HTTP"`
 	Aria2Dir                     string `json:"aria2Dir"`
+	// UserAgentPreset/UserAgent 下载请求 UA 配置（对镜像站拦截非浏览器 UA 场景有用）
+	UserAgentPreset string `json:"userAgentPreset"`
+	UserAgent       string `json:"userAgent"`
+	// UserAgentPresets 内置 UA 预设列表，供前端下拉直接渲染（无需前端硬编码）
+	UserAgentPresets []config.UserAgentPreset `json:"userAgentPresets"`
 }
 
 func registerConfigRoutes(router *gin.Engine, cfg *config.Config, scheduler SchedulerUpdater, syncer SyncerUpdater, db *gorm.DB) {
@@ -136,6 +141,13 @@ func LoadPersistedSettings(db *gorm.DB, cfg *config.Config) {
 	if v, ok := loadStr("download.aria2_dir"); ok && v != "" {
 		cfg.Download.Aria2Dir = v
 	}
+	// 下载 UA：空串视为未设置（保留环境变量/默认值），避免持久化的空值覆盖默认预设
+	if v, ok := loadStr("download.user_agent_preset"); ok && v != "" {
+		cfg.Download.UserAgentPreset = v
+	}
+	if v, ok := loadStr("download.user_agent"); ok && v != "" {
+		cfg.Download.UserAgent = v
+	}
 }
 
 func (h *configHandler) get(c *gin.Context) {
@@ -155,6 +167,9 @@ func (h *configHandler) get(c *gin.Context) {
 		Aria2Secret:                  h.config.Download.Aria2Secret,
 		Aria2HTTP:                    h.config.Download.Aria2HTTP,
 		Aria2Dir:                     h.config.Download.Aria2Dir,
+		UserAgentPreset:              h.config.Download.UserAgentPreset,
+		UserAgent:                    h.config.Download.UserAgent,
+		UserAgentPresets:             config.UserAgentPresets(),
 	})
 }
 
@@ -173,6 +188,8 @@ type configUpdateRequest struct {
 	Aria2Secret                 *string `json:"aria2Secret,omitempty"`
 	Aria2HTTP                   *string `json:"aria2HTTP,omitempty"`
 	Aria2Dir                    *string `json:"aria2Dir,omitempty"`
+	UserAgentPreset             *string `json:"userAgentPreset,omitempty"`
+	UserAgent                   *string `json:"userAgent,omitempty"`
 }
 
 func (h *configHandler) update(c *gin.Context) {
@@ -197,6 +214,8 @@ func (h *configHandler) update(c *gin.Context) {
 		Aria2Secret:                  req.Aria2Secret,
 		Aria2HTTP:                    req.Aria2HTTP,
 		Aria2Dir:                     req.Aria2Dir,
+		UserAgentPreset:              req.UserAgentPreset,
+		UserAgent:                    req.UserAgent,
 	}
 
 	changed, err := h.config.ApplyUpdate(update)
@@ -269,6 +288,10 @@ func (h *configHandler) update(c *gin.Context) {
 			setting = models.AppSetting{Key: "download.aria2_http", Value: h.config.Download.Aria2HTTP}
 		case "aria2Dir":
 			setting = models.AppSetting{Key: "download.aria2_dir", Value: h.config.Download.Aria2Dir}
+		case "userAgentPreset":
+			setting = models.AppSetting{Key: "download.user_agent_preset", Value: h.config.Download.UserAgentPreset}
+		case "userAgent":
+			setting = models.AppSetting{Key: "download.user_agent", Value: h.config.Download.UserAgent}
 		default:
 			continue
 		}
@@ -295,5 +318,8 @@ func (h *configHandler) update(c *gin.Context) {
 		Aria2Secret:                  h.config.Download.Aria2Secret,
 		Aria2HTTP:                    h.config.Download.Aria2HTTP,
 		Aria2Dir:                     h.config.Download.Aria2Dir,
+		UserAgentPreset:              h.config.Download.UserAgentPreset,
+		UserAgent:                    h.config.Download.UserAgent,
+		UserAgentPresets:             config.UserAgentPresets(),
 	})
 }

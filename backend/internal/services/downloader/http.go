@@ -18,6 +18,31 @@ type HTTPDownloader struct {
 	// 用 golang.org/x/time/rate 令牌桶限制读取速率，
 	// io.CopyBuffer 读慢后写自然放慢，从而实现全局限速。
 	limiter *rate.Limiter
+	// userAgent 动态获取 User-Agent 的函数，nil → 默认 "ReleaseHub"。
+	// 用函数而非字符串是为了让配置热更新无需重建下载器（共享实例可并发读）。
+	userAgent func() string
+}
+
+// defaultUserAgent 与 config 包保持一致的程序默认 UA
+const defaultUserAgent = "ReleaseHub"
+
+// WithUserAgentFunc 注入动态 User-Agent 来源（如 cfg.DownloadUserAgent）。
+// 传入 nil 等价于不设置（保持默认 UA）。返回自身便于链式调用。
+func (d *HTTPDownloader) WithUserAgentFunc(fn func() string) *HTTPDownloader {
+	if d != nil {
+		d.userAgent = fn
+	}
+	return d
+}
+
+// resolveUserAgent 返回本次请求使用的 UA，未注入或返回空值时回退默认值
+func (d *HTTPDownloader) resolveUserAgent() string {
+	if d != nil && d.userAgent != nil {
+		if ua := d.userAgent(); ua != "" {
+			return ua
+		}
+	}
+	return defaultUserAgent
 }
 
 type Result struct {
@@ -51,7 +76,7 @@ func (d *HTTPDownloader) DownloadWithResumeAndProgress(ctx context.Context, url 
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "ReleaseHub")
+	req.Header.Set("User-Agent", d.resolveUserAgent())
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -138,7 +163,7 @@ func (d *HTTPDownloader) DownloadWithProgress(ctx context.Context, url string, t
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "ReleaseHub")
+	req.Header.Set("User-Agent", d.resolveUserAgent())
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

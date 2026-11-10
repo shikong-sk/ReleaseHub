@@ -127,6 +127,33 @@ Syncer.SyncRepository(repo)
            └── Retention Service 清理旧版本
 ```
 
+### Release 查询的降级策略（HTML Fallback）
+
+Release Checker 默认通过 Provider 调 API。当 API 不可用时按下面的顺序降级：
+
+```
+resolveProvider（API）
+    │
+    ├── 成功 → 使用 API 数据
+    │
+    └── 失败且错误属于「限流(403/429) / 资源不存在或无权限(404)」
+           │
+           ├── 仓库已配置 Token 或非 GitHub → 直接失败（私有仓库/其他平台必须走 API）
+           │
+           └── 未配置 Token 的 GitHub 公开仓库
+                  ├── /{owner}/{repo}/releases.atom                       取最新 tag
+                  ├── /{owner}/{repo}/releases/expanded_assets/{tag}      取全部资产
+                  └── 限流命中后进入 30 分钟冷却期，期间直接走网页抓取
+```
+
+实现分布：
+- `backend/internal/services/github/htmlfallback.go`：网页端点抓取与 HTML 解析（`HTMLFetcher`、`ParseExpandedAssets`）
+- `backend/internal/services/provider/github_html.go`：把抓取结果适配为 `ReleaseProvider`（`ListAllReleases` 明确不支持）
+- `backend/internal/services/release/checker.go`：`releaseProviderFor` / `htmlFallbackProvider` 决定是否降级
+
+关键约束：网页端点固定只返回最近 10 个 Release，因此**全量同步（CheckAll）永远走 API**；
+私有仓库网页端点不接受 PAT 鉴权，同样只能走 API。
+
 ### 下载子系统和 Downloader 接口
 
 `Asset Downloader` 通过统一的 `downloader.Downloader` 接口抽象，按仓库配置选择实现：
@@ -137,6 +164,18 @@ Syncer.SyncRepository(repo)
 选择逻辑位于 `asset.Service.downloaderForRepository`：当 `download.aria2_rpc` 非空时返回 `Aria2Downloader`，否则返回 `HTTPDownloader`。Syncer 自动同步与手动下载任务共用同一选择路径，确保两者语义一致。
 
 `Aria2Downloader` 采用惰性缓存：按 `aria2DownloaderKey{rpc,secret,http,dir}` 缓存单个实例，任一 aria2 配置变更后下一次下载即缓存未命中并重建，无需显式调用 setter。其余热更新字段（`max_speed_bytes`、`authEnabled`、`githubApiBaseUrl`、`*RetentionDays`）通过共享的 `*config.Config` 指针读取，消费侧下次访问即生效；scheduler 与 syncer 并发字段则通过显式 setter 重建 ticker / 信号量。
+
+### 下载 User-Agent
+
+两种下载器与网页降级抓取统一使用 `config.Config.DownloadUserAgent()` 解析出的 UA：
+
+- `HTTPDownloader`：`userAgent func() string` 字段，请求前求值（`resolveUserAgent`），空值回退 `ReleaseHub`。
+- `Aria2Downloader`：下载时以 aria2 `user-agent` 选项下发（非 header），空值不下发以保留 daemon 默认。
+- `HTMLFetcher`：注入同一 provider，空值回退内置 `ReleaseHub-HTMLFallback`。
+
+三者都用函数而非字符串注入，因此配置热更新后下一次请求即生效，无需重建实例；GitHub API 与各 Provider 请求保持固定 `ReleaseHub` 标识，不受该配置影响。
+
+仓库级覆盖：`Repository.downloadUserAgentPreset` 非空（且不是空值的 `custom`）时优先于全局配置，解析函数为 `asset.Service.userAgentForRepository` 与 `release.CheckService.newHTMLProvider` 内的同名逻辑。`preset=custom` 但 UA 为空时仍回退全局，保证「留空即跟随全局」单一语义。为避免仓库级 UA 造成 Transport 泛滥，`asset.Service` 以 UA 字符串为键缓存 `HTTPDownloader`（`uaDownloaders`），与全局 UA 相同的仓库直接复用共享 `downloader`；aria2 下载器的缓存键额外包含 UA，避免不同 UA 复用同一实例。
 
 取消语义对两种下载器对称：`downloadWithAttempt` 为每次尝试构造 `context.WithCancel`，`cancelFn` 注册到 `cancelMap[taskID]`；`CancelDownloadTask` 触发取消后，HTTP 下载经 `http.Client` 中止，aria2 下载经轮询 `ctx.Done` 并调用 aria2 `Remove` 回收任务，复制阶段的 `context.Canceled` 被包装后由 `errors.Is(downloadErr, context.Canceled)` 统一识别。
 
@@ -221,6 +260,7 @@ Syncer.SyncRepository(repo)
 | 通知发送为同步 fan-out | 未进入队列，暂无重试机制 | 待优化 |
 | 无国际化（i18n） | 界面和文档目前仅有中文 | 待规划 |
 | 多平台 Provider 完整集成 | Release Checker 仍部分依赖 GitHub 专用类型 | 待完善 |
+| HTML 降级的数据精度 | 网页端点的资产大小是页面显示值（四舍五入），且无 prerelease/draft 标记 | 可接受 |
 
 ## 相关文档
 

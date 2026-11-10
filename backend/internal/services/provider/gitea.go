@@ -221,6 +221,3 @@ func toGiteaProviderRelease(r giteaRelease) ProviderRelease {
 		Assets:      assets,
 	}
 }
-
-// 确保引用 url
-var _ = url.PathEscape

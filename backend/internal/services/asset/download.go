@@ -13,6 +13,7 @@ import (
 	"releasehub/backend/internal/config"
 	"releasehub/backend/internal/models"
 	"releasehub/backend/internal/services/downloader"
+	"releasehub/backend/internal/services/mirror"
 	notifysvc "releasehub/backend/internal/services/notify"
 	proxysvc "releasehub/backend/internal/services/proxy"
 	"releasehub/backend/internal/services/storage"
@@ -39,6 +40,11 @@ type Service struct {
 	aria2Cache    *downloader.Aria2Downloader
 	aria2CacheMu  stdsync.Mutex
 	aria2CacheKey aria2DownloaderKey
+
+	// uaDownloaders 仓库级 UA 覆盖时使用的 HTTP 下载器缓存（key=UA 字符串）。
+	// 与全局 UA 相同的请求直接走共享 downloader，不进此表（保留全局连接池复用）。
+	uaDownloaders   map[string]*downloader.HTTPDownloader
+	uaDownloadersMu stdsync.Mutex
 
 	// 运行时下载进度表：assetID → {downloaded, total, updatedAt}
 	// 仅存内存，不持久化；task list API 读取注入响应供前端展示真实进度
@@ -188,14 +194,16 @@ func NewService(db *gorm.DB, storageConfig config.StorageConfig) (*Service, erro
 
 // NewServiceWithDriver 使用指定存储驱动创建资产服务
 func NewServiceWithDriver(db *gorm.DB, driver storage.Driver) *Service {
-	return &Service{
+	service := &Service{
 		db:         db,
 		storage:    driver,
-		downloader: downloader.NewHTTPDownloader(),
 		logService: tasklog.NewService(db),
 		notifier:   notifysvc.NewService(db),
 		logger:     zap.NewNop(),
 	}
+	// 共享下载器注入动态 UA：闭包读 s.config，后续 WithConfig 注入或配置热更新均能即时生效
+	service.downloader = downloader.NewHTTPDownloader().WithUserAgentFunc(service.currentUserAgent)
+	return service
 }
 
 // NewServiceWithDownloaderAndDriver 使用指定下载器和存储驱动创建资产服务
@@ -211,14 +219,57 @@ func NewServiceWithDownloaderAndDriver(db *gorm.DB, driver storage.Driver, dl do
 }
 
 func NewServiceWithFactory(db *gorm.DB, storageConfig config.StorageConfig) *Service {
-	return &Service{
+	service := &Service{
 		db:         db,
 		storages:   storage.NewDriverFactory(db, storageConfig),
-		downloader: downloader.NewHTTPDownloader(),
 		logService: tasklog.NewService(db),
 		notifier:   notifysvc.NewService(db),
 		logger:     zap.NewNop(),
 	}
+	service.downloader = downloader.NewHTTPDownloader().WithUserAgentFunc(service.currentUserAgent)
+	return service
+}
+
+// currentUserAgent 返回当前配置解析出的下载 User-Agent。
+// config 未注入时返回空串，由下载器内部回退默认 UA（ReleaseHub）。
+func (s *Service) currentUserAgent() string {
+	if s.config == nil {
+		return ""
+	}
+	return s.config.DownloadUserAgent()
+}
+
+// userAgentForRepository 解析某仓库实际使用的 UA：仓库级 preset 非空时覆盖全局配置，
+// 否则跟随全局（download.userAgentPreset / download.userAgent）。
+func (s *Service) userAgentForRepository(repository models.Repository) string {
+	preset := strings.TrimSpace(repository.DownloadUserAgentPreset)
+	// preset 空 = 跟随全局；preset=custom 但 UA 为空也回退全局，
+	// 保持「留空即跟随全局」的单一语义，避免误配成硬编码的默认 UA。
+	if preset == "" || (preset == config.UserAgentPresetCustom && strings.TrimSpace(repository.DownloadUserAgent) == "") {
+		return s.currentUserAgent()
+	}
+	return config.ResolveUserAgent(preset, repository.DownloadUserAgent)
+}
+
+// httpDownloaderForUA 返回使用指定 UA 的 HTTP 下载器。
+// 与全局 UA 一致时复用共享实例（保留连接池）；仓库级 UA 不同时按 UA 值懒建并缓存，
+// 使同一 UA 的多个仓库共享连接池，避免每个任务都新建 Transport。
+func (s *Service) httpDownloaderForUA(ua string) downloader.Downloader {
+	globalUA := s.currentUserAgent()
+	if ua == "" || ua == globalUA {
+		return s.downloader
+	}
+	s.uaDownloadersMu.Lock()
+	defer s.uaDownloadersMu.Unlock()
+	if s.uaDownloaders == nil {
+		s.uaDownloaders = make(map[string]*downloader.HTTPDownloader)
+	}
+	if dl, ok := s.uaDownloaders[ua]; ok {
+		return dl
+	}
+	dl := downloader.NewHTTPDownloader().WithUserAgentFunc(func() string { return ua })
+	s.uaDownloaders[ua] = dl
+	return dl
 }
 
 // WithConfig 注入全局配置指针，用于读取运行时热更新的下载限速等设置。
@@ -331,6 +382,9 @@ func (s *Service) downloadWithAttempt(ctx context.Context, assetID uint, attempt
 		s.failTask(ctx, &task, err)
 		return nil, err
 	}
+
+	// GitHub 镜像加速：仅改写 release 资产下载地址，不影响 API 请求与本地存储路径
+	downloadURL = s.applyDownloadMirror(ctx, &task, repository, downloadURL)
 
 	// 流式下载：直接写入存储，不在内存中缓存整个文件
 	objectPath := buildObjectPath(repository, release, asset)
@@ -731,6 +785,35 @@ func (s *Service) driverForAsset(ctx context.Context, asset *models.Asset, repos
 	return s.storageDriver(ctx, repository)
 }
 
+// applyDownloadMirror 按仓库配置的 GitHub 下载镜像改写资产下载地址。
+// 未配置镜像、地址非 GitHub、或改写失败时原样返回：镜像不可用不能阻断同步。
+func (s *Service) applyDownloadMirror(ctx context.Context, task *models.Task, repository models.Repository, downloadURL string) string {
+	base := strings.TrimSpace(repository.DownloadMirrorBaseUrl)
+	if base == "" {
+		return downloadURL
+	}
+
+	result := mirror.RewriteReleaseAsset(base, downloadURL)
+	if !result.Applied {
+		// 未生效原因写入任务日志，便于排查镜像为何未起作用
+		if result.Reason != "" {
+			_ = s.logService.Append(ctx, task.ID, "warn",
+				fmt.Sprintf("下载镜像未生效: %s（原因: %s）", base, result.Reason))
+		}
+		return downloadURL
+	}
+
+	s.logger.Info("使用 GitHub 下载镜像",
+		zap.String("repository", fmt.Sprintf("%s/%s", repository.Owner, repository.Repo)),
+		zap.String("mirror", base),
+		zap.String("original", downloadURL),
+		zap.String("rewritten", result.URL))
+	_ = s.logService.Append(ctx, task.ID, "info",
+		fmt.Sprintf("使用下载镜像: %s -> %s", downloadURL, result.URL))
+
+	return result.URL
+}
+
 func (s *Service) downloaderForRepository(ctx context.Context, repository models.Repository) (downloader.Downloader, error) {
 	// 启用 aria2（RPC 端点非空）时走 Aria2Downloader：aria2 异步离线下载完成后从本地完成文件
 	// 读喂 storage Put。三条语义差异（aria2 接线架构特性，非 bug，须文档化）：
@@ -740,8 +823,11 @@ func (s *Service) downloaderForRepository(ctx context.Context, repository models
 	//   2) 限速不生效：ReleaseHub MaxSpeedBytes 限的是 HTTP reader 速率，对 aria2 路径无效；
 	//      aria2 速率由 daemon 自身 --max-download-limit 等参数控制。
 	//   3) 失败明确 error 供 syncer 自动重试 + 暴露问题，不静默回退 HTTP（会掩盖 aria2 配置问题）。
+	// 先解析本次下载使用的 UA：仓库级配置优先，其次全局配置
+	uaStr := s.userAgentForRepository(repository)
+
 	if s.config != nil && s.config.Download.Aria2RPC != "" {
-		return s.getAria2Downloader()
+		return s.getAria2Downloader(uaStr)
 	}
 
 	// 读取当前限速值；config 未注入或 maxSpeed<=0 时不限速，保持原行为
@@ -751,11 +837,11 @@ func (s *Service) downloaderForRepository(ctx context.Context, repository models
 	}
 
 	if repository.ProxyID == nil {
-		// 无限速：用共享默认下载器（保持连接复用）；有限速：构造带限速的实例
+		// 无限速：按 UA 复用共享/缓存下载器；有限速：每次构造带限速的实例
 		if maxSpeed <= 0 {
-			return s.downloader, nil
+			return s.httpDownloaderForUA(uaStr), nil
 		}
-		return downloader.NewHTTPDownloaderWithLimit(maxSpeed), nil
+		return downloader.NewHTTPDownloaderWithLimit(maxSpeed).WithUserAgentFunc(func() string { return uaStr }), nil
 	}
 
 	transport, err := proxysvc.TransportForRepository(ctx, s.db, repository)
@@ -763,9 +849,9 @@ func (s *Service) downloaderForRepository(ctx context.Context, repository models
 		return nil, err
 	}
 	if maxSpeed <= 0 {
-		return downloader.NewHTTPDownloaderWithTransport(transport), nil
+		return downloader.NewHTTPDownloaderWithTransport(transport).WithUserAgentFunc(func() string { return uaStr }), nil
 	}
-	return downloader.NewHTTPDownloaderWithTransportAndLimit(transport, maxSpeed), nil
+	return downloader.NewHTTPDownloaderWithTransportAndLimit(transport, maxSpeed).WithUserAgentFunc(func() string { return uaStr }), nil
 }
 
 // aria2DownloaderKey aria2 下载器缓存键：由决定 aria2 连接的四要素构成，
@@ -775,17 +861,21 @@ type aria2DownloaderKey struct {
 	secret  string
 	httpURL string
 	dir     string
+	// ua 仓库级 UA 覆盖：不同 UA 需要不同实例（aria2 的 user-agent 是 AddURI 选项，
+	// 虽然实际按次下发，但为保持缓存语义简单，仍然纳入 key）
+	ua string
 }
 
 // getAria2Downloader 返回缓存的 Aria2Downloader，按当前 cfg 的 Aria2* 四字段构造。
 // 缓存命中（key 一致）复用既有 RPC client；key 变更（热更新后）重建。
 // 失败明确返回 error，不静默回退 HTTP。
-func (s *Service) getAria2Downloader() (downloader.Downloader, error) {
+func (s *Service) getAria2Downloader(ua string) (downloader.Downloader, error) {
 	cur := aria2DownloaderKey{
 		rpc:     s.config.Download.Aria2RPC,
 		secret:  s.config.Download.Aria2Secret,
 		httpURL: s.config.Download.Aria2HTTP,
 		dir:     s.config.Download.Aria2Dir,
+		ua:      ua,
 	}
 	s.aria2CacheMu.Lock()
 	defer s.aria2CacheMu.Unlock()
@@ -796,6 +886,8 @@ func (s *Service) getAria2Downloader() (downloader.Downloader, error) {
 	if err != nil {
 		return nil, fmt.Errorf("构造 aria2 下载器失败: %w", err)
 	}
+	// 注入本次仓库的 UA：镜像站拦截非浏览器 UA 时可切换为浏览器 UA（aria2 通过 user-agent 选项下发）
+	dl = dl.WithUserAgentFunc(func() string { return ua })
 	s.aria2Cache = dl
 	s.aria2CacheKey = cur
 	return dl, nil

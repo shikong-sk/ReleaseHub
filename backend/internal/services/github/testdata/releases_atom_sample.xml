@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xml:lang="en-US">
+  <id>tag:github.com,2008:https://github.com/cli/cli/releases</id>
+  <link type="text/html" rel="alternate" href="https://github.com/cli/cli/releases"/>
+  <link type="application/atom+xml" rel="self" href="https://github.com/cli/cli/releases.atom"/>
+  <title>Release notes from cli</title>
+  <updated>2026-10-26T18:02:47Z</updated>
+  <entry>
+    <id>tag:github.com,2008:Repository/212613049/v2.103.3</id>
+    <updated>2026-10-26T19:24:06Z</updated>
+    <link rel="alternate" type="text/html" href="https://github.com/cli/cli/releases/tag/v2.103.3"/>
+    <title>GitHub CLI 2.103.3</title>
+    <content type="html">&lt;h2&gt;What&#39;s Changed&lt;/h2&gt;
+&lt;h3&gt;🐛 Fixes&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;fix(gh auth status): explain expired expiring tokens with &lt;code&gt;--no-refresh&lt;/code&gt; by &lt;a class=&quot;user-mention notranslate&quot; data-hovercard-type=&quot;user&quot; data-hovercard-url=&quot;/users/babakks/hovercard&quot; data-octo-click=&quot;hovercard-link-click&quot; data-octo-dimensions=&quot;link_type:self&quot; href=&quot;https://github.com/babakks&quot;&gt;@babakks&lt;/a&gt; in &lt;a href=&quot;https://github.com/cli/cli/pull/14815&quot; data-hovercard-type=&quot;pull_request&quot; data-hovercard-url=&quot;/cli/cli/pull/14815/hovercard&quot;&gt;#14815&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class=&quot;commit-link&quot; href=&quot;https://github.com/cli/cli/compare/v2.103.2...v2.103.3&quot;&gt;&lt;tt&gt;v2.103.2...v2.103.3&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</content>
+    <author>
+      <name>github-actions[bot]</name>
+    </author>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/in/15368?s=60&amp;v=4"/>
+  </entry>
+<entry>
+    <id>tag:github.com,2008:Repository/212613049/v2.103.2</id>
+    <updated>2026-10-23T20:28:28Z</updated>
+    <link rel="alternate" type="text/html" href="https://github.com/cli/cli/releases/tag/v2.103.2"/>
+    <title>GitHub CLI 2.103.2</title>
+    <content type="html">&lt;h3&gt;🐛 Fixes&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;Allow server to arbitrate which GitHub App installation tokens can attach files by &lt;a class=&quot;user-mention notranslate&quot; data-hovercard-type=&quot;user&quot; data-hovercard-url=&quot;/users/martinajir/hovercard&quot; data-octo-click=&quot;hovercard-link-click&quot; data-octo-dimensions=&quot;link_type:self&quot; href=&quot;https://github.com/martinajir&quot;&gt;@martinajir&lt;/a&gt; in &lt;a href=&quot;https://github.com/cli/cli/pull/14804&quot; data-hovercard-type=&quot;pull_request&quot; data-hovercard-url=&quot;/cli/cli/pull/14804/hovercard&quot;&gt;#14804&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Defer &lt;code&gt;--attach&lt;/code&gt; credential checks to the upload endpoint by &lt;a class=&quot;user-mention notranslate&quot; data-hovercard-type=&quot;user&quot; data-hovercard-url=&quot;/users/BagToad/hovercard&quot; data-octo-click=&quot;hovercard-link-click&quot; data-octo-dimensions=&quot;link_type:self&quot; href=&quot;https://github.com/BagToad&quot;&gt;@BagToad&lt;/a&gt; in &lt;a href=&quot;https://github.com/cli/cli/pull/14805&quot; data-hovercard-type=&quot;pull_request&quot; data-hovercard-url=&quot;/cli/cli/pull/14805/hovercard&quot;&gt;#14805&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2&gt;New Contributors&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a class=&quot;user-mention notranslate&quot; data-hovercard-type=&quot;user&quot; data-hovercard-url=&quot;/users/martinajir/hovercard&quot; data-octo-click=&quot;hovercard-link-click&quot; data-octo-dimensions=&quot;link_type:self&quot; href=&quot;https://github.com/martinajir&quot;&gt;@martinajir&lt;/a&gt; made their first contribution in &lt;a class=&quot;issue-link js-issue-link&quot; data-error-text=&quot;Failed to load title&quot; data-id=&quot;6003124684&quot; data-permission-text=&quot;Title is private&quot; data-url=&quot;https://github.com/cli/cli/issues/14804&quot; data-hovercard-type=&quot;pull_request&quot; data-hovercard-url=&quot;/cli/cli/pull/14804/hovercard&quot; href=&quot;https://github.com/cli/cli/pull/14804&quot;&gt;#14804&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class=&quot;commit-link&quot; href=&quot;https://github.com/cli/cli/compare/v2.103.1...v2.103.2&quot;&gt;&lt;tt&gt;v2.103.1...v2.103.2&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</content>
+    <author>
+      <name>github-actions[bot]</name>
+    </author>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/in/15368?s=60&amp;v=4"/>
+  </entry>
+</feed>

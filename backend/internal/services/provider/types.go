@@ -40,4 +40,6 @@ type ProviderAsset struct {
 	ContentType        string `json:"content_type"`
 	URL                string `json:"url"`
 	BrowserDownloadURL string `json:"browser_download_url"`
+	// Digest 供应商提供的资产摘要（GitHub 形如 sha256:xxx），可能为空
+	Digest string `json:"digest"`
 }

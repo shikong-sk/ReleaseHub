@@ -17,6 +17,17 @@ export interface AppConfig {
   aria2Dir: string
   taskLogRetentionDays: number
   operationLogRetentionDays: number
+  // 下载请求 User-Agent：preset 为预设标识，userAgent 为自定义值（仅 custom 生效）
+  userAgentPreset: string
+  userAgent: string
+  // 内置 UA 预设列表（后端下发，前端不硬编码）
+  userAgentPresets: UserAgentPreset[]
+}
+
+export interface UserAgentPreset {
+  value: string
+  label: string
+  ua: string
 }
 
 export function getAppConfig(): Promise<AppConfig> {
@@ -36,6 +47,8 @@ export interface AppConfigUpdate {
   aria2RPC?: string
   aria2Secret?: string
   aria2Dir?: string
+  userAgentPreset?: string
+  userAgent?: string
   taskLogRetentionDays?: number
   operationLogRetentionDays?: number
 }

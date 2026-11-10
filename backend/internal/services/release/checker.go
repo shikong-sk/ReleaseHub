@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
+	"releasehub/backend/internal/config"
 	"releasehub/backend/internal/models"
 	"releasehub/backend/internal/services/filter"
 	githubsvc "releasehub/backend/internal/services/github"
@@ -37,6 +39,12 @@ type CheckService struct {
 	logService    *tasklogsvc.Service
 	retention     RetentionRunner
 	logger        *zap.Logger
+	// htmlFallbackUntil 记录因 API 限流而临时改用网页抓取的仓库（key=仓库ID，value=到期时间）。
+	// 命中期间不再先撞一次 API，避免无 Token 场景反复消耗/等待配额。
+	htmlFallbackUntil sync.Map
+	// userAgentProvider 动态返回当前配置的 User-Agent（供网页降级抓取使用），nil=用内置 htmlUserAgent。
+	// 设为函数而非字符串：配置热更新后下一次请求即生效。
+	userAgentProvider func() string
 }
 
 type CheckResult struct {
@@ -85,6 +93,13 @@ func (s *CheckService) WithLogger(logger *zap.Logger) *CheckService {
 	return s
 }
 
+// WithUserAgentProvider 注入 User-Agent 来源（通常传 cfg.DownloadUserAgent），
+// 使网页降级抓取跟随全局下载 UA 配置；传 nil 则保持内置 htmlUserAgent。
+func (s *CheckService) WithUserAgentProvider(fn func() string) *CheckService {
+	s.userAgentProvider = fn
+	return s
+}
+
 func (s *CheckService) WithGitHubFactory(factory *githubsvc.ClientFactory) *CheckService {
 	s.githubFactory = factory
 	return s
@@ -124,15 +139,30 @@ func (s *CheckService) CheckByTag(ctx context.Context, repositoryID uint, tag st
 		return nil, err
 	}
 
-	releaseProvider, err := s.resolveProvider(ctx, repository)
+	releaseProvider, err := s.releaseProviderFor(ctx, repository, token)
 	if err != nil {
 		s.failTaskWithLog(ctx, &task, err, "创建 Provider 失败")
 		return nil, err
 	}
 
-	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("通过 %s Provider 查询 Release %s", repository.Provider, tag))
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("通过 %s Provider 查询 Release %s", releaseProvider.Name(), tag))
 
 	providerRelease, err := releaseProvider.GetReleaseByTag(ctx, repository.Owner, repository.Repo, tag, token)
+	if err != nil {
+		// API 限流或仓库/Release 不存在时，降级为网页抓取（仅 GitHub 公开仓库可用）
+		if fallback, ok := s.htmlFallbackProvider(ctx, repository, token, err); ok {
+			s.appendLog(ctx, task.ID, "warn", fmt.Sprintf("API 查询失败（%v），降级为网页抓取（不消耗 API 配额）", err))
+			var htmlRelease *provider.ProviderRelease
+			htmlRelease, htmlErr := fallback.GetReleaseByTag(ctx, repository.Owner, repository.Repo, tag, token)
+			if htmlErr != nil {
+				// 网页抓取也失败：保留原始 API 错误（信息更准确，例如「无权限访问」）
+				s.appendLog(ctx, task.ID, "warn", fmt.Sprintf("网页抓取同样失败: %v", htmlErr))
+			} else {
+				providerRelease = htmlRelease
+				err = nil
+			}
+		}
+	}
 	if err != nil {
 		s.markRepositoryFailed(ctx, repository.ID)
 		s.failTaskWithLog(ctx, &task, err, fmt.Sprintf("查询 Release %s 失败", tag))
@@ -217,15 +247,30 @@ func (s *CheckService) CheckLatest(ctx context.Context, repositoryID uint) (*Che
 		return nil, err
 	}
 
-	releaseProvider, err := s.resolveProvider(ctx, repository)
+	releaseProvider, err := s.releaseProviderFor(ctx, repository, token)
 	if err != nil {
 		s.failTaskWithLog(ctx, &task, err, "创建 Provider 失败")
 		return nil, err
 	}
 
-	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("通过 %s Provider 查询最新 Release", repository.Provider))
+	s.appendLog(ctx, task.ID, "info", fmt.Sprintf("通过 %s Provider 查询最新 Release", releaseProvider.Name()))
 
 	providerRelease, err := releaseProvider.GetLatestRelease(ctx, repository.Owner, repository.Repo, token)
+	if err != nil {
+		// API 限流或仓库/Release 不存在时，降级为网页抓取（仅 GitHub 公开仓库可用）
+		if fallback, ok := s.htmlFallbackProvider(ctx, repository, token, err); ok {
+			s.appendLog(ctx, task.ID, "warn", fmt.Sprintf("API 查询失败（%v），降级为网页抓取（不消耗 API 配额）", err))
+			var htmlRelease *provider.ProviderRelease
+			htmlRelease, htmlErr := fallback.GetLatestRelease(ctx, repository.Owner, repository.Repo, token)
+			if htmlErr != nil {
+				// 网页抓取也失败：保留原始 API 错误（信息更准确，例如「无权限访问」）
+				s.appendLog(ctx, task.ID, "warn", fmt.Sprintf("网页抓取同样失败: %v", htmlErr))
+			} else {
+				providerRelease = htmlRelease
+				err = nil
+			}
+		}
+	}
 	if err != nil {
 		s.markRepositoryFailed(ctx, repository.ID)
 		s.failTaskWithLog(ctx, &task, err, "查询最新 Release 失败")
@@ -441,6 +486,143 @@ func (s *CheckService) ProviderForRepository(ctx context.Context, repository *mo
 	return s.resolveProvider(ctx, *repository)
 }
 
+// htmlFallbackAvailable 判断该仓库是否具备网页抓取能力。
+//
+// 仅 GitHub 公开仓库（未配置 Token）可用：HTML 端点不接受 PAT 鉴权。
+func (s *CheckService) htmlFallbackAvailable(repository models.Repository, token string) bool {
+	if repository.Provider != "" && repository.Provider != "github" {
+		return false
+	}
+	// token 非空白时走 API：字段更完整，且私有仓库只能走 API
+	return strings.TrimSpace(token) == ""
+}
+
+// htmlFallbackCooldown API 限流后保持网页抓取的时长。
+// 未认证 API 配额按小时重置，冷却期内直接走网页，避免反复撞限流。
+const htmlFallbackCooldown = 30 * time.Minute
+
+// markHTMLFallback 记录仓库进入网页抓取冷却期
+func (s *CheckService) markHTMLFallback(repositoryID uint) {
+	if repositoryID == 0 {
+		return
+	}
+	s.htmlFallbackUntil.Store(repositoryID, time.Now().Add(htmlFallbackCooldown))
+}
+
+// inHTMLFallbackCooldown 判断仓库是否仍在网页抓取冷却期内
+func (s *CheckService) inHTMLFallbackCooldown(repositoryID uint) bool {
+	value, ok := s.htmlFallbackUntil.Load(repositoryID)
+	if !ok {
+		return false
+	}
+	until, ok := value.(time.Time)
+	if !ok {
+		s.htmlFallbackUntil.Delete(repositoryID)
+		return false
+	}
+	if time.Now().After(until) {
+		s.htmlFallbackUntil.Delete(repositoryID)
+		return false
+	}
+
+	return true
+}
+
+// releaseProviderFor 选择查询 Release 使用的 Provider。
+//
+// 默认走常规 Provider（API）：数据最完整，也支持自定义 API 地址与私有仓库。
+// 若该仓库此前因 API 限流被降级过且冷却中，则直接使用网页抓取，不再消耗配额。
+func (s *CheckService) releaseProviderFor(ctx context.Context, repository models.Repository, token string) (provider.ReleaseProvider, error) {
+	if s.htmlFallbackAvailable(repository, token) && s.inHTMLFallbackCooldown(repository.ID) {
+		fallback, err := s.newHTMLProvider(ctx, repository)
+		if err != nil {
+			s.logger.Warn("构造网页抓取 Provider 失败，回退到 API", zap.Error(err))
+			return s.resolveProvider(ctx, repository)
+		}
+		s.logger.Info("仓库处于 API 限流冷却期，直接使用网页抓取",
+			zap.Uint("repositoryId", repository.ID),
+			zap.String("repository", fmt.Sprintf("%s/%s", repository.Owner, repository.Repo)))
+
+		return fallback, nil
+	}
+
+	return s.resolveProvider(ctx, repository)
+}
+
+// htmlFallbackProvider 在 API 调用失败后按需构造网页抓取的 Provider。
+// 只在错误属于「限流 / 资源不存在或无权限」时降级，其他错误（网络故障等）直接透出。
+func (s *CheckService) htmlFallbackProvider(ctx context.Context, repository models.Repository, token string, cause error) (provider.ReleaseProvider, bool) {
+	if !s.htmlFallbackAvailable(repository, token) {
+		return nil, false
+	}
+	if !isHTMLFallbackCause(cause) {
+		return nil, false
+	}
+
+	fallback, err := s.newHTMLProvider(ctx, repository)
+	if err != nil {
+		s.logger.Warn("构造网页抓取 Provider 失败，保留原始错误", zap.Error(err))
+
+		return nil, false
+	}
+
+	// 限流时进入冷却期，后续检查直接走网页抓取
+	if errors.Is(cause, githubsvc.ErrRateLimited) {
+		s.markHTMLFallback(repository.ID)
+	}
+
+	return fallback, true
+}
+
+// isHTMLFallbackCause 判断 API 错误是否值得降级尝试网页抓取
+func isHTMLFallbackCause(err error) bool {
+	return errors.Is(err, githubsvc.ErrRateLimited) ||
+		errors.Is(err, githubsvc.ErrReleaseNotFound) ||
+		errors.Is(err, githubsvc.ErrRepoNotFound)
+}
+
+// newHTMLProvider 构造网页抓取 Provider，复用仓库的代理与下载镜像配置
+func (s *CheckService) newHTMLProvider(ctx context.Context, repository models.Repository) (provider.ReleaseProvider, error) {
+	transport, err := s.proxyTransportForRepository(ctx, repository)
+	if err != nil {
+		return nil, fmt.Errorf("获取仓库代理 transport 失败: %w", err)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	if transport != nil {
+		client.Transport = transport
+	}
+
+	// 配置了下载镜像时，网页抓取同样先走镜像（失败会自动回退直连）
+	fetcher := githubsvc.NewHTMLFetcher(client, "", repository.DownloadMirrorBaseUrl)
+	// UA 解析顺序：仓库级覆盖 → 全局配置 → HTMLFetcher 内置值。
+	// 镜像站拦截非浏览器 UA 时，网页抓取同样需要浏览器 UA，故与下载链路共用同一套配置。
+	repoSnapshot := repository
+	fetcher = fetcher.WithUserAgentFunc(func() string {
+		preset := strings.TrimSpace(repoSnapshot.DownloadUserAgentPreset)
+		// preset 空、或 custom 但未填自定义值，均回退全局配置
+		if preset != "" && !(preset == config.UserAgentPresetCustom && strings.TrimSpace(repoSnapshot.DownloadUserAgent) == "") {
+			return config.ResolveUserAgent(preset, repoSnapshot.DownloadUserAgent)
+		}
+		if s.userAgentProvider != nil {
+			return s.userAgentProvider()
+		}
+		return ""
+	})
+
+	return provider.NewGitHubHTMLProvider(fetcher), nil
+}
+
+// expectedSHA256 计算资产的期望校验和：优先使用供应商给出的 digest，
+// 缺失时回退到从 release body 正则解析的结果。
+func expectedSHA256(pAsset provider.ProviderAsset, sha256Map map[string]string) string {
+	if digest := strings.TrimSpace(pAsset.Digest); digest != "" {
+		return digest
+	}
+
+	return sha256Map[pAsset.Name]
+}
+
 func (s *CheckService) resolveProvider(ctx context.Context, repository models.Repository) (provider.ReleaseProvider, error) {
 	if s.providers != nil {
 		// 使用 provider registry，GitHub provider 可根据 proxy 选择 transport
@@ -553,6 +735,8 @@ func (s *CheckService) persistProviderReleaseWithIsLatest(ctx context.Context, r
 		assets := make([]models.Asset, 0, len(pRelease.Assets))
 		sha256Map := parseSHA256Map(pRelease.Body)
 		for _, pAsset := range pRelease.Assets {
+			// digest 优先：GitHub 为资产计算的真实摘要，比从 release body 正则抽取更可靠
+			expectedSHA := expectedSHA256(pAsset, sha256Map)
 			matched, err := matcher.Match(pAsset.Name)
 			if err != nil {
 				return err
@@ -582,7 +766,7 @@ func (s *CheckService) persistProviderReleaseWithIsLatest(ctx context.Context, r
 							"content_type":         pAsset.ContentType,
 							"download_url":         pAsset.URL,
 							"browser_download_url": pAsset.BrowserDownloadURL,
-							"expected_sha256":      sha256Map[pAsset.Name],
+							"expected_sha256":      expectedSHA,
 							"updated_at":           now,
 						}
 
@@ -620,7 +804,7 @@ func (s *CheckService) persistProviderReleaseWithIsLatest(ctx context.Context, r
 					ContentType:        pAsset.ContentType,
 					DownloadURL:        pAsset.URL,
 					BrowserDownloadURL: pAsset.BrowserDownloadURL,
-					ExpectedSHA256:     sha256Map[pAsset.Name],
+					ExpectedSHA256:     expectedSHA,
 					Status:             status,
 				}
 				if err := tx.Create(&asset).Error; err != nil {
@@ -714,6 +898,8 @@ func (s *CheckService) persistProviderReleaseWithLatest(ctx context.Context, rep
 
 		sha256Map := parseSHA256Map(pRelease.Body)
 		for _, pAsset := range pRelease.Assets {
+			// digest 优先：GitHub 为资产计算的真实摘要，比从 release body 正则抽取更可靠
+			expectedSHA := expectedSHA256(pAsset, sha256Map)
 			matched, matchErr := matcher.Match(pAsset.Name)
 			if matchErr != nil {
 				return matchErr
@@ -742,7 +928,7 @@ func (s *CheckService) persistProviderReleaseWithLatest(ctx context.Context, rep
 							"content_type":         pAsset.ContentType,
 							"download_url":         pAsset.URL,
 							"browser_download_url": pAsset.BrowserDownloadURL,
-							"expected_sha256":      sha256Map[pAsset.Name],
+							"expected_sha256":      expectedSHA,
 							"updated_at":           now,
 						}
 
@@ -779,7 +965,7 @@ func (s *CheckService) persistProviderReleaseWithLatest(ctx context.Context, rep
 					ContentType:        pAsset.ContentType,
 					DownloadURL:        pAsset.URL,
 					BrowserDownloadURL: pAsset.BrowserDownloadURL,
-					ExpectedSHA256:     sha256Map[pAsset.Name],
+					ExpectedSHA256:     expectedSHA,
 					Status:             status,
 				}
 				if err := tx.Create(&asset).Error; err != nil {

@@ -12,6 +12,10 @@ export interface Repository {
   storageIds: number[]
   proxyId: number | null
   providerApiBaseUrl: string
+  downloadMirrorBaseUrl: string
+  // 仓库级下载 UA：preset 空=跟随全局；custom 时 userAgent 生效
+  downloadUserAgentPreset: string
+  downloadUserAgent: string
   intervalSeconds: number
   filterMode: RepositoryFilterMode
   assetIncludePatterns: string
@@ -40,6 +44,9 @@ export interface RepositoryPayload {
   storageIds?: number[]
   proxyId?: number | null
   providerApiBaseUrl?: string
+  downloadMirrorBaseUrl?: string
+  downloadUserAgentPreset?: string
+  downloadUserAgent?: string
   enabled?: boolean
   provider?: string
   intervalSeconds: number

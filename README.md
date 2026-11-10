@@ -13,9 +13,19 @@ ReleaseHub 是面向 GitHub / GitLab / Gitea / Forgejo Releases 的 Artifact 管
 - 检查最新 Release 或全量拉取所有 Release
 - 手动触发同步（检查 + 下载）
 - Asset Glob/Regex 过滤、按文件大小过滤
-- SHA256 校验
+- SHA256 校验（优先使用供应商给出的 digest，缺失时回退解析 release 说明中的校验和）
 - 流式下载，不缓存完整文件到内存
 - 失败资产自动重试（指数退避）
+- API 不可用时自动降级为网页抓取（见下）
+
+**免 Token 的 Release 检查（HTML 降级）**
+- 未配置 GitHub Token 的公开仓库，在 API 限流（403/429）或 `/releases/latest` 返回 404 时，
+  自动改用 GitHub 网页端点抓取：`/{owner}/{repo}/releases.atom`（取最新 tag）
+  + `/{owner}/{repo}/releases/expanded_assets/{tag}`（取全部资产），不消耗 API 配额
+- 限流命中后该仓库进入 30 分钟冷却期，期间直接走网页抓取，不再重复撞 API
+- 还能救回「API 接口 404 但网页有 Release」的仓库（如 `python/cpython`）
+- 限制：私有仓库必须走 API；网页端点固定只返回最近 10 个 Release，
+  因此**全量同步仍然走 API**；资产大小取的是页面显示值（四舍五入），下载完成后以实际大小为准
 
 **存储**
 - 本地存储：`provider/owner/repo/tag/` 目录结构 + `latest` 映射
@@ -32,6 +42,13 @@ ReleaseHub 是面向 GitHub / GitLab / Gitea / Forgejo Releases 的 Artifact 管
 - HTTP/HTTPS/SOCKS5 代理支持
 - 代理连通性测试与延迟展示
 - 每个仓库可独立配置代理
+
+**GitHub 下载镜像**
+- 每个仓库可配置独立镜像地址，仅改写 GitHub Release **资产下载地址**（不影响 API 请求）
+- 支持前缀式（`https://ghproxy.example.com`）与 `{url}` 模板式（`https://ghproxy.example.com/{url}`）两种写法
+- 与 http/socks5 代理相互独立、可叠加使用；aria2 模式下同样生效（代理对 aria2 不生效，镜像不受影响）
+- 部分镜像会拦截非浏览器 UA（返回 403 或人机验证页）：可在「系统设置 → 下载 User-Agent」切换为内置浏览器 UA，或填自定义 UA；该 UA 同时作用于 HTTP 下载、aria2 下载与免 Token 网页抓取。仓库编辑抽屉里的「下载 UA」可单独覆盖全局配置（留空=跟随全局）
+- 镜像不可用时自动回退直连，失败原因写入任务日志
 
 **通知**
 - Gotify / Webhook / Email / Telegram 通知
@@ -213,6 +230,8 @@ npm run dev
 | `RELEASEHUB_DOWNLOAD_ARIA2_RPC` | `""` | aria2 JSON-RPC 端点，非空时改用 aria2 离线下载 |
 | `RELEASEHUB_DOWNLOAD_ARIA2_SECRET` | `""` | aria2 RPC 密钥 |
 | `RELEASEHUB_DOWNLOAD_ARIA2_DIR` | `""` | aria2 完成目录（须与 ReleaseHub 进程共享文件系统） |
+| `RELEASEHUB_DOWNLOAD_USER_AGENT_PRESET` | `default` | 下载 User-Agent 预设：`default`/`custom`/`chrome-win`/`edge-win`/`firefox-win`/`safari-mac`/`chrome-android` |
+| `RELEASEHUB_DOWNLOAD_USER_AGENT` | `""` | 自定义下载 UA（仅预设为 `custom` 时生效，禁止换行，≤512 字节） |
 | `RELEASEHUB_APP_JWT_SECRET` | `""` | JWT 签名密钥（启用认证时必须设置） |
 | `RELEASEHUB_AUTH_DEFAULT_ADMIN` | `admin` | 默认管理员用户名 |
 | `RELEASEHUB_AUTH_DEFAULT_PASSWORD` | `admin` | 默认管理员密码 |
@@ -233,6 +252,7 @@ npm run dev
 | Token | CRUD + `health` / `rate-limit` |
 | 存储 | CRUD + 测试连接 |
 | 代理 | CRUD + 测试连接 |
+| 下载镜像 | 随仓库配置（`downloadMirrorBaseUrl`） |
 | 通知 | CRUD |
 | API Key | CRUD |
 | 用户 | CRUD（admin） |
