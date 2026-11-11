@@ -69,7 +69,7 @@
 | storageId | number/null | 否 | 存储目标 ID |
 | proxyId | number/null | 否 | 代理 ID（http/socks5 传输层代理） |
 | providerApiBaseUrl | string | 否 | 自托管实例地址 |
-| downloadMirrorBaseUrl | string | 否 | GitHub 下载镜像地址，仅改写 Release 资产下载链接；留空表示直连。支持 `{url}` 占位符，例如 `https://ghproxy.example.com/{url}`；省略 scheme 时按 `https://` 处理 |
+| downloadMirrorBaseUrl | string | 否 | GitHub 下载镜像地址，仅改写 Release 资产下载链接；留空表示直连。**仅 `provider=github` 可用**，其他 Provider 传非空值会返回 400。支持 `{url}` 占位符，例如 `https://ghproxy.example.com/{url}`；省略 scheme 时按 `https://` 处理 |
 | downloadUserAgentPreset | string | 否 | 仓库级下载 UA 预设；留空=跟随全局配置。可选 `default`/`custom`/`chrome-win`/`edge-win`/`firefox-win`/`safari-mac`/`chrome-android` |
 | downloadUserAgent | string | 否 | 仓库级自定义 UA，仅 `downloadUserAgentPreset=custom` 时生效；禁止换行，≤512 字节 |
 | intervalSeconds | number | 否 | 同步间隔，默认 1800 |

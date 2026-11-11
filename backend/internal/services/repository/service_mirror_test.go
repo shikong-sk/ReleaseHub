@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"releasehub/backend/internal/config"
@@ -139,5 +140,64 @@ func TestValidateDownloadMirror(t *testing.T) {
 				t.Fatalf("期望错误=%v，实际: %v", tc.wantErr, err)
 			}
 		})
+	}
+}
+
+// TestDownloadMirrorRejectedForNonGitHubProvider 非 GitHub 仓库不允许配置下载镜像：
+// 镜像只改写 github.com 资产地址，对 GitLab/Gitea/Forgejo 配置属于误配。
+func TestDownloadMirrorRejectedForNonGitHubProvider(t *testing.T) {
+	db := setupRepositoryTestDB(t)
+	service := NewService(db, config.StorageConfig{DataDir: t.TempDir()})
+	ctx := context.Background()
+
+	// 创建阶段：gitlab + 镜像 → 拒绝
+	_, err := service.Create(ctx, CreateInput{
+		Provider:              "gitlab",
+		Owner:                 "acme",
+		Repo:                  "gl-mirror",
+		IntervalSeconds:       1800,
+		FilterMode:            "glob",
+		RetentionKeepLatest:   5,
+		DownloadMirrorBaseUrl: "https://ghproxy.example.com/{url}",
+	})
+	if err == nil {
+		t.Fatalf("gitlab 仓库不应允许配置下载镜像")
+	}
+	if !strings.Contains(err.Error(), "仅支持 GitHub") {
+		t.Fatalf("错误信息应说明仅支持 GitHub，实际: %v", err)
+	}
+
+	// 更新阶段：先建 gitlab 仓库（无镜像），再尝试设置镜像 → 拒绝
+	created, err := service.Create(ctx, CreateInput{
+		Provider:            "gitlab",
+		Owner:               "acme",
+		Repo:                "gl-mirror-2",
+		IntervalSeconds:     1800,
+		FilterMode:          "glob",
+		RetentionKeepLatest: 5,
+	})
+	if err != nil {
+		t.Fatalf("创建 gitlab 仓库失败: %v", err)
+	}
+	mirrorURL := "https://ghproxy.example.com"
+	if _, err := service.Update(ctx, created.ID, UpdateInput{DownloadMirrorBaseUrl: &mirrorURL}); err == nil {
+		t.Fatalf("更新 gitlab 仓库的下载镜像应被拒绝")
+	}
+
+	// GitHub 仓库仍可正常配置镜像
+	ghRepo, err := service.Create(ctx, CreateInput{
+		Provider:              "github",
+		Owner:                 "acme",
+		Repo:                  "gh-mirror",
+		IntervalSeconds:       1800,
+		FilterMode:            "glob",
+		RetentionKeepLatest:   5,
+		DownloadMirrorBaseUrl: "https://ghproxy.example.com/{url}",
+	})
+	if err != nil {
+		t.Fatalf("GitHub 仓库配置镜像应成功: %v", err)
+	}
+	if ghRepo.DownloadMirrorBaseUrl == "" {
+		t.Fatalf("GitHub 仓库镜像地址应被保存")
 	}
 }

@@ -103,6 +103,15 @@ const form = reactive<RepositoryPayload>({
 })
 
 const title = computed(() => (props.mode === 'create' ? '新增 GitHub 仓库' : '编辑仓库'))
+// 下载镜像只改写 github.com 的 release 资产地址，非 GitHub Provider 不展示该字段
+const isGitHubProvider = computed(() => (form.provider || 'github') === 'github')
+// 切换到非 GitHub Provider 时清空镜像值，避免提交后端被拒（后端同样有校验）
+watch(isGitHubProvider, (isGitHub: boolean) => {
+  if (!isGitHub && form.downloadMirrorBaseUrl) {
+    form.downloadMirrorBaseUrl = ''
+  }
+})
+// 身份字段（provider/owner/repo）在编辑模式下不可改；下载镜像、UA 等运行参数始终可编辑
 const ownerDisabled = computed(() => props.mode === 'edit')
 
 const providerOptions = computed<SelectOption[]>(() => [
@@ -385,12 +394,21 @@ function sampleAssetNames(): string[] {
           <NInput v-model:value="form.repo" :disabled="ownerDisabled" placeholder="terraform" />
         </NFormItem>
 
-        <NFormItem label="GitHub Token">
-          <NSelect
-            v-model:value="selectedTokenId"
-            :options="tokenOptions"
-            placeholder="选择 Token 或使用匿名请求"
-          />
+        <NFormItem :label="isGitHubProvider ? 'GitHub Token' : '访问 Token'">
+          <div style="display: flex; flex-direction: column; gap: 6px; width: 100%">
+            <NSelect
+              v-model:value="selectedTokenId"
+              :options="tokenOptions"
+              placeholder="选择 Token 或使用匿名请求"
+            />
+            <span class="form-hint">
+              {{
+                isGitHubProvider
+                  ? '用于 GitHub API 鉴权（私有仓库必填），留空则匿名请求并启用免 Token 网页降级'
+                  : '非 GitHub 仓库复用同一份令牌库：GitLab 以 PRIVATE-TOKEN 头发送，Gitea/Forgejo 以 Authorization 头发送'
+              }}
+            </span>
+          </div>
         </NFormItem>
 
         <NFormItem label="存储目标">
@@ -410,11 +428,10 @@ function sampleAssetNames(): string[] {
           />
         </NFormItem>
 
-        <NFormItem label="GitHub 下载镜像">
+        <NFormItem v-if="isGitHubProvider" label="GitHub 下载镜像">
           <div style="display: flex; flex-direction: column; gap: 6px; width: 100%">
             <NInput
               v-model:value="form.downloadMirrorBaseUrl"
-              :disabled="ownerDisabled"
               placeholder="https://ghproxy.example.com 或 https://ghproxy.example.com/{url}"
               clearable
             />
@@ -430,13 +447,11 @@ function sampleAssetNames(): string[] {
             <NSelect
               v-model:value="form.downloadUserAgentPreset"
               :options="userAgentOptions"
-              :disabled="ownerDisabled"
               style="width: 240px"
             />
             <NInput
               v-if="form.downloadUserAgentPreset === 'custom'"
               v-model:value="form.downloadUserAgent"
-              :disabled="ownerDisabled"
               placeholder="自定义 UA，例如 Mozilla/5.0 (Windows NT 10.0; Win64; x64) ..."
               clearable
             />

@@ -244,7 +244,7 @@ func (s *Service) Update(ctx context.Context, id uint, input UpdateInput) (*mode
 	// 下载镜像：空字符串表示关闭镜像，非空时校验地址合法性
 	if input.DownloadMirrorBaseUrl != nil {
 		mirrorBase := strings.TrimSpace(*input.DownloadMirrorBaseUrl)
-		if err := validateDownloadMirror(mirrorBase); err != nil {
+		if err := validateDownloadMirrorForProvider(repository.Provider, mirrorBase); err != nil {
 			return nil, err
 		}
 		repository.DownloadMirrorBaseUrl = mirrorBase
@@ -438,7 +438,7 @@ func buildRepository(input CreateInput) (*models.Repository, error) {
 
 	// 创建时校验下载镜像地址，避免非法配置写入数据库
 	mirrorBase := strings.TrimSpace(input.DownloadMirrorBaseUrl)
-	if err := validateDownloadMirror(mirrorBase); err != nil {
+	if err := validateDownloadMirrorForProvider(providerName, mirrorBase); err != nil {
 		return nil, err
 	}
 
@@ -530,6 +530,18 @@ func validateUserAgentValue(ua string) error {
 }
 
 // validateDownloadMirror 校验 GitHub 下载镜像地址，空字符串表示不启用。
+// validateDownloadMirrorForProvider 下载镜像仅改写 GitHub Release 资产地址，
+// 非 GitHub 供应商的资产地址不属于 github.com，配置镜像不会生效，直接拒绝以免误配。
+func validateDownloadMirrorForProvider(provider, baseURL string) error {
+	if strings.TrimSpace(baseURL) == "" {
+		return nil
+	}
+	if strings.ToLower(strings.TrimSpace(provider)) != "github" {
+		return fmt.Errorf("%w: 下载镜像仅支持 GitHub 仓库", errInvalidInput)
+	}
+	return validateDownloadMirror(baseURL)
+}
+
 func validateDownloadMirror(baseURL string) error {
 	if err := mirror.ValidateBase(baseURL); err != nil {
 		return fmt.Errorf("%w: 下载镜像地址无效: %v", errInvalidInput, err)
